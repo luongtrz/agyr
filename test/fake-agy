@@ -1,36 +1,36 @@
 #!/usr/bin/env bash
-# agy giả cho test. Hành vi phụ thuộc nội dung token trong $AGY_HOME (token giả):
-#   - token nằm trong FAKE_QUOTA_TOKENS (cách nhau bằng dấu cách) -> in lỗi 429 rồi treo như agy đang retry
-#   - FAKE_AUTH=1 -> in lỗi đăng nhập, exit 1
-#   - còn lại -> init + result SUCCESS
-# Mỗi lần gọi ghi "token|argv" vào $FAKE_ARGS_LOG.
+# Fake agy for tests. Behaviour depends on the (fake) token content in $AGY_HOME:
+#   - token listed in FAKE_QUOTA_TOKENS (space-separated) -> print a 429 error, then hang like agy retrying
+#   - FAKE_AUTH=1 -> print a login error, exit 1
+#   - otherwise -> init + SUCCESS result
+# Every call appends "token|argv" to $FAKE_ARGS_LOG.
 set -u
 tok="$(cat "$AGY_HOME/antigravity-oauth-token")"
 echo "$tok|$*" >>"${FAKE_ARGS_LOG:?}"
 
-# /quota giả, cùng định dạng agy thật. Phần trăm suy ra từ ký tự cuối của token: 5h = 50+10n, tuần = 40+10n.
-#   FAKE_DEAD_TOKENS: token bị coi là chưa đăng nhập (status ERROR)
-#   FAKE_ZERO_TOKENS: token hết quota 5h (0%)
-#   FAKE_P5:          ép phần trăm 5h cho mọi token
-#   FAKE_LOW_TOKENS:  token còn 5% quota 5h
-#   FAKE_TTY=1:       thử đổi chế độ terminal (stty) như agy thật
-#   FAKE_REFRESH=1:   ghi lại file token (mô phỏng agy tự làm mới access token)
+# Fake /quota, same format as the real agy. Percentages derive from the token's last character: 5h = 50+10n, week = 40+10n.
+#   FAKE_DEAD_TOKENS: tokens treated as logged out (status ERROR)
+#   FAKE_ZERO_TOKENS: tokens that are out of 5h quota (0%)
+#   FAKE_P5:          force the 5h percentage for every token
+#   FAKE_LOW_TOKENS:  tokens with 5% of the 5h quota left
+#   FAKE_TTY=1:       try to change the terminal mode (stty) like the real agy
+#   FAKE_REFRESH=1:   rewrite the token file (simulates agy refreshing the access token itself)
 prev=""
 for a in "$@"; do
   if [ "$prev" = "-p" ] && [ "$a" = "/quota" ]; then
     for d in ${FAKE_DEAD_TOKENS:-}; do
       [ "$d" = "$tok" ] && { echo '{"event":"result","result":{"status":"ERROR","error":"not logged in"}}'; exit 1; }
     done
-    # FAKE_TTY=1: như agy thật, thử đổi chế độ terminal điều khiển (chỉ có tác dụng nếu agy-acct KHÔNG tách nó khỏi terminal)
+    # FAKE_TTY=1: like the real agy, try to change the controlling terminal's mode (only has an effect if agyr does NOT detach agy from the terminal)
     if [ "${FAKE_TTY:-0}" = 1 ]; then stty -icanon -echo </dev/tty >/dev/null 2>&1 || true; fi
-    # chữ số suy ra từ "rt-accN" trong token JSON, nếu không có thì từ ký tự cuối của token
+    # digit taken from "rt-accN" in a JSON token, otherwise from the token's last character
     if [[ "$tok" =~ rt-acc([0-9]) ]]; then n="${BASH_REMATCH[1]}"; else n="${tok: -1}"; fi
     [[ "$n" =~ ^[0-9]$ ]] || n=0
     p5=$((50 + n * 10)); pw=$((40 + n * 10))
     for z in ${FAKE_ZERO_TOKENS:-}; do [ "$z" = "$tok" ] && p5=0; done
     [[ "${FAKE_P5:-}" =~ ^[0-9]+$ ]] && p5="$FAKE_P5"
     for z in ${FAKE_LOW_TOKENS:-}; do [ "$z" = "$tok" ] && p5=5; done
-    # FAKE_REFRESH=1: agy "tự làm mới token" bằng cách ghi lại file token trong HOME của nó
+    # FAKE_REFRESH=1: agy "refreshes the token itself" by rewriting the token file in its own HOME
     if [ "${FAKE_REFRESH:-0}" = 1 ]; then echo "$tok-refreshed" >"$AGY_HOME/antigravity-oauth-token"; fi
     now="${AGY_NOW:-$(date +%s)}"
     r5="$(date -u -d "@$((now + 3600))" +%Y-%m-%dT%H:%M:%SZ)"
@@ -59,7 +59,7 @@ for q in ${FAKE_QUOTA_TOKENS:-}; do
   if [ "$q" = "$tok" ]; then
     echo "error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in ${FAKE_RESET:-4h13m19s}. (response may be truncated)"
     echo 'AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached.","error_code":429}'
-    sleep 30 # agy thật retry ~8 lần; agy-run phải kill trước đó
+    sleep 30 # the real agy retries ~8 times; agy-run must kill it before that
     exit 1
   fi
 done

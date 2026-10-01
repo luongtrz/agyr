@@ -69,19 +69,19 @@ agy -c             # mở lại, tiếp tục conversation gần nhất
 
 ```
   ACCOUNT        GEMINI 5H                   GEMINI WEEK                 STATUS
-  acct3          100%  01/10/2026 07:14 PM   100%  08/10/2026 02:02 PM   sẵn sàng
-  acct2            1%  01/10/2026 03:03 PM    75%  07/10/2026 11:46 AM   sắp hết
-  acct1            1%  01/10/2026 04:02 PM    67%  07/10/2026 09:24 AM   sắp hết
-* work            46%  01/10/2026 05:53 PM    74%  07/10/2026 02:02 PM   sẵn sàng
-Đo lúc 01/10/2026 02:58 PM   (* = account đang chọn)
+  acct3          100%  01/10/2026 07:14 PM   100%  08/10/2026 02:02 PM   ready
+  acct2            1%  01/10/2026 03:03 PM    75%  07/10/2026 11:46 AM   low
+  acct1            1%  01/10/2026 04:02 PM    67%  07/10/2026 09:24 AM   low
+* work            46%  01/10/2026 05:53 PM    74%  07/10/2026 02:02 PM   ready
+Measured at 01/10/2026 02:58 PM   (* = selected account)
 ```
 
 `agyr list` chạy `agy -p /quota` (không gọi model, tốn 0 token) cho **từng account song song** (mất khoảng 10–20 giây) và lưu kết quả. Mỗi lần đo chạy trong một thư mục HOME tạm chứa bản sao token, nên **không đụng file token thật**: không ảnh hưởng `agy` đang mở hay `agy-run` đang chạy. Mỗi `agy` đo chạy tách khỏi terminal (`setsid`, stdin rỗng): nếu không, nhiều `agy` chạy song song cùng đổi và khôi phục chế độ terminal của bạn và để lại terminal bị vỡ (dòng thụt lệch, mất echo). Cột Gemini là nhóm model mà `agy-run` dùng; quota Claude/GPT không hiển thị (xem trong `agy` bằng `/quota`).
 
 - **Dấu `*`** đánh dấu account mà file token thật đang thuộc về (so `refresh_token` với từng slot), không phải tên đã ghi trong state. Nhờ đó nếu bạn tự login sang account khác bằng `agy`, bảng vẫn đánh dấu đúng, và `use` không ghi đè nhầm slot. Nếu token đang dùng không khớp slot nào (vừa login account chưa lưu) thì bảng cảnh báo và không đánh dấu `*`; chạy `agyr save <tên>`.
-- **Màu** (chỉ khi in ra terminal): phần trăm còn lại **xanh** khi trên 40%, **vàng** từ 11% đến 40%, **đỏ** từ 10% trở xuống. Cột trạng thái: `sẵn sàng` xanh; `chưa đo` và `số liệu cũ` vàng; `sắp hết`, `cooldown` và `không đo được` đỏ. Tắt màu bằng `NO_COLOR=1` hoặc `AGYR_COLOR=never`; ép bật khi chuyển hướng ra file/pipe bằng `AGYR_COLOR=always`.
+- **Màu** (chỉ khi in ra terminal): phần trăm còn lại **xanh** khi trên 40%, **vàng** từ 11% đến 40%, **đỏ** từ 10% trở xuống. Cột trạng thái: `ready` xanh; `not measured` và `stale` vàng; `low`, `cooldown` và `measure failed` đỏ. Tắt màu bằng `NO_COLOR=1` hoặc `AGYR_COLOR=never`; ép bật khi chuyển hướng ra file/pipe bằng `AGYR_COLOR=always`.
 - **Đo thấy 0%** thì tự đặt cooldown tới đúng giờ reset; **đo thấy còn quota** thì xóa cooldown cũ (ví dụ cooldown mặc định 5 giờ). Nhờ vậy `next`, `rotate` và `agy-run` luôn dựa trên số liệu thật.
-- **Trạng thái:** `sẵn sàng`, `sắp hết` (còn ≤10%), `cooldown, còn …`, `chưa đo`, `số liệu cũ, đã qua giờ reset` (chỉ với `-c`), `không đo được` (token hết hạn hoặc agy lỗi; khi đó exit code là 1).
+- **Trạng thái** (chữ tiếng Anh trong bảng): `ready`; `low` (còn ≤10%); `cooldown, 15m left`; `not measured`; `stale, past reset time` (chỉ với `-c`: đã qua giờ reset, cần đo lại); `measure failed` (token hết hạn hoặc agy lỗi; khi đó exit code là 1).
 
 ## Múi giờ
 
@@ -120,5 +120,5 @@ bash test/run.sh
 - `agy-run` nhận diện lỗi bằng text trong log. Nếu prompt của task chứa nguyên văn `Individual quota reached` mà agy echo lại ra log, có thể báo nhầm.
 - Chưa xử lý 503 "No capacity" (chuyển sang `gemini-3.7-flash-high` vẫn làm tay theo skill agy).
 - Chạy nhiều `agy-run` song song dùng chung một pool theo kiểu best-effort.
-- `agyr list` đo bằng bản sao token trong HOME tạm. Token đã bị thu hồi thì báo `không đo được` thay vì đoán.
+- `agyr list` đo bằng bản sao token trong HOME tạm. Token đã bị thu hồi thì báo `measure failed` thay vì đoán.
 - State (cooldown, active, snapshot quota) nằm ở `~/.gemini/antigravity-cli/accounts/state.json`; token backup trước mỗi lần `use` ở `accounts/.last-token.bak`.

@@ -1,32 +1,34 @@
 #!/usr/bin/env bash
-# agyr — lưu / đổi / xoay vòng nhiều account cho agy (Antigravity CLI).
+# agyr — save / switch / rotate multiple accounts for agy (Antigravity CLI).
 #
-# Chỉ copy file token qua lại; không bao giờ in nội dung token ra màn hình.
-# Biến môi trường (dùng cho test):
-#   AGY_HOME  thư mục dữ liệu của agy (mặc định ~/.gemini/antigravity-cli)
-#   AGY_BIN   binary agy dùng cho lệnh quota (mặc định agy)
-#   AGY_TZ    múi giờ để hiển thị và đọc giờ trong log agy (mặc định UTC-7, tức UTC+7 theo quy ước POSIX)
-#   AGY_NOW   epoch giả lập cho "bây giờ" (mặc định date +%s)
+# It only copies token files around; it never prints token contents.
+# Environment variables:
+#   AGY_HOME  agy data directory (default ~/.gemini/antigravity-cli)
+#   AGY_BIN   agy binary used to measure quota (default agy)
+#   AGY_TZ    timezone for displayed times and for times read from agy logs
+#             (default UTC-7, which is UTC+7 in POSIX notation)
+#   AGY_NOW   fake epoch for "now" (tests only; default date +%s)
+#   AGYR_COLOR  auto (default) | always | never — colours in the list table
 set -euo pipefail
 umask 077
 
-# Mọi giờ hiển thị (và giờ trong log agy) tính theo UTC+7. Lưu ý quy ước POSIX: 'UTC-7' nghĩa là UTC+7.
+# All displayed times (and times read from agy logs) are UTC+7. POSIX quirk: 'UTC-7' means UTC+7.
 export TZ="${AGY_TZ:-UTC-7}"
-export LC_TIME=C # để %p luôn ra AM/PM, không theo ngôn ngữ của máy
+export LC_TIME=C # so %p is always AM/PM, regardless of the machine's language
 
 AGY_HOME="${AGY_HOME:-$HOME/.gemini/antigravity-cli}"
 AGY_BIN="${AGY_BIN:-agy}"
 TOKEN="$AGY_HOME/antigravity-oauth-token"
 ACCTS="$AGY_HOME/accounts"
 STATE="$ACCTS/state.json"
-DEFAULT_COOLDOWN=18000 # 5h, dùng khi không parse được "Resets in"
+DEFAULT_COOLDOWN=18000 # 5h, used when "Resets in" cannot be parsed
 
 die() { echo "agyr: $*" >&2; exit "${2:-1}"; }
 now() { echo "${AGY_NOW:-$(date +%s)}"; }
 
-need_jq() { command -v jq >/dev/null || die "cần cài jq"; }
+need_jq() { command -v jq >/dev/null || die "jq is required"; }
 
-valid_name() { [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "tên account chỉ gồm chữ, số, '-', '_': '$1'"; }
+valid_name() { [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "account name may only contain letters, digits, '-' and '_': '$1'"; }
 
 init_state() {
   mkdir -p "$ACCTS"
@@ -34,22 +36,22 @@ init_state() {
   [ -f "$STATE" ] || echo '{"active":"","cooldown":{}}' >"$STATE"
 }
 
-# ghi state nguyên tử: $1 = biểu thức jq, các tham số còn lại truyền cho jq
+# atomic state write: $1 = jq expression, remaining args are passed to jq
 state_update() {
   local expr="$1"; shift
   local tmp
   tmp="$(mktemp "$ACCTS/.state.XXXXXX")"
-  if jq "$@" "$expr" "$STATE" >"$tmp"; then mv "$tmp" "$STATE"; else rm -f "$tmp"; die "ghi state lỗi"; fi
+  if jq "$@" "$expr" "$STATE" >"$tmp"; then mv "$tmp" "$STATE"; else rm -f "$tmp"; die "failed to write state"; fi
 }
 
-# Định danh nội bộ của một file token để so sánh, KHÔNG BAO GIỜ in ra: refresh_token nếu là JSON, không thì cả nội dung.
+# Internal identity of a token file, for comparison only — NEVER printed: the refresh_token if it is JSON, else the whole content.
 ident_of() {
   local r
   r="$(jq -r '.token.refresh_token // empty' "$1" 2>/dev/null)" || r=""
   if [ -n "$r" ]; then printf 'rt:%s' "$r"; else printf 'raw:%s' "$(cat "$1")"; fi
 }
 
-# Slot mà file token thật đang thuộc về (so định danh); rỗng nếu không khớp slot nào (ví dụ vừa login account chưa save).
+# The slot the real token file belongs to (by identity); empty if it matches no slot (e.g. just logged in to an unsaved account).
 real_owner() {
   [ -f "$TOKEN" ] || return 0
   local id n
@@ -60,15 +62,15 @@ real_owner() {
   return 0
 }
 
-# Account đang dùng thật sự = slot khớp file token thật. Chỉ khi không khớp slot nào mới dùng tên đã ghi trong state
-# (state có thể lệch khi bạn tự login bằng agy mà chưa save).
+# The account actually in use = the slot matching the real token file. Only when no slot matches do we fall back to the name
+# stored in state (state can be stale when you log in with agy by hand without saving).
 active_name() {
   local o
   o="$(real_owner)"
   if [ -n "$o" ]; then echo "$o"; else jq -r '.active // ""' "$STATE"; fi
 }
 
-# "4h13m27s" / "43m29s" / "1d2h" / "90" (giây) -> số giây. Chấp nhận cả câu chứa "Resets in X".
+# "4h13m27s" / "43m29s" / "1d2h" / "90" (seconds) -> seconds. Also accepts a sentence containing "Resets in X".
 parse_duration() {
   local s="$1"
   if [[ "$s" =~ Resets\ in\ ([0-9dhms]+) ]]; then s="${BASH_REMATCH[1]}"; fi
@@ -82,17 +84,17 @@ parse_duration() {
   echo "$total"
 }
 
-# epoch -> "dd/mm/yyyy hh:mm AM|PM" (theo AGY_TZ)
+# epoch -> "dd/mm/yyyy hh:mm AM|PM" (in AGY_TZ)
 fmt_time() { date -d "@$1" '+%d/%m/%Y %I:%M %p'; }
 
-fmt_dur() { # giây -> "4h13m"
+fmt_dur() { # seconds -> "4h13m"
   local s=$1
   if [ "$s" -ge 3600 ]; then printf '%dh%02dm' $((s / 3600)) $((s % 3600 / 60))
   elif [ "$s" -ge 60 ]; then printf '%dm%02ds' $((s / 60)) $((s % 60))
   else printf '%ds' "$s"; fi
 }
 
-slots() { # liệt kê tên các slot, sắp xếp
+slots() { # sorted slot names
   local f
   for f in "$ACCTS"/*.token; do
     [ -e "$f" ] || continue
@@ -103,41 +105,41 @@ slots() { # liệt kê tên các slot, sắp xếp
 cooldown_until() { jq -r --arg n "$1" '.cooldown[$n] // 0' "$STATE"; }
 
 cmd_save() {
-  [ $# -eq 1 ] || die "dùng: agyr save <name>"
+  [ $# -eq 1 ] || die "usage: agyr save <name>"
   valid_name "$1"; need_jq
-  [ -f "$TOKEN" ] || die "chưa có token ($TOKEN). Hãy login bằng 'agy' trước"
+  [ -f "$TOKEN" ] || die "no token yet ($TOKEN). Log in with 'agy' first"
   init_state
   cp "$TOKEN" "$ACCTS/$1.token"; chmod 600 "$ACCTS/$1.token"
   state_update '.active=$n | del(.cooldown[$n])' --arg n "$1"
-  echo "đã lưu account '$1' (đang active)"
+  echo "saved account '$1' (now active)"
 }
 
 cmd_use() {
-  [ $# -eq 1 ] || die "dùng: agyr use <name>"
+  [ $# -eq 1 ] || die "usage: agyr use <name>"
   valid_name "$1"; need_jq; init_state
-  [ -f "$ACCTS/$1.token" ] || die "không có slot '$1' (xem: agyr list)"
+  [ -f "$ACCTS/$1.token" ] || die "no slot '$1' (see: agyr list)"
   local cur; cur="$(real_owner)"
   if [ -f "$TOKEN" ]; then
     cp "$TOKEN" "$ACCTS/.last-token.bak"; chmod 600 "$ACCTS/.last-token.bak"
-    # giữ access token đã được agy refresh, nhưng chỉ ghi về đúng slot mà token này thuộc về; không khớp slot nào
-    # thì không ghi đè slot nào cả (token chưa lưu vẫn còn trong .last-token.bak)
+    # keep the access token agy refreshed, but only write it back to the slot it belongs to; if it matches no slot,
+    # no slot is overwritten (the unsaved token is still in .last-token.bak)
     if [ -n "$cur" ] && [ "$cur" != "$1" ]; then
       cp "$TOKEN" "$ACCTS/$cur.token"; chmod 600 "$ACCTS/$cur.token"
     fi
   fi
   cp "$ACCTS/$1.token" "$TOKEN"; chmod 600 "$TOKEN"
   state_update '.active=$n' --arg n "$1"
-  echo "đã chuyển sang account '$1'"
+  echo "switched to account '$1'"
 }
 
 cmd_cooldown() {
-  [ $# -ge 2 ] || die "dùng: agyr cooldown <name> <duration|'... Resets in 4h13m27s'>"
+  [ $# -ge 2 ] || die "usage: agyr cooldown <name> <duration|'... Resets in 4h13m27s'>"
   local name="$1"; shift
   valid_name "$name"; need_jq; init_state
-  [ -f "$ACCTS/$name.token" ] || die "không có slot '$name'"
+  [ -f "$ACCTS/$name.token" ] || die "no slot '$name'"
   local secs
   if ! secs="$(parse_duration "$*")"; then
-    echo "agyr: không parse được thời gian '$*', dùng mặc định 5h" >&2
+    echo "agyr: cannot parse duration '$*', using default 5h" >&2
     secs=$DEFAULT_COOLDOWN
   fi
   local until=$(($(now) + secs))
@@ -146,20 +148,20 @@ cmd_cooldown() {
 }
 
 cmd_clear() {
-  [ $# -eq 1 ] || die "dùng: agyr clear <name>"
+  [ $# -eq 1 ] || die "usage: agyr clear <name>"
   valid_name "$1"; need_jq; init_state
   state_update 'del(.cooldown[$n])' --arg n "$1"
-  echo "đã xóa cooldown của '$1'"
+  echo "cleared cooldown of '$1'"
 }
 
-# In tên account sẵn sàng kế tiếp (vòng tròn, bắt đầu sau account active).
-# Hết sạch thì exit 3 và báo thời điểm reset sớm nhất.
+# Print the next ready account (round-robin, starting after the active one).
+# If none is ready: exit 3 and report the earliest reset time.
 cmd_next() {
   need_jq; init_state
   local cur t; cur="$(active_name)"; t="$(now)"
   local -a names=()
   mapfile -t names < <(slots)
-  [ "${#names[@]}" -gt 0 ] || die "chưa có account nào" 2
+  [ "${#names[@]}" -gt 0 ] || die "no accounts yet" 2
   local start=0 i
   for i in "${!names[@]}"; do [ "${names[$i]}" = "$cur" ] && start=$((i + 1)); done
   local k idx n until earliest=0 earliest_n=""
@@ -170,13 +172,13 @@ cmd_next() {
     if [ "$until" -le "$t" ]; then echo "$n"; return 0; fi
     if [ "$earliest" -eq 0 ] || [ "$until" -lt "$earliest" ]; then earliest=$until; earliest_n=$n; fi
   done
-  echo "agyr: tất cả ${#names[@]} account đều đang cooldown; sớm nhất: '$earliest_n' reset $(fmt_time "$earliest") (còn $(fmt_dur $((earliest - t))))" >&2
+  echo "agyr: all ${#names[@]} accounts are on cooldown; earliest: '$earliest_n' resets at $(fmt_time "$earliest") ($(fmt_dur $((earliest - t))) left)" >&2
   return 3
 }
 
-# Tìm lần chạm quota gần nhất trong log của agy; in số giây còn lại tới lúc reset (tính từ "bây giờ").
-# Dòng log dạng: E1001 12:49:02.672827 ... Individual quota reached ... Resets in 3h13m51s.
-# Bỏ qua dòng cũ hơn 1 giờ (rất có thể là của account khác / lần trước).
+# Find the most recent quota hit in agy's logs; print the seconds left until reset (counted from "now").
+# Log line format: E1001 12:49:02.672827 ... Individual quota reached ... Resets in 3h13m51s.
+# Lines older than 1 hour are ignored (most likely from another account / an earlier hit).
 detect_reset_secs() {
   local logdir="$AGY_HOME/log" f line best_ts=0 best_reset=0 ts reset d t y t0
   [ -d "$logdir" ] || return 1
@@ -202,20 +204,20 @@ detect_reset_secs() {
   echo "$remain"
 }
 
-# Hết quota khi dùng agy tay: đánh dấu account đang active là cooldown rồi chuyển sang account kế tiếp.
+# Out of quota while using agy by hand: put the active account on cooldown, then switch to the next account.
 cmd_rotate() {
   need_jq; init_state
   local cur secs src
   cur="$(active_name)"
-  [ -n "$cur" ] || die "chưa có account active (xem: agyr list)"
+  [ -n "$cur" ] || die "no active account (see: agyr list)"
   if [ $# -ge 1 ]; then
-    secs="$(parse_duration "$*")" || die "không hiểu thời gian '$*' (ví dụ: 4h13m)"
-    src="theo bạn nhập"
+    secs="$(parse_duration "$*")" || die "cannot parse duration '$*' (example: 4h13m)"
+    src="as you entered"
   elif secs="$(detect_reset_secs)"; then
-    src="đọc từ log agy"
+    src="read from the agy log"
   else
     secs=$DEFAULT_COOLDOWN
-    src="không thấy lỗi quota mới trong log, dùng mặc định 5h"
+    src="no recent quota error in the log, using default 5h"
   fi
   local until=$(($(now) + secs))
   state_update '.cooldown[$n]=$u' --arg n "$cur" --argjson u "$until"
@@ -223,17 +225,18 @@ cmd_rotate() {
   local nxt
   if ! nxt="$(cmd_next)"; then return 3; fi
   cmd_use "$nxt"
-  echo "mở lại agy (đang là process mới) bằng: agy -c"
+  echo "reopen agy (it must be a new process) with: agy -c"
 }
 
-# Chạy `agy -p /quota` (không gọi model, 0 token) với HOME = $1 (thư mục tạm chứa bản sao token);
-# in các dòng "<nhóm>\t<chỉ số>\t<phần trăm>\t<giờ reset UTC>". Lỗi thì return 1.
-# AGY_HOME cũng được trỏ vào đó để agy giả trong test đọc đúng token; agy thật bỏ qua biến này.
+# Run `agy -p /quota` (no model call, 0 tokens) with HOME = $1 (a temp dir holding a copy of the token);
+# print lines "<group>\t<metric>\t<percent>\t<reset time UTC>". Returns 1 on failure.
+# AGY_HOME is also pointed there so the fake agy in tests reads the right token; real agy ignores it.
 quota_fetch() {
   local home="$1" tmp out
   tmp="$(mktemp -d)"
-  # setsid + stdin rỗng: agy chạy không có terminal điều khiển. Nếu không, nhiều agy chạy song song cùng đổi/khôi phục
-  # chế độ terminal của bạn (raw mode, truy vấn khả năng terminal) và để lại terminal bị vỡ (xuống dòng lệch, mất echo).
+  # setsid + empty stdin: agy runs without a controlling terminal. Otherwise several agy processes running in parallel
+  # all change/restore your terminal mode (raw mode, terminal capability queries) and leave the terminal garbled
+  # (staircase newlines, no echo).
   local -a detach=()
   if command -v setsid >/dev/null; then detach=(setsid -w); fi
   out="$(HOME="$home" AGY_HOME="$home/.gemini/antigravity-cli" "${detach[@]}" "$AGY_BIN" -p /quota --add-dir "$tmp" \
@@ -244,8 +247,8 @@ quota_fetch() {
   printf '%s\n' "$out"
 }
 
-# Đo quota của một slot trong HOME tạm: KHÔNG đụng file token thật, nên không làm hỏng agy/agy-run đang chạy
-# và đo song song được. $1 = tên slot, $2 = file ghi kết quả thô, $3 = tên account đang active.
+# Measure one slot's quota in a temp HOME: does NOT touch the real token file, so it cannot break a running agy/agy-run
+# and can run in parallel. $1 = slot name, $2 = file for the raw result, $3 = name of the active account.
 measure_one() {
   local name="$1" out="$2" act="$3" home d src rc=0
   home="$(mktemp -d)"
@@ -254,19 +257,19 @@ measure_one() {
   mkdir -p "$d"
   if [ "$name" = "$act" ] && [ -f "$TOKEN" ]; then src="$TOKEN"; else src="$ACCTS/$name.token"; fi
   cp "$src" "$d/antigravity-oauth-token"; chmod 600 "$d/antigravity-oauth-token"
-  # giữ cùng installation_id để Google thấy đây vẫn là cùng một cài đặt agy
+  # keep the same installation_id so Google sees the same agy installation
   if [ -f "$AGY_HOME/installation_id" ]; then cp "$AGY_HOME/installation_id" "$d/installation_id"; fi
   quota_fetch "$home" >"$out" 2>/dev/null || rc=$?
-  # agy có thể đã tự làm mới token: ghi lại vào slot (riêng account active thì file token thật mới là nguồn đúng)
+  # agy may have refreshed the token itself: write it back to the slot (for the active account the real token file is the source of truth)
   if [ "$name" != "$act" ] && [ -s "$d/antigravity-oauth-token" ] && ! cmp -s "$d/antigravity-oauth-token" "$ACCTS/$name.token"; then
     cp "$d/antigravity-oauth-token" "$ACCTS/$name.token"; chmod 600 "$ACCTS/$name.token"
   fi
   return "$rc"
 }
 
-# Đọc kết quả thô của /quota ($2), lưu snapshot Gemini vào state. Số liệu vừa đo là sự thật nên:
-# về 0% thì đặt cooldown tới giờ reset, còn quota thì xóa cooldown (ví dụ cooldown mặc định 5h đặt khi chưa biết giờ reset).
-# Lỗi nếu thiếu số liệu Gemini.
+# Parse the raw /quota output ($2) and store a Gemini snapshot in state. What was just measured is the truth, so:
+# at 0% set a cooldown until the reset time; with quota left, clear any cooldown (e.g. the default 5h one set before the reset time was known).
+# Fails if the Gemini numbers are missing.
 quota_ingest() {
   local name="$1" raw="$2" grp metric pct reset epoch g5="" g5r=0 gw="" gwr=0
   while IFS=$'\t' read -r grp metric pct reset; do
@@ -291,7 +294,7 @@ quota_ingest() {
   return 0
 }
 
-# Đo song song tất cả slot ($@), lưu snapshot; in tên các account đo lỗi (cách nhau bằng dấu cách).
+# Measure all slots ($@) in parallel and store snapshots; print the names of accounts that failed (space-separated).
 measure_all() {
   local -a names=("$@") pids=() failed=()
   local d act i n
@@ -309,12 +312,12 @@ measure_all() {
   echo "${failed[*]:-}"
 }
 
-# In bảng từ state. $1 = tên các account đo lỗi, $2 = 1 nếu vừa đo xong.
+# Print the table from state. $1 = names of accounts that failed to measure, $2 = 1 if measured just now.
 print_table() {
   local failed=" $1 " live="$2" t cur n snap g5 g5r gw gwr at until st sc oldest=0 mark
   t="$(now)"; cur="$(real_owner)"
-  # Màu: xanh = ổn, vàng = cần chú ý, đỏ = gần hết / không dùng được. Chỉ tô khi in ra terminal (hoặc AGYR_COLOR=always);
-  # NO_COLOR hoặc AGYR_COLOR=never thì tắt. Mã màu nằm ngoài phần căn lề nên bảng vẫn thẳng hàng.
+  # Colours: green = fine, yellow = needs attention, red = nearly out / unusable. Only used on a terminal (or with
+  # AGYR_COLOR=always); NO_COLOR or AGYR_COLOR=never turns them off. Colour codes sit outside the padded fields so the table stays aligned.
   local G="" Y="" R="" Z="" usecolor=0
   case "${AGYR_COLOR:-auto}" in
     always) usecolor=1 ;;
@@ -322,12 +325,12 @@ print_table() {
     *) if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then usecolor=1; fi ;;
   esac
   if [ "$usecolor" = 1 ]; then G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; Z=$'\033[0m'; fi
-  pct() { # $1 = % còn lại: <=10 đỏ, <=40 vàng, còn lại xanh
+  pct() { # $1 = % left: <=10 red, <=40 yellow, otherwise green
     local c="$G"
     if [ "$1" -le 10 ]; then c="$R"; elif [ "$1" -le 40 ]; then c="$Y"; fi
     printf '%s%3s%%%s' "$c" "$1" "$Z"
   }
-  cell() { # $1 = % còn lại, $2 = giờ reset (epoch)
+  cell() { # $1 = % left, $2 = reset time (epoch)
     if [ -z "$1" ] || [ "$2" -le "$t" ]; then printf '%4s  %-19s' '-' ''
     else printf '%s  %-19s' "$(pct "$1")" "$(fmt_time "$2")"; fi
   }
@@ -339,52 +342,52 @@ print_table() {
     if [[ "$failed" == *" $n "* ]]; then g5=""; fi
     if [ -n "$g5" ] && { [ "$oldest" -eq 0 ] || [ "$at" -lt "$oldest" ]; }; then oldest=$at; fi
     until="$(cooldown_until "$n")"
-    if [[ "$failed" == *" $n "* ]]; then st="không đo được (token hết hạn hoặc agy lỗi)"; sc="$R"
-    elif [ "$until" -gt "$t" ]; then st="cooldown, còn $(fmt_dur $((until - t)))"; sc="$R"
-    elif [ -z "$g5" ]; then st="chưa đo"; sc="$Y"
-    elif [ "$g5r" -le "$t" ] || [ "$gwr" -le "$t" ]; then st="số liệu cũ, đã qua giờ reset"; sc="$Y"
-    elif [ "$g5" -le 10 ] || [ "$gw" -le 10 ]; then st="sắp hết"; sc="$R"
-    else st="sẵn sàng"; sc="$G"; fi
+    if [[ "$failed" == *" $n "* ]]; then st="measure failed (token expired or agy error)"; sc="$R"
+    elif [ "$until" -gt "$t" ]; then st="cooldown, $(fmt_dur $((until - t))) left"; sc="$R"
+    elif [ -z "$g5" ]; then st="not measured"; sc="$Y"
+    elif [ "$g5r" -le "$t" ] || [ "$gwr" -le "$t" ]; then st="stale, past reset time"; sc="$Y"
+    elif [ "$g5" -le 10 ] || [ "$gw" -le 10 ]; then st="low"; sc="$R"
+    else st="ready"; sc="$G"; fi
     mark=" "; if [ "$n" = "$cur" ]; then mark="*"; fi
     printf '%s %-14s %s   %s   %s%s%s\n' "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$sc" "$st" "$Z"
   done < <(slots)
   if [ -f "$TOKEN" ] && [ -z "$cur" ]; then
-    echo "${Y}! File token đang dùng không khớp slot nào (vừa login account khác?). Chạy 'agyr save <tên>' để lưu nó; 'agyr use' sẽ không ghi đè slot nào.${Z}"
+    echo "${Y}! The token file in use matches no slot (just logged in to another account?). Run 'agyr save <name>' to store it; 'agyr use' will not overwrite any slot.${Z}"
   fi
   if [ "$live" = 1 ]; then
-    echo "Đo lúc $(fmt_time "$t")   (* = account đang chọn)"
+    echo "Measured at $(fmt_time "$t")   (* = selected account)"
   elif [ "$oldest" -gt 0 ]; then
-    echo "Số liệu cũ nhất đo lúc $(fmt_time "$oldest"). Chạy 'agyr list' (không kèm -c) để đo lại.   (* = account đang chọn)"
+    echo "Oldest data measured at $(fmt_time "$oldest"). Run 'agyr list' (without -c) to refresh.   (* = selected account)"
   else
-    echo "Chưa có số liệu quota; chạy 'agyr list' (không kèm -c) để đo.   (* = account đang chọn)"
+    echo "No quota data yet; run 'agyr list' (without -c) to measure.   (* = selected account)"
   fi
 }
 
-# list [-c|--cached]: đo quota thật của mọi account (agy -p /quota, 0 token, song song) rồi in bảng; * = account đang chọn.
-# -c chỉ in số liệu đã lưu, không gọi agy.
+# list [-c|--cached]: measure every account's real quota (agy -p /quota, 0 tokens, in parallel) and print a table; * = selected account.
+# -c only prints the saved data and does not call agy.
 cmd_list() {
   need_jq; init_state
   local cached=0
   case "${1:-}" in
     -c|--cached) cached=1 ;;
     "") ;;
-    *) die "dùng: agyr list [-c|--cached]" 2 ;;
+    *) die "usage: agyr list [-c|--cached]" 2 ;;
   esac
   local -a names=()
   mapfile -t names < <(slots)
   if [ "${#names[@]}" -eq 0 ]; then
-    echo "(chưa có account nào; login bằng 'agy' rồi chạy 'agyr save <name>')"
+    echo "(no accounts yet; log in with 'agy', then run 'agyr save <name>')"
     return 0
   fi
   local failed="" live=0
   if [ "$cached" -eq 0 ]; then
     if command -v "$AGY_BIN" >/dev/null; then
-      if [ -t 2 ]; then printf 'Đang đo quota của %d account…' "${#names[@]}" >&2; fi
+      if [ -t 2 ]; then printf 'Measuring quota of %d accounts…' "${#names[@]}" >&2; fi
       failed="$(measure_all "${names[@]}")"
       if [ -t 2 ]; then printf '\r\033[K' >&2; fi
       live=1
     else
-      echo "agyr: không tìm thấy agy ($AGY_BIN), hiển thị số liệu đã lưu" >&2
+      echo "agyr: agy not found ($AGY_BIN), showing saved data" >&2
     fi
   fi
   print_table "$failed" "$live"
@@ -395,20 +398,21 @@ cmd_active() { need_jq; init_state; active_name; }
 
 usage() {
   cat <<'EOF'
-agyr — xoay vòng nhiều account agy
+agyr — rotate between multiple agy accounts
 
-  save <name>               lưu token hiện tại thành slot <name> (đặt làm active)
-  use <name>                chuyển token sang slot <name> (sync token đang dùng về slot cũ)
-  list [-c]                 đo quota thật của mọi account (agy -p /quota, 0 token, song song, không đụng token đang dùng)
-                            và in bảng; * = account đang chọn. -c: chỉ in số liệu đã lưu. Về 0% thì tự đặt cooldown
-  active                    in tên account active
-  cooldown <name> <thời gian>   đánh dấu hết quota; nhận "4h13m27s", "43m", 90 hoặc cả câu "… Resets in 4h13m27s."
-  clear <name>              bỏ cooldown
-  next                      in account sẵn sàng kế tiếp; exit 3 nếu cả pool đang cooldown
-  rotate [thời gian]        hết quota khi dùng agy tay: cooldown account đang active (đọc 'Resets in' từ log agy,
-                            hoặc nhập tay) rồi chuyển sang account kế tiếp; sau đó mở lại bằng 'agy -c'
+  save <name>               save the current token as slot <name> (and make it active)
+  use <name>                switch the token to slot <name> (the token in use is synced back to its own slot first)
+  list [-c]                 measure every account's real quota (agy -p /quota, 0 tokens, in parallel, without touching the
+                            token in use) and print a table; * = selected account. -c: print saved data only.
+                            Accounts at 0% get a cooldown automatically
+  active                    print the active account's name
+  cooldown <name> <time>    mark as out of quota; accepts "4h13m27s", "43m", 90 or a sentence "… Resets in 4h13m27s."
+  clear <name>              remove the cooldown
+  next                      print the next ready account; exit 3 if the whole pool is on cooldown
+  rotate [time]             out of quota while using agy by hand: put the active account on cooldown (read 'Resets in'
+                            from the agy log, or give it by hand) and switch to the next account; then reopen with 'agy -c'
 
-Sau mỗi lần login tay bằng 'agy', hãy chạy 'agyr save <name>' để slot không bị lệch.
+After every manual login with 'agy', run 'agyr save <name>' so the slot does not drift from the real account.
 EOF
 }
 

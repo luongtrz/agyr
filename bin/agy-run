@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# agy-run — chạy một task agy; khi account hết quota (429) thì kill, đổi sang
-# account khác bằng agyr và resume đúng conversation đó.
+# agy-run — run one agy task; when the account runs out of quota (429), kill agy, switch to
+# another account with agyr and resume the very same conversation.
 #
-# Dùng:
+# Usage:
 #   agy-run --prompt FILE --add-dir DIR --log FILE.jsonl [--model M]
 #
-# Exit code:
-#   0 thành công | 1 agy lỗi khác | 2 sai tham số
-#   4 lỗi đăng nhập (cần user login lại) | 5 cả pool hết quota | 6 đổi account quá nhiều lần
+# Exit codes:
+#   0 success | 1 other agy failure | 2 bad arguments
+#   4 login error (the user must log in again) | 5 whole pool out of quota | 6 switched accounts too many times
 #
-# Biến môi trường (dùng cho test):
-#   AGY_BIN             binary agy (mặc định agy)
-#   AGY_ACCT            lệnh agyr (mặc định: file cạnh script này)
-#   AGY_RUN_POLL        giây giữa hai lần soi log (mặc định 1)
-#   AGY_RUN_MAX_SWITCH  số lần đổi account tối đa (mặc định 6)
+# Environment variables (for tests):
+#   AGY_BIN             agy binary (default agy)
+#   AGY_ACCT            agyr command (default: the file next to this script)
+#   AGY_RUN_POLL        seconds between two looks at the log (default 1)
+#   AGY_RUN_MAX_SWITCH  maximum number of account switches (default 6)
 set -uo pipefail
 
 AGY_BIN="${AGY_BIN:-agy}"
@@ -35,15 +35,15 @@ while [ $# -gt 0 ]; do
     --add-dir) ADD_DIR="${2:-}"; shift 2 ;;
     --log) LOG_FILE="${2:-}"; shift 2 ;;
     --model) MODEL="${2:-}"; shift 2 ;;
-    *) die "tham số lạ: $1 (dùng: --prompt FILE --add-dir DIR --log FILE [--model M])" 2 ;;
+    *) die "unknown argument: $1 (usage: --prompt FILE --add-dir DIR --log FILE [--model M])" 2 ;;
   esac
 done
-[ -f "$PROMPT_FILE" ] || die "--prompt phải là file tồn tại" 2
-[ -d "$ADD_DIR" ] || die "--add-dir phải là thư mục tồn tại" 2
-[ -n "$LOG_FILE" ] || die "thiếu --log" 2
+[ -f "$PROMPT_FILE" ] || die "--prompt must be an existing file" 2
+[ -d "$ADD_DIR" ] || die "--add-dir must be an existing directory" 2
+[ -n "$LOG_FILE" ] || die "missing --log" 2
 
-CUR="$("$AGY_ACCT" active)" || die "agyr lỗi" 1
-[ -n "$CUR" ] || die "chưa có account active; login rồi chạy: agyr save <name>" 4
+CUR="$("$AGY_ACCT" active)" || die "agyr failed" 1
+[ -n "$CUR" ] || die "no active account; log in, then run: agyr save <name>" 4
 
 ORIG_PROMPT="$(cat "$PROMPT_FILE")"
 RESUME_NOTE="Continue the task from where you stopped. The previous account ran out of quota mid-run, so partial uncommitted edits may already exist in the working directory: check git status/diff first, finish and verify them, do not revert them."
@@ -51,7 +51,7 @@ RESUME_NOTE="Continue the task from where you stopped. The previous account ran 
 PID=""
 OFF=0
 
-# chạy agy một lần; trả về: 0 xong SUCCESS | 10 quota | 11 auth | 1 lỗi khác
+# run agy once; returns: 0 finished with SUCCESS | 10 quota | 11 auth | 1 other failure
 run_attempt() {
   OFF="$(stat -c %s "$LOG_FILE" 2>/dev/null || echo 0)"
   setsid "$AGY_BIN" "$@" --add-dir "$ADD_DIR" --model "$MODEL" \
@@ -71,11 +71,11 @@ run_attempt() {
   local st
   st="$(grep '^{' <<<"$chunk" | jq -r 'select(.event=="result") | .result.status' 2>/dev/null | tail -1)"
   [ "$st" = "SUCCESS" ] && return 0
-  log "agy kết thúc với status '${st:-NO_RESULT}'"
+  log "agy ended with status '${st:-NO_RESULT}'"
   return 1
 }
 
-stop_agy() { # kill cả process group rồi thu dọn
+stop_agy() { # kill the whole process group, then reap it
   kill -TERM -- "-$PID" 2>/dev/null || kill -TERM "$PID" 2>/dev/null
   sleep 0.2
   kill -KILL -- "-$PID" 2>/dev/null
@@ -83,7 +83,7 @@ stop_agy() { # kill cả process group rồi thu dọn
   return 0
 }
 
-conv_id_from_log() { # conversation_id của event init đầu tiên trong đoạn log mới
+conv_id_from_log() { # conversation_id of the first init event in the new part of the log
   tail -c +$((OFF + 1)) "$LOG_FILE" | grep '^{"event":"init"' | head -1 |
     jq -r '.conversation_id // empty' 2>/dev/null
 }
@@ -93,29 +93,29 @@ SWITCHES=0
 ARGS=(-p "$ORIG_PROMPT")
 
 while :; do
-  log "chạy trên account '$CUR'${CONV:+ (resume $CONV)}"
+  log "running on account '$CUR'${CONV:+ (resume $CONV)}"
   run_attempt "${ARGS[@]}"
   rc=$?
   id="$(conv_id_from_log)"
   [ -n "$id" ] && CONV="$id"
 
   case "$rc" in
-    0) log "xong (account '$CUR')"; exit 0 ;;
-    11) die "lỗi đăng nhập trên account '$CUR': hãy login lại bằng '! agy' rồi 'agyr save $CUR'" 4 ;;
+    0) log "done (account '$CUR')"; exit 0 ;;
+    11) die "login error on account '$CUR': log in again with '! agy', then 'agyr save $CUR'" 4 ;;
     10) ;;
     *) exit 1 ;;
   esac
 
   reset="$(tail -c +$((OFF + 1)) "$LOG_FILE" | grep -m1 "$QUOTA_RE" | grep -oE 'Resets in [0-9dhms]+' | head -1)"
-  log "account '$CUR' hết quota (${reset:-không rõ thời gian reset})"
+  log "account '$CUR' is out of quota (${reset:-reset time unknown})"
   "$AGY_ACCT" cooldown "$CUR" "${reset:-5h}" >&2 || true
 
   SWITCHES=$((SWITCHES + 1))
-  [ "$SWITCHES" -le "$MAX_SWITCH" ] || die "đã đổi account $MAX_SWITCH lần, dừng" 6
+  [ "$SWITCHES" -le "$MAX_SWITCH" ] || die "switched accounts $MAX_SWITCH times, stopping" 6
   if ! NEXT="$("$AGY_ACCT" next)"; then
-    die "cả pool hết quota (conversation ${CONV:-chưa có}); chờ reset hoặc login account khác" 5
+    die "whole pool is out of quota (conversation ${CONV:-none}); wait for a reset or log in to another account" 5
   fi
-  "$AGY_ACCT" use "$NEXT" >&2 || die "không đổi được sang '$NEXT'" 1
+  "$AGY_ACCT" use "$NEXT" >&2 || die "could not switch to '$NEXT'" 1
   CUR="$NEXT"
 
   if [ -n "$CONV" ]; then
