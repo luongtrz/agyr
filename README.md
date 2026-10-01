@@ -37,6 +37,7 @@ agy-acct list                 # slot, account đang active (*), cooldown
 agy-acct use acc2             # đổi tay
 agy-acct cooldown acc1 4h13m  # đánh dấu hết quota
 agy-acct next                 # account sẵn sàng kế tiếp (exit 3 nếu cả pool cooldown)
+agy-acct rotate               # dùng agy tay mà hết quota: cooldown account hiện tại + đổi sang account kế tiếp
 
 agy-run --prompt task.txt --add-dir /path/to/worktree --log task.jsonl [--model M]
 ```
@@ -44,6 +45,17 @@ agy-run --prompt task.txt --add-dir /path/to/worktree --log task.jsonl [--model 
 `agy-run` chạy agy với `--dangerously-skip-permissions --output-format stream-json`. Gặp `Individual quota reached` thì kill ngay (không chờ agy retry), ghi cooldown theo `Resets in …`, chuyển sang account kế tiếp và resume bằng `--conversation <id>`.
 
 Exit code của `agy-run`: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nhập hoặc chưa có account active, `5` cả pool hết quota, `6` đổi account quá `AGY_RUN_MAX_SWITCH` (mặc định 6) lần.
+
+## Khi đang dùng agy tay mà hết quota
+
+Thoát agy (process đang chạy giữ token cũ), rồi:
+
+```bash
+agy-acct rotate    # cooldown account hiện tại (đọc "Resets in …" từ log agy) + đổi sang account kế tiếp
+agy -c             # mở lại, tiếp tục conversation gần nhất
+```
+
+`rotate [thời gian]` nhận thời gian nhập tay (ví dụ `rotate 4h13m`) nếu log không có lỗi quota trong 1 giờ gần đây (khi đó mặc định 5h). Cả pool đang cooldown thì exit 3 và không đổi token.
 
 ## Test
 
