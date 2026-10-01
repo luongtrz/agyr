@@ -22,7 +22,12 @@ POLL="${AGY_RUN_POLL:-1}"
 MAX_SWITCH="${AGY_RUN_MAX_SWITCH:-6}"
 MODEL="gemini-3.8-flash-high"
 
-QUOTA_RE='Individual quota reached'
+# A real 429 shows up as plain-text lines at the start of a line ("error: Individual quota reached ..." and
+# "AGY_ERROR: {... RESOURCE_EXHAUSTED (code 429) ...}"). When a conversation is resumed, agy can ALSO echo the old quota
+# error inside the final {"event":"result",...} JSON line even though the new run worked (seen 2026-10-01: four false
+# "429"s in one session, with an unchanged "Resets in" value). JSON lines therefore must not count, otherwise an account
+# that still has quota is put on cooldown and the run needlessly moves to the next account.
+QUOTA_RE='^(error: Individual quota reached|AGY_ERROR: .*RESOURCE_EXHAUSTED \(code 429\))'
 AUTH_RE="authentication required|authentication failed or timed out|not logged into Antigravity"
 
 usage() {
@@ -91,10 +96,11 @@ run_attempt() {
   chunk="$(tail -c +$((OFF + 1)) "$LOG_FILE")"
   if grep -qE "$QUOTA_RE" <<<"$chunk"; then return 10; fi
   if grep -qE "$AUTH_RE" <<<"$chunk"; then return 11; fi
-  local st
+  local st err
   st="$(grep '^{' <<<"$chunk" | jq -r 'select(.event=="result") | .result.status' 2>/dev/null | tail -1)"
   [ "$st" = "SUCCESS" ] && return 0
-  log "agy ended with status '${st:-NO_RESULT}'"
+  err="$(grep '^{' <<<"$chunk" | jq -r 'select(.event=="result") | .result.error // empty' 2>/dev/null | tail -1)"
+  log "agy ended with status '${st:-NO_RESULT}'${err:+ (result error: ${err:0:120})}; no new 429 line, so no account switch (read the log)"
   return 1
 }
 
@@ -129,7 +135,7 @@ while :; do
     *) exit 1 ;;
   esac
 
-  reset="$(tail -c +$((OFF + 1)) "$LOG_FILE" | grep -m1 "$QUOTA_RE" | grep -oE 'Resets in [0-9dhms]+' | head -1)"
+  reset="$(tail -c +$((OFF + 1)) "$LOG_FILE" | grep -m1 -E "$QUOTA_RE" | grep -oE 'Resets in [0-9dhms]+' | head -1)"
   log "account '$CUR' is out of quota (${reset:-reset time unknown})"
   "$AGY_ACCT" cooldown "$CUR" "${reset:-5h}" >&2 || true
 

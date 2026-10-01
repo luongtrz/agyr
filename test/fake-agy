@@ -2,6 +2,7 @@
 # Fake agy for tests. Behaviour depends on the (fake) token content in $AGY_HOME:
 #   - token listed in FAKE_QUOTA_TOKENS (space-separated) -> print a 429 error, then hang like agy retrying
 #   - FAKE_AUTH=1 -> print a login error, exit 1
+#   - FAKE_STALE_ERROR=1 -> init + a result event with status ERROR that merely echoes an old quota error
 #   - otherwise -> init + SUCCESS result
 # Every call appends "token|argv" to $FAKE_ARGS_LOG.
 set -u
@@ -63,4 +64,9 @@ for q in ${FAKE_QUOTA_TOKENS:-}; do
     exit 1
   fi
 done
+if [ "${FAKE_STALE_ERROR:-0}" = 1 ]; then
+  # a resumed conversation: the run worked, but the final result event echoes the OLD quota error (no plain-text error lines)
+  echo '{"event":"result","result":{"status":"ERROR","response":"all done","error":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h19m16s.","num_turns":3}}'
+  exit 0
+fi
 echo '{"event":"result","result":{"status":"SUCCESS","response":"ok","num_turns":1}}'
