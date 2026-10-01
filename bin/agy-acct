@@ -157,6 +157,58 @@ cmd_next() {
   return 3
 }
 
+# Tìm lần chạm quota gần nhất trong log của agy; in số giây còn lại tới lúc reset (tính từ "bây giờ").
+# Dòng log dạng: E1001 12:49:02.672827 ... Individual quota reached ... Resets in 3h13m51s.
+# Bỏ qua dòng cũ hơn 1 giờ (rất có thể là của account khác / lần trước).
+detect_reset_secs() {
+  local logdir="$AGY_HOME/log" f line best_ts=0 best_reset=0 ts reset d t y t0
+  [ -d "$logdir" ] || return 1
+  t0="$(now)"
+  y="$(date -d "@$t0" +%Y)"
+  while read -r f; do
+    line="$(grep -E 'Individual quota reached.*Resets in [0-9dhms]+' "$f" | tail -n 1)" || true
+    [ -n "$line" ] || continue
+    if [[ "$line" =~ ^[A-Z]([0-9]{2})([0-9]{2})\ ([0-9:]{8}) ]]; then
+      d="$y-${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"; t="${BASH_REMATCH[3]}"
+      ts="$(date -d "$d $t" +%s 2>/dev/null)" || continue
+      [ "$ts" -gt $((t0 + 86400)) ] && ts="$(date -d "$((y - 1))-${BASH_REMATCH[1]}-${BASH_REMATCH[2]} $t" +%s)"
+    else
+      continue
+    fi
+    reset="$(parse_duration "$(grep -oE 'Resets in [0-9dhms]+' <<<"$line" | tail -n 1)")" || continue
+    if [ "$ts" -gt "$best_ts" ]; then best_ts=$ts; best_reset=$reset; fi
+  done < <(find "$logdir" -maxdepth 1 -name 'cli-*.log' -mmin -61 2>/dev/null)
+  [ "$best_ts" -gt 0 ] || return 1
+  [ $((t0 - best_ts)) -le 3600 ] || return 1
+  local remain=$((best_ts + best_reset - t0))
+  [ "$remain" -gt 0 ] || return 1
+  echo "$remain"
+}
+
+# Hết quota khi dùng agy tay: đánh dấu account đang active là cooldown rồi chuyển sang account kế tiếp.
+cmd_rotate() {
+  need_jq; init_state
+  local cur secs src
+  cur="$(active_name)"
+  [ -n "$cur" ] || die "chưa có account active (xem: agy-acct list)"
+  if [ $# -ge 1 ]; then
+    secs="$(parse_duration "$*")" || die "không hiểu thời gian '$*' (ví dụ: 4h13m)"
+    src="theo bạn nhập"
+  elif secs="$(detect_reset_secs)"; then
+    src="đọc từ log agy"
+  else
+    secs=$DEFAULT_COOLDOWN
+    src="không thấy lỗi quota mới trong log, dùng mặc định 5h"
+  fi
+  local until=$(($(now) + secs))
+  state_update '.cooldown[$n]=$u' --arg n "$cur" --argjson u "$until"
+  echo "account '$cur' cooldown $(fmt_dur "$secs") ($src; reset $(date -d "@$until" '+%F %H:%M'))"
+  local nxt
+  if ! nxt="$(cmd_next)"; then return 3; fi
+  cmd_use "$nxt"
+  echo "mở lại agy (đang là process mới) bằng: agy -c"
+}
+
 cmd_active() { need_jq; init_state; active_name; }
 
 usage() {
@@ -170,6 +222,8 @@ agy-acct — xoay vòng nhiều account agy
   cooldown <name> <thời gian>   đánh dấu hết quota; nhận "4h13m27s", "43m", 90 hoặc cả câu "… Resets in 4h13m27s."
   clear <name>              bỏ cooldown
   next                      in account sẵn sàng kế tiếp; exit 3 nếu cả pool đang cooldown
+  rotate [thời gian]        hết quota khi dùng agy tay: cooldown account đang active (đọc 'Resets in' từ log agy,
+                            hoặc nhập tay) rồi chuyển sang account kế tiếp; sau đó mở lại bằng 'agy -c'
 
 Sau mỗi lần login tay bằng 'agy', hãy chạy 'agy-acct save <name>' để slot không bị lệch.
 EOF
@@ -185,6 +239,7 @@ main() {
     cooldown) cmd_cooldown "$@" ;;
     clear) cmd_clear "$@" ;;
     next) cmd_next "$@" ;;
+    rotate) cmd_rotate "$@" ;;
     ""|-h|--help|help) usage ;;
     *) usage >&2; exit 2 ;;
   esac

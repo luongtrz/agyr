@@ -171,6 +171,60 @@ eq "log cũ: chỉ chạy 1 lần" "1" "$(lines)"
 setup
 runit >/dev/null; "$RUN" --bogus 2>/dev/null; eq "tham số lạ -> exit 2" "2" "$?"
 
+echo "== rotate (dùng agy tay)"
+# tạo một dòng log kiểu agy: E<MMDD> <HH:MM:SS.uuuuuu> ... Resets in X.   ($1 = số giây trước "bây giờ", $2 = Resets in)
+logline() {
+  printf 'E%s.123456  1 errorreport.go:224] generating and executing: RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in %s.\n' \
+    "$(date -d "@$((AGY_NOW - $1))" '+%m%d %H:%M:%S')" "$2"
+}
+
+setup
+mkdir -p "$AGY_HOME/log"; logline 120 "3h13m51s" >"$AGY_HOME/log/cli-20261001_100000.log"
+out="$("$ACCT" rotate 2>&1)"; rc=$?
+eq "rotate: exit 0" "0" "$rc"
+has "rotate: nói đọc từ log" "đọc từ log agy" "$out"
+eq "rotate: acc1 cooldown = log time + Resets in" "$((1000000 - 120 + 11631))" "$(cd_of acc1)"
+eq "rotate: chuyển sang acc2" "acc2" "$("$ACCT" active)"
+eq "rotate: token = acc2" "tok-acc2" "$(cat "$AGY_HOME/antigravity-oauth-token")"
+has "rotate: nhắc mở lại bằng agy -c" "agy -c" "$out"
+hasnt "rotate: không in token" "tok-" "$out"
+
+setup
+mkdir -p "$AGY_HOME/log"; logline 120 "3h13m51s" >"$AGY_HOME/log/cli-20261001_100000.log"
+"$ACCT" rotate 1h >/dev/null 2>&1
+eq "rotate: thời gian nhập tay ghi đè log" "$((1000000 + 3600))" "$(cd_of acc1)"
+
+setup
+mkdir -p "$AGY_HOME/log"; logline 7200 "3h13m51s" >"$AGY_HOME/log/cli-20261001_100000.log"
+out="$("$ACCT" rotate 2>&1)"
+eq "rotate: dòng log cũ hơn 1 giờ bị bỏ, dùng 5h" "$((1000000 + 18000))" "$(cd_of acc1)"
+has "rotate: báo dùng mặc định 5h" "mặc định 5h" "$out"
+
+setup
+mkdir -p "$AGY_HOME/log"
+logline 600 "4h13m19s" >"$AGY_HOME/log/cli-20261001_100000.log"
+logline 60 "43m29s" >"$AGY_HOME/log/cli-20261001_110000.log"
+touch -d '2 minutes ago' "$AGY_HOME/log/cli-20261001_100000.log"
+"$ACCT" rotate >/dev/null 2>&1
+eq "rotate: lấy dòng mới nhất trong các log" "$((1000000 - 60 + 2609))" "$(cd_of acc1)"
+
+setup
+"$ACCT" rotate >/dev/null 2>&1
+eq "rotate: không có thư mục log -> mặc định 5h" "$((1000000 + 18000))" "$(cd_of acc1)"
+
+setup
+mkdir -p "$AGY_HOME/log"; : >"$AGY_HOME/log/cli-20261001_100000.log"
+"$ACCT" cooldown acc2 3h >/dev/null; "$ACCT" cooldown acc3 2h >/dev/null
+out="$("$ACCT" rotate 1h 2>&1)"; rc=$?
+eq "rotate: cả pool cooldown -> exit 3" "3" "$rc"
+eq "rotate: cả pool cooldown vẫn ghi cooldown cho account hiện tại" "$((1000000 + 3600))" "$(cd_of acc1)"
+eq "rotate: cả pool cooldown không đổi token" "tok-acc1" "$(cat "$AGY_HOME/antigravity-oauth-token")"
+"$ACCT" rotate xyz >/dev/null 2>&1; eq "rotate: thời gian sai -> lỗi" "1" "$?"
+
+setup
+rm -f "$AGY_HOME/accounts/state.json"
+"$ACCT" rotate >/dev/null 2>&1; eq "rotate: chưa có account active -> lỗi" "1" "$?"
+
 echo "== an toàn"
 eq "token thật không bị đụng (mtime)" "$REAL_MTIME_BEFORE" "$(stat -c %Y "$REAL_TOKEN" 2>/dev/null || echo none)"
 
