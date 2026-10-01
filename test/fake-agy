@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# agy giả cho test. Hành vi phụ thuộc nội dung token trong $AGY_HOME (token giả):
+#   - token nằm trong FAKE_QUOTA_TOKENS (cách nhau bằng dấu cách) -> in lỗi 429 rồi treo như agy đang retry
+#   - FAKE_AUTH=1 -> in lỗi đăng nhập, exit 1
+#   - còn lại -> init + result SUCCESS
+# Mỗi lần gọi ghi "token|argv" vào $FAKE_ARGS_LOG.
+set -u
+tok="$(cat "$AGY_HOME/antigravity-oauth-token")"
+echo "$tok|$*" >>"${FAKE_ARGS_LOG:?}"
+
+cid="conv-fake-1"
+prev=""
+for a in "$@"; do
+  [ "$prev" = "--conversation" ] && cid="$a"
+  prev="$a"
+done
+
+if [ "${FAKE_AUTH:-0}" = 1 ]; then
+  echo "Error: authentication required. Run 'agy' to log in, then retry." >&2
+  exit 1
+fi
+
+echo "{\"event\":\"init\",\"conversation_id\":\"$cid\",\"init\":{\"model\":\"fake\"}}"
+for q in ${FAKE_QUOTA_TOKENS:-}; do
+  if [ "$q" = "$tok" ]; then
+    echo "error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in ${FAKE_RESET:-4h13m19s}. (response may be truncated)"
+    echo 'AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached.","error_code":429}'
+    sleep 30 # agy thật retry ~8 lần; agy-run phải kill trước đó
+    exit 1
+  fi
+done
+echo '{"event":"result","result":{"status":"SUCCESS","response":"ok","num_turns":1}}'
