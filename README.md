@@ -43,15 +43,15 @@ Về sau, mỗi lần bạn login tay một account, chạy lại `agyr save <t�
 ## Lệnh
 
 ```bash
-agyr list                 # slot, account đang active (*), cooldown, quota lần đo gần nhất
-agyr use <tên>            # đổi account
-agyr quota                # quota thật của account đang active (agy -p /quota, 0 token)
-agyr quota --all          # quota của cả pool; quota <tên> cho một account
-agyr rotate               # dùng agy tay mà hết quota: cooldown account hiện tại + đổi sang account kế tiếp
-agyr cooldown <tên> 4h13m # đánh dấu hết quota thủ công (nhận cả "… Resets in 4h13m27s")
-agyr clear <tên>          # bỏ cooldown
-agyr next                 # account sẵn sàng kế tiếp (exit 3 nếu cả pool cooldown)
-agyr active               # tên account đang active
+agyr list                     # đo quota thật của mọi account, in bảng; * = account đang chọn
+agyr list -c                  # chỉ in số liệu đã lưu, không gọi agy (nhanh)
+agyr use <tên>                # đổi account
+agyr rotate                   # dùng agy tay mà hết quota: cooldown account hiện tại + đổi sang account kế tiếp
+agyr cooldown <tên> 4h13m     # đánh dấu hết quota thủ công (nhận cả "… Resets in 4h13m27s")
+agyr clear <tên>              # bỏ cooldown
+agyr next                     # account sẵn sàng kế tiếp (exit 3 nếu cả pool cooldown)
+agyr active                   # tên account đang dùng
+agyr save <tên>               # lưu token hiện tại thành slot
 ```
 
 ## Khi đang dùng agy tay mà hết quota
@@ -65,11 +65,22 @@ agy -c             # mở lại, tiếp tục conversation gần nhất
 
 `rotate [thời gian]` nhận thời gian nhập tay (ví dụ `rotate 4h13m`) nếu log không có lỗi quota trong 1 giờ gần đây (khi đó mặc định 5h). Cả pool đang cooldown thì exit 3 và không đổi token.
 
-## Xem quota
+## agyr list: xem quota
 
-`agyr quota` chạy `agy -p /quota` (không gọi model, tốn 0 token) và in quota 5 giờ / quota tuần của Gemini và Claude/GPT. `quota --all` đi qua từng account: đổi token sang account đó, đo, rồi trả token về account ban đầu (kể cả khi bị Ctrl+C). Đừng chạy `quota --all` lúc có `agy-run` đang chạy, vì nó đổi file token tạm thời.
+```
+  ACCOUNT        GEMINI 5H                   GEMINI WEEK                 STATUS
+  acct3          100%  01/10/2026 07:14 PM   100%  08/10/2026 02:02 PM   sẵn sàng
+  acct2            1%  01/10/2026 03:03 PM    75%  07/10/2026 11:46 AM   sắp hết
+  acct1            1%  01/10/2026 04:02 PM    67%  07/10/2026 09:24 AM   sắp hết
+* work            46%  01/10/2026 05:53 PM    74%  07/10/2026 02:02 PM   sẵn sàng
+Đo lúc 01/10/2026 02:58 PM   (* = account đang chọn)
+```
 
-Kết quả mỗi lần đo được lưu lại, nên `agyr list` hiện thêm dòng `quota Gemini: 5h … · tuần … · đo lúc …` (số liệu cũ, nhìn giờ đo; phần đã qua giờ reset hiện "đã reset"). Account về 0% thì tự đặt cooldown tới đúng giờ reset, nên `next`, `rotate` và `agy-run` bỏ qua nó.
+`agyr list` chạy `agy -p /quota` (không gọi model, tốn 0 token) cho **từng account song song** (mất khoảng 10–20 giây) và lưu kết quả. Mỗi lần đo chạy trong một thư mục HOME tạm chứa bản sao token, nên **không đụng file token thật**: không ảnh hưởng `agy` đang mở hay `agy-run` đang chạy. Cột Gemini là nhóm model mà `agy-run` dùng; quota Claude/GPT không hiển thị (xem trong `agy` bằng `/quota`).
+
+- **Dấu `*`** đánh dấu account mà file token thật đang thuộc về (so `refresh_token` với từng slot), không phải tên đã ghi trong state. Nhờ đó nếu bạn tự login sang account khác bằng `agy`, bảng vẫn đánh dấu đúng, và `use` không ghi đè nhầm slot. Nếu token đang dùng không khớp slot nào (vừa login account chưa lưu) thì bảng cảnh báo và không đánh dấu `*`; chạy `agyr save <tên>`.
+- **Đo thấy 0%** thì tự đặt cooldown tới đúng giờ reset; **đo thấy còn quota** thì xóa cooldown cũ (ví dụ cooldown mặc định 5 giờ). Nhờ vậy `next`, `rotate` và `agy-run` luôn dựa trên số liệu thật.
+- **Trạng thái:** `sẵn sàng`, `sắp hết` (còn ≤10%), `cooldown, còn …`, `chưa đo`, `số liệu cũ, đã qua giờ reset` (chỉ với `-c`), `không đo được` (token hết hạn hoặc agy lỗi; khi đó exit code là 1).
 
 ## Múi giờ
 
@@ -98,7 +109,7 @@ Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nh
 bash test/run.sh
 ```
 
-124 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật.
+151 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật.
 
 ## Giới hạn đã biết
 
@@ -107,4 +118,5 @@ bash test/run.sh
 - `agy-run` nhận diện lỗi bằng text trong log. Nếu prompt của task chứa nguyên văn `Individual quota reached` mà agy echo lại ra log, có thể báo nhầm.
 - Chưa xử lý 503 "No capacity" (chuyển sang `gemini-3.7-flash-high` vẫn làm tay theo skill agy).
 - Chạy nhiều `agy-run` song song dùng chung một pool theo kiểu best-effort.
+- `agyr list` đo bằng bản sao token trong HOME tạm. Token đã bị thu hồi thì báo `không đo được` thay vì đoán.
 - State (cooldown, active, snapshot quota) nằm ở `~/.gemini/antigravity-cli/accounts/state.json`; token backup trước mỗi lần `use` ở `accounts/.last-token.bak`.

@@ -11,15 +11,22 @@ echo "$tok|$*" >>"${FAKE_ARGS_LOG:?}"
 # /quota giả, cùng định dạng agy thật. Phần trăm suy ra từ ký tự cuối của token: 5h = 50+10n, tuần = 40+10n.
 #   FAKE_DEAD_TOKENS: token bị coi là chưa đăng nhập (status ERROR)
 #   FAKE_ZERO_TOKENS: token hết quota 5h (0%)
+#   FAKE_LOW_TOKENS:  token còn 5% quota 5h
+#   FAKE_REFRESH=1:   ghi lại file token (mô phỏng agy tự làm mới access token)
 prev=""
 for a in "$@"; do
   if [ "$prev" = "-p" ] && [ "$a" = "/quota" ]; then
     for d in ${FAKE_DEAD_TOKENS:-}; do
       [ "$d" = "$tok" ] && { echo '{"event":"result","result":{"status":"ERROR","error":"not logged in"}}'; exit 1; }
     done
-    n="${tok: -1}"; [[ "$n" =~ [0-9] ]] || n=0
+    # chữ số suy ra từ "rt-accN" trong token JSON, nếu không có thì từ ký tự cuối của token
+    if [[ "$tok" =~ rt-acc([0-9]) ]]; then n="${BASH_REMATCH[1]}"; else n="${tok: -1}"; fi
+    [[ "$n" =~ ^[0-9]$ ]] || n=0
     p5=$((50 + n * 10)); pw=$((40 + n * 10))
     for z in ${FAKE_ZERO_TOKENS:-}; do [ "$z" = "$tok" ] && p5=0; done
+    for z in ${FAKE_LOW_TOKENS:-}; do [ "$z" = "$tok" ] && p5=5; done
+    # FAKE_REFRESH=1: agy "tự làm mới token" bằng cách ghi lại file token trong HOME của nó
+    if [ "${FAKE_REFRESH:-0}" = 1 ]; then echo "$tok-refreshed" >"$AGY_HOME/antigravity-oauth-token"; fi
     now="${AGY_NOW:-$(date +%s)}"
     r5="$(date -u -d "@$((now + 3600))" +%Y-%m-%dT%H:%M:%SZ)"
     rw="$(date -u -d "@$((now + 259200))" +%Y-%m-%dT%H:%M:%SZ)"
