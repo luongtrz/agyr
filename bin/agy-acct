@@ -4,11 +4,17 @@
 # Chỉ copy file token qua lại; không bao giờ in nội dung token ra màn hình.
 # Biến môi trường (dùng cho test):
 #   AGY_HOME  thư mục dữ liệu của agy (mặc định ~/.gemini/antigravity-cli)
+#   AGY_BIN   binary agy dùng cho lệnh quota (mặc định agy)
+#   AGY_TZ    múi giờ để hiển thị và đọc giờ trong log agy (mặc định UTC-7, tức UTC+7 theo quy ước POSIX)
 #   AGY_NOW   epoch giả lập cho "bây giờ" (mặc định date +%s)
 set -euo pipefail
 umask 077
 
+# Mọi giờ hiển thị (và giờ trong log agy) tính theo UTC+7. Lưu ý quy ước POSIX: 'UTC-7' nghĩa là UTC+7.
+export TZ="${AGY_TZ:-UTC-7}"
+
 AGY_HOME="${AGY_HOME:-$HOME/.gemini/antigravity-cli}"
+AGY_BIN="${AGY_BIN:-agy}"
 TOKEN="$AGY_HOME/antigravity-oauth-token"
 ACCTS="$AGY_HOME/accounts"
 STATE="$ACCTS/state.json"
@@ -97,7 +103,7 @@ cmd_use() {
 
 cmd_list() {
   need_jq; init_state
-  local cur n until t rem
+  local cur n until t rem q
   cur="$(active_name)"; t="$(now)"
   local any=0
   while read -r n; do
@@ -109,6 +115,8 @@ cmd_list() {
     else
       printf '%s %-16s sẵn sàng\n' "$([ "$n" = "$cur" ] && echo '*' || echo ' ')" "$n"
     fi
+    q="$(quota_summary "$n")"
+    if [ -n "$q" ]; then printf '    %s\n' "$q"; fi
   done < <(slots)
   [ "$any" -eq 1 ] || echo "(chưa có account nào; login bằng 'agy' rồi chạy 'agy-acct save <name>')"
 }
@@ -209,6 +217,90 @@ cmd_rotate() {
   echo "mở lại agy (đang là process mới) bằng: agy -c"
 }
 
+# Chạy `agy -p /quota` (không gọi model, 0 token) trên token đang active; in các dòng
+# "<nhóm>\t<chỉ số>\t<phần trăm>\t<giờ reset UTC>". Lỗi thì return 1.
+quota_fetch() {
+  local tmp out
+  tmp="$(mktemp -d)"
+  out="$("$AGY_BIN" -p /quota --add-dir "$tmp" --model gemini-3.8-flash-high --output-format stream-json 2>/dev/null |
+    grep '^{' | jq -r 'select(.event=="result") | select(.result.status=="SUCCESS") | .result.response' 2>/dev/null)" || true
+  rm -rf "$tmp"
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
+}
+
+# In quota của account có token đang active, lưu snapshot vào state; về 0% thì đặt cooldown tới giờ reset.
+quota_show() {
+  local name="$1" raw grp metric pct reset epoch g5="" g5r=0 gw="" gwr=0
+  if ! raw="$(quota_fetch)"; then
+    echo "  (không lấy được quota: chưa đăng nhập hoặc agy lỗi)"
+    return 1
+  fi
+  while IFS=$'\t' read -r grp metric pct reset; do
+    [ -n "$reset" ] || continue
+    epoch="$(date -d "$reset" +%s 2>/dev/null)" || continue
+    case "$grp|$metric" in
+      "Gemini Models|Five Hour"*) g5="${pct%\%}"; g5r="$epoch" ;;
+      "Gemini Models|Weekly"*) gw="${pct%\%}"; gwr="$epoch" ;;
+    esac
+    printf '  %-22s %-27s %5s   reset %s\n' "$grp" "$metric" "$pct" "$(date -d "@$epoch" '+%m-%d %H:%M')"
+  done <<<"$raw"
+  if [[ "$g5" =~ ^[0-9]+$ && "$gw" =~ ^[0-9]+$ ]]; then
+    state_update '.quota[$n]={at:$t,g5:$a,g5r:$ar,gw:$b,gwr:$br}' --arg n "$name" --argjson t "$(now)" \
+      --argjson a "$g5" --argjson ar "$g5r" --argjson b "$gw" --argjson br "$gwr"
+    local until=0
+    if [ "$g5" -eq 0 ]; then until=$g5r; fi
+    if [ "$gw" -eq 0 ] && [ "$gwr" -gt "$until" ]; then until=$gwr; fi
+    if [ "$until" -gt "$(now)" ]; then
+      state_update '.cooldown[$n]=$u' --arg n "$name" --argjson u "$until"
+      echo "  → hết quota Gemini: đặt cooldown tới $(date -d "@$until" '+%F %H:%M')"
+    fi
+  fi
+  return 0
+}
+
+# quota [tên | --all]: xem quota thật. Account không phải active được đổi sang tạm thời rồi trả về như cũ.
+cmd_quota() {
+  need_jq; init_state
+  command -v "$AGY_BIN" >/dev/null || die "không tìm thấy agy ($AGY_BIN)"
+  local orig; orig="$(active_name)"
+  local -a targets=()
+  if [ "${1:-}" = "--all" ]; then
+    mapfile -t targets < <(slots)
+  elif [ $# -ge 1 ]; then
+    valid_name "$1"
+    [ -f "$ACCTS/$1.token" ] || die "không có slot '$1' (xem: agy-acct list)"
+    targets=("$1")
+  else
+    [ -n "$orig" ] || die "chưa có account active (xem: agy-acct list)"
+    targets=("$orig")
+  fi
+  [ "${#targets[@]}" -gt 0 ] || die "chưa có account nào" 2
+  # dù bị ngắt giữa chừng cũng trả token về account ban đầu
+  restore_orig() { if [ -n "$orig" ] && [ "$(active_name)" != "$orig" ]; then cmd_use "$orig" >/dev/null 2>&1 || true; fi; }
+  trap restore_orig INT TERM
+  local n fail=0
+  for n in "${targets[@]}"; do
+    if [ "$n" = "$(active_name)" ]; then
+      echo "$n$([ "$n" = "$orig" ] && echo ' (active)'):"
+    else
+      cmd_use "$n" >/dev/null
+      echo "$n:"
+    fi
+    quota_show "$n" || fail=1
+  done
+  restore_orig
+  trap - INT TERM
+  return "$fail"
+}
+
+# Dòng tóm tắt snapshot quota gần nhất của một account (rỗng nếu chưa đo lần nào).
+quota_summary() {
+  jq -r --arg n "$1" --argjson t "$(now)" '
+    def f(p; r): if r <= $t then "đã reset" else "\(p)% (reset \(r | strflocaltime("%m-%d %H:%M")))" end;
+    .quota[$n] // empty | "quota Gemini: 5h \(f(.g5; .g5r)) · tuần \(f(.gw; .gwr)) · đo lúc \(.at | strflocaltime("%m-%d %H:%M"))"' "$STATE"
+}
+
 cmd_active() { need_jq; init_state; active_name; }
 
 usage() {
@@ -222,6 +314,8 @@ agy-acct — xoay vòng nhiều account agy
   cooldown <name> <thời gian>   đánh dấu hết quota; nhận "4h13m27s", "43m", 90 hoặc cả câu "… Resets in 4h13m27s."
   clear <name>              bỏ cooldown
   next                      in account sẵn sàng kế tiếp; exit 3 nếu cả pool đang cooldown
+  quota [tên | --all]       xem quota thật (agy -p /quota, 0 token); --all đi qua từng account rồi trả token về như cũ;
+                            về 0% thì tự đặt cooldown tới giờ reset. Kết quả lưu để 'list' hiển thị
   rotate [thời gian]        hết quota khi dùng agy tay: cooldown account đang active (đọc 'Resets in' từ log agy,
                             hoặc nhập tay) rồi chuyển sang account kế tiếp; sau đó mở lại bằng 'agy -c'
 
@@ -240,6 +334,7 @@ main() {
     clear) cmd_clear "$@" ;;
     next) cmd_next "$@" ;;
     rotate) cmd_rotate "$@" ;;
+    quota) cmd_quota "$@" ;;
     ""|-h|--help|help) usage ;;
     *) usage >&2; exit 2 ;;
   esac

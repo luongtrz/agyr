@@ -8,6 +8,7 @@ export AGY_BIN="$HERE/fake-agy"
 export AGY_ACCT="$ACCT"
 export AGY_RUN_POLL=0.1
 
+export TZ=UTC-7 # cùng múi giờ với agy-acct để dựng dòng log giả cho khớp
 REAL_TOKEN="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
 REAL_MTIME_BEFORE="$(stat -c %Y "$REAL_TOKEN" 2>/dev/null || echo none)"
 
@@ -224,6 +225,80 @@ eq "rotate: cả pool cooldown không đổi token" "tok-acc1" "$(cat "$AGY_HOME
 setup
 rm -f "$AGY_HOME/accounts/state.json"
 "$ACCT" rotate >/dev/null 2>&1; eq "rotate: chưa có account active -> lỗi" "1" "$?"
+
+echo "== quota"
+setup
+export FAKE_ARGS_LOG="$T/args.log"
+out="$("$ACCT" quota 2>&1)"; rc=$?
+eq "quota: exit 0" "0" "$rc"
+has "quota: in dòng Gemini 5 giờ" "Five Hour Limit Remaining" "$out"
+has "quota: header là account active" "acc1 (active):" "$out"
+eq "quota: lưu g5 (tok-acc1 -> 60)" "60" "$(jq -r '.quota.acc1.g5' "$AGY_HOME/accounts/state.json")"
+eq "quota: lưu gw (tok-acc1 -> 50)" "50" "$(jq -r '.quota.acc1.gw' "$AGY_HOME/accounts/state.json")"
+eq "quota: reset 5h = now+3600" "$((1000000 + 3600))" "$(jq -r '.quota.acc1.g5r' "$AGY_HOME/accounts/state.json")"
+hasnt "quota: không in token" "tok-" "$out"
+eq "quota: không tạo cooldown khi còn quota" "0" "$(cd_of acc1)"
+out="$("$ACCT" list)"
+has "list: hiện quota snapshot 5h" "quota Gemini: 5h 60%" "$out"
+has "list: hiện quota snapshot tuần" "tuần 50%" "$out"
+AGY_NOW=$((1000000 + 4000)); export AGY_NOW
+out="$("$ACCT" list)"
+has "list: 5h đã qua giờ reset -> 'đã reset'" "5h đã reset" "$out"
+hasnt "list: tuần chưa reset vẫn hiện %" "tuần đã reset" "$out"
+AGY_NOW=1000000; export AGY_NOW
+
+setup
+out="$("$ACCT" quota --all 2>&1)"; rc=$?
+eq "quota --all: exit 0" "0" "$rc"
+for a in acc1 acc2 acc3; do has "quota --all: có $a" "$a" "$out"; done
+eq "quota --all: acc2 g5=70" "70" "$(jq -r '.quota.acc2.g5' "$AGY_HOME/accounts/state.json")"
+eq "quota --all: acc3 g5=80" "80" "$(jq -r '.quota.acc3.g5' "$AGY_HOME/accounts/state.json")"
+eq "quota --all: trả active về acc1" "acc1" "$("$ACCT" active)"
+eq "quota --all: token trả về acc1" "tok-acc1" "$(cat "$AGY_HOME/antigravity-oauth-token")"
+eq "quota --all: slot acc2 còn nguyên" "tok-acc2" "$(cat "$AGY_HOME/accounts/acc2.token")"
+
+setup
+out="$("$ACCT" quota acc3 2>&1)"
+has "quota <tên>: header acc3" "acc3:" "$out"
+eq "quota <tên>: trả active về acc1" "acc1" "$("$ACCT" active)"
+eq "quota <tên>: token trả về acc1" "tok-acc1" "$(cat "$AGY_HOME/antigravity-oauth-token")"
+"$ACCT" quota nope >/dev/null 2>&1; eq "quota slot không tồn tại -> lỗi" "1" "$?"
+
+setup
+export FAKE_ZERO_TOKENS="tok-acc2"
+out="$("$ACCT" quota --all 2>&1)"
+has "quota: báo hết quota Gemini" "hết quota Gemini" "$out"
+eq "quota 0%: cooldown acc2 = giờ reset 5h" "$((1000000 + 3600))" "$(cd_of acc2)"
+eq "quota 0%: acc1 không bị cooldown" "0" "$(cd_of acc1)"
+eq "next bỏ qua acc2 (0% quota)" "acc3" "$("$ACCT" next)"
+
+setup
+export FAKE_DEAD_TOKENS="tok-acc2"
+out="$("$ACCT" quota --all 2>&1)"; rc=$?
+eq "quota --all: một account chết -> exit 1" "1" "$rc"
+has "quota: báo không lấy được cho account chết" "không lấy được quota" "$out"
+eq "quota: account còn lại vẫn đo (acc3 g5=80)" "80" "$(jq -r '.quota.acc3.g5' "$AGY_HOME/accounts/state.json")"
+eq "quota: account chết không có snapshot" "null" "$(jq -r '.quota.acc2.g5' "$AGY_HOME/accounts/state.json")"
+eq "quota: vẫn trả active về acc1" "acc1" "$("$ACCT" active)"
+eq "quota: token trả về acc1" "tok-acc1" "$(cat "$AGY_HOME/antigravity-oauth-token")"
+
+setup
+AGY_BIN=/nonexistent/agy "$ACCT" quota >/dev/null 2>&1; eq "quota: không có agy -> lỗi" "1" "$?"
+unset FAKE_ZERO_TOKENS FAKE_DEAD_TOKENS
+
+setup
+rm -f "$AGY_HOME/accounts/state.json"
+"$ACCT" quota >/dev/null 2>&1; eq "quota: chưa có account active -> lỗi" "1" "$?"
+
+echo "== múi giờ UTC+7"
+setup
+# AGY_NOW=1000000 = 1970-01-12 13:46:40 UTC; +1h = 14:46 UTC = 21:46 theo UTC+7
+out="$(TZ=UTC "$ACCT" cooldown acc1 1h)"
+has "giờ hiển thị luôn UTC+7 dù TZ môi trường là UTC" "1970-01-12 21:46" "$out"
+out="$(TZ=America/New_York "$ACCT" list)"
+has "list cũng theo UTC+7 dù TZ môi trường khác" "21:46" "$out"
+out="$(TZ=UTC AGY_TZ=UTC "$ACCT" cooldown acc1 1h)"
+has "AGY_TZ đổi được múi giờ hiển thị" "1970-01-12 14:46" "$out"
 
 echo "== an toàn"
 eq "token thật không bị đụng (mtime)" "$REAL_MTIME_BEFORE" "$(stat -c %Y "$REAL_TOKEN" 2>/dev/null || echo none)"

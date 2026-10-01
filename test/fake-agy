@@ -8,6 +8,28 @@ set -u
 tok="$(cat "$AGY_HOME/antigravity-oauth-token")"
 echo "$tok|$*" >>"${FAKE_ARGS_LOG:?}"
 
+# /quota giả, cùng định dạng agy thật. Phần trăm suy ra từ ký tự cuối của token: 5h = 50+10n, tuần = 40+10n.
+#   FAKE_DEAD_TOKENS: token bị coi là chưa đăng nhập (status ERROR)
+#   FAKE_ZERO_TOKENS: token hết quota 5h (0%)
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-p" ] && [ "$a" = "/quota" ]; then
+    for d in ${FAKE_DEAD_TOKENS:-}; do
+      [ "$d" = "$tok" ] && { echo '{"event":"result","result":{"status":"ERROR","error":"not logged in"}}'; exit 1; }
+    done
+    n="${tok: -1}"; [[ "$n" =~ [0-9] ]] || n=0
+    p5=$((50 + n * 10)); pw=$((40 + n * 10))
+    for z in ${FAKE_ZERO_TOKENS:-}; do [ "$z" = "$tok" ] && p5=0; done
+    now="${AGY_NOW:-$(date +%s)}"
+    r5="$(date -u -d "@$((now + 3600))" +%Y-%m-%dT%H:%M:%SZ)"
+    rw="$(date -u -d "@$((now + 259200))" +%Y-%m-%dT%H:%M:%SZ)"
+    resp="$(printf 'Gemini Models\tWeekly Limit Remaining\t%s%%\t%s\nGemini Models\tFive Hour Limit Remaining\t%s%%\t%s\nClaude and GPT models\tWeekly Limit Remaining\t100%%\t%s\nClaude and GPT models\tFive Hour Limit Remaining\t100%%\t%s\n' "$pw" "$rw" "$p5" "$r5" "$rw" "$r5")"
+    jq -nc --arg r "$resp" '{event:"result",result:{status:"SUCCESS",response:$r,num_turns:0}}'
+    exit 0
+  fi
+  prev="$a"
+done
+
 cid="conv-fake-1"
 prev=""
 for a in "$@"; do
