@@ -12,6 +12,7 @@ umask 077
 
 # Mọi giờ hiển thị (và giờ trong log agy) tính theo UTC+7. Lưu ý quy ước POSIX: 'UTC-7' nghĩa là UTC+7.
 export TZ="${AGY_TZ:-UTC-7}"
+export LC_TIME=C # để %p luôn ra AM/PM, không theo ngôn ngữ của máy
 
 AGY_HOME="${AGY_HOME:-$HOME/.gemini/antigravity-cli}"
 AGY_BIN="${AGY_BIN:-agy}"
@@ -56,6 +57,9 @@ parse_duration() {
   [ -n "$sec" ] && total=$((total + ${sec%s}))
   echo "$total"
 }
+
+# epoch -> "dd/mm/yyyy hh:mm AM|PM" (theo AGY_TZ)
+fmt_time() { date -d "@$1" '+%d/%m/%Y %I:%M %p'; }
 
 fmt_dur() { # giây -> "4h13m"
   local s=$1
@@ -111,7 +115,7 @@ cmd_list() {
     until="$(cooldown_until "$n")"
     if [ "$until" -gt "$t" ]; then
       rem=$((until - t))
-      printf '%s %-16s cooldown, còn %s (reset %s)\n' "$([ "$n" = "$cur" ] && echo '*' || echo ' ')" "$n" "$(fmt_dur "$rem")" "$(date -d "@$until" '+%F %H:%M')"
+      printf '%s %-16s cooldown, còn %s (reset %s)\n' "$([ "$n" = "$cur" ] && echo '*' || echo ' ')" "$n" "$(fmt_dur "$rem")" "$(fmt_time "$until")"
     else
       printf '%s %-16s sẵn sàng\n' "$([ "$n" = "$cur" ] && echo '*' || echo ' ')" "$n"
     fi
@@ -133,7 +137,7 @@ cmd_cooldown() {
   fi
   local until=$(($(now) + secs))
   state_update '.cooldown[$n]=$u' --arg n "$name" --argjson u "$until"
-  echo "account '$name' cooldown $(fmt_dur "$secs") (reset $(date -d "@$until" '+%F %H:%M'))"
+  echo "account '$name' cooldown $(fmt_dur "$secs") (reset $(fmt_time "$until"))"
 }
 
 cmd_clear() {
@@ -161,7 +165,7 @@ cmd_next() {
     if [ "$until" -le "$t" ]; then echo "$n"; return 0; fi
     if [ "$earliest" -eq 0 ] || [ "$until" -lt "$earliest" ]; then earliest=$until; earliest_n=$n; fi
   done
-  echo "agyr: tất cả ${#names[@]} account đều đang cooldown; sớm nhất: '$earliest_n' reset $(date -d "@$earliest" '+%F %H:%M') (còn $(fmt_dur $((earliest - t))))" >&2
+  echo "agyr: tất cả ${#names[@]} account đều đang cooldown; sớm nhất: '$earliest_n' reset $(fmt_time "$earliest") (còn $(fmt_dur $((earliest - t))))" >&2
   return 3
 }
 
@@ -210,7 +214,7 @@ cmd_rotate() {
   fi
   local until=$(($(now) + secs))
   state_update '.cooldown[$n]=$u' --arg n "$cur" --argjson u "$until"
-  echo "account '$cur' cooldown $(fmt_dur "$secs") ($src; reset $(date -d "@$until" '+%F %H:%M'))"
+  echo "account '$cur' cooldown $(fmt_dur "$secs") ($src; reset $(fmt_time "$until"))"
   local nxt
   if ! nxt="$(cmd_next)"; then return 3; fi
   cmd_use "$nxt"
@@ -243,7 +247,7 @@ quota_show() {
       "Gemini Models|Five Hour"*) g5="${pct%\%}"; g5r="$epoch" ;;
       "Gemini Models|Weekly"*) gw="${pct%\%}"; gwr="$epoch" ;;
     esac
-    printf '  %-22s %-27s %5s   reset %s\n' "$grp" "$metric" "$pct" "$(date -d "@$epoch" '+%m-%d %H:%M')"
+    printf '  %-22s %-27s %5s   reset %s\n' "$grp" "$metric" "$pct" "$(fmt_time "$epoch")"
   done <<<"$raw"
   if [[ "$g5" =~ ^[0-9]+$ && "$gw" =~ ^[0-9]+$ ]]; then
     state_update '.quota[$n]={at:$t,g5:$a,g5r:$ar,gw:$b,gwr:$br}' --arg n "$name" --argjson t "$(now)" \
@@ -253,7 +257,7 @@ quota_show() {
     if [ "$gw" -eq 0 ] && [ "$gwr" -gt "$until" ]; then until=$gwr; fi
     if [ "$until" -gt "$(now)" ]; then
       state_update '.cooldown[$n]=$u' --arg n "$name" --argjson u "$until"
-      echo "  → hết quota Gemini: đặt cooldown tới $(date -d "@$until" '+%F %H:%M')"
+      echo "  → hết quota Gemini: đặt cooldown tới $(fmt_time "$until")"
     fi
   fi
   return 0
@@ -297,8 +301,8 @@ cmd_quota() {
 # Dòng tóm tắt snapshot quota gần nhất của một account (rỗng nếu chưa đo lần nào).
 quota_summary() {
   jq -r --arg n "$1" --argjson t "$(now)" '
-    def f(p; r): if r <= $t then "đã reset" else "\(p)% (reset \(r | strflocaltime("%m-%d %H:%M")))" end;
-    .quota[$n] // empty | "quota Gemini: 5h \(f(.g5; .g5r)) · tuần \(f(.gw; .gwr)) · đo lúc \(.at | strflocaltime("%m-%d %H:%M"))"' "$STATE"
+    def f(p; r): if r <= $t then "đã reset" else "\(p)% (reset \(r | strflocaltime("%d/%m/%Y %I:%M %p")))" end;
+    .quota[$n] // empty | "quota Gemini: 5h \(f(.g5; .g5r)) · tuần \(f(.gw; .gwr)) · đo lúc \(.at | strflocaltime("%d/%m/%Y %I:%M %p"))"' "$STATE"
 }
 
 cmd_active() { need_jq; init_state; active_name; }

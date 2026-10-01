@@ -292,13 +292,21 @@ rm -f "$AGY_HOME/accounts/state.json"
 
 echo "== múi giờ UTC+7"
 setup
-# AGY_NOW=1000000 = 1970-01-12 13:46:40 UTC; +1h = 14:46 UTC = 21:46 theo UTC+7
+# AGY_NOW=1000000 = 1970-01-12 13:46:40 UTC; +1h = 14:46 UTC = 21:46 theo UTC+7 = 09:46 PM
 out="$(TZ=UTC "$ACCT" cooldown acc1 1h)"
-has "giờ hiển thị luôn UTC+7 dù TZ môi trường là UTC" "1970-01-12 21:46" "$out"
+has "giờ hiển thị luôn UTC+7 dù TZ môi trường là UTC" "12/01/1970 09:46 PM" "$out"
 out="$(TZ=America/New_York "$ACCT" list)"
-has "list cũng theo UTC+7 dù TZ môi trường khác" "21:46" "$out"
+has "list cũng theo UTC+7 dù TZ môi trường khác" "12/01/1970 09:46 PM" "$out"
 out="$(TZ=UTC AGY_TZ=UTC "$ACCT" cooldown acc1 1h)"
-has "AGY_TZ đổi được múi giờ hiển thị" "1970-01-12 14:46" "$out"
+has "AGY_TZ đổi được múi giờ hiển thị" "12/01/1970 02:46 PM" "$out"
+out="$("$ACCT" cooldown acc1 10h)"
+has "định dạng dd/mm/yyyy hh:mm AM (buổi sáng, sang ngày hôm sau)" "13/01/1970 06:46 AM" "$out"
+out="$(LC_ALL=C LC_TIME=de_DE.UTF-8 "$ACCT" cooldown acc1 1h)"
+has "AM/PM không phụ thuộc locale của máy" "09:46 PM" "$out"
+"$ACCT" quota >/dev/null 2>&1
+out="$("$ACCT" list)"
+has "list: giờ đo quota (jq) cũng dd/mm/yyyy hh:mm AM/PM" "đo lúc 12/01/1970 08:46 PM" "$out"
+has "list: giờ reset (5h = đo + 1 giờ) theo định dạng mới" "(reset 12/01/1970 09:46 PM)" "$out"
 
 echo "== an toàn"
 eq "token thật không bị đụng (mtime)" "$REAL_MTIME_BEFORE" "$(stat -c %Y "$REAL_TOKEN" 2>/dev/null || echo none)"

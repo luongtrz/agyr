@@ -73,7 +73,7 @@ Kết quả mỗi lần đo được lưu lại, nên `agyr list` hiện thêm d
 
 ## Múi giờ
 
-Mọi giờ hiển thị đều theo **UTC+7**, không phụ thuộc múi giờ của máy. Đổi bằng biến môi trường `AGY_TZ` (ví dụ `AGY_TZ=UTC`; theo quy ước POSIX thì `UTC-7` nghĩa là UTC+7, và là giá trị mặc định). Giờ trong log của agy cũng được đọc theo múi giờ này.
+Mọi giờ hiển thị đều theo **UTC+7** và có dạng `dd/mm/yyyy hh:mm AM|PM` (ví dụ `01/10/2026 07:14 PM`), không phụ thuộc múi giờ hay ngôn ngữ của máy. Đổi bằng biến môi trường `AGY_TZ` (ví dụ `AGY_TZ=UTC`; theo quy ước POSIX thì `UTC-7` nghĩa là UTC+7, và là giá trị mặc định). Giờ trong log của agy cũng được đọc theo múi giờ này.
 
 ## agy-run (dành cho Claude)
 
@@ -98,7 +98,7 @@ Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nh
 bash test/run.sh
 ```
 
-120 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật.
+124 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật.
 
 ## Giới hạn đã biết
 
