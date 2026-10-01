@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# agy-acct — lưu / đổi / xoay vòng nhiều account cho agy (Antigravity CLI).
+#
+# Chỉ copy file token qua lại; không bao giờ in nội dung token ra màn hình.
+# Biến môi trường (dùng cho test):
+#   AGY_HOME  thư mục dữ liệu của agy (mặc định ~/.gemini/antigravity-cli)
+#   AGY_NOW   epoch giả lập cho "bây giờ" (mặc định date +%s)
+set -euo pipefail
+umask 077
+
+AGY_HOME="${AGY_HOME:-$HOME/.gemini/antigravity-cli}"
+TOKEN="$AGY_HOME/antigravity-oauth-token"
+ACCTS="$AGY_HOME/accounts"
+STATE="$ACCTS/state.json"
+DEFAULT_COOLDOWN=18000 # 5h, dùng khi không parse được "Resets in"
+
+die() { echo "agy-acct: $*" >&2; exit "${2:-1}"; }
+now() { echo "${AGY_NOW:-$(date +%s)}"; }
+
+need_jq() { command -v jq >/dev/null || die "cần cài jq"; }
+
+valid_name() { [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "tên account chỉ gồm chữ, số, '-', '_': '$1'"; }
+
+init_state() {
+  mkdir -p "$ACCTS"
+  chmod 700 "$ACCTS"
+  [ -f "$STATE" ] || echo '{"active":"","cooldown":{}}' >"$STATE"
+}
+
+# ghi state nguyên tử: $1 = biểu thức jq, các tham số còn lại truyền cho jq
+state_update() {
+  local expr="$1"; shift
+  local tmp
+  tmp="$(mktemp "$ACCTS/.state.XXXXXX")"
+  if jq "$@" "$expr" "$STATE" >"$tmp"; then mv "$tmp" "$STATE"; else rm -f "$tmp"; die "ghi state lỗi"; fi
+}
+
+active_name() { jq -r '.active // ""' "$STATE"; }
+
+# "4h13m27s" / "43m29s" / "1d2h" / "90" (giây) -> số giây. Chấp nhận cả câu chứa "Resets in X".
+parse_duration() {
+  local s="$1"
+  if [[ "$s" =~ Resets\ in\ ([0-9dhms]+) ]]; then s="${BASH_REMATCH[1]}"; fi
+  if [[ "$s" =~ ^[0-9]+$ ]]; then echo "$s"; return 0; fi
+  [[ "$s" =~ ^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$ && -n "$s" ]] || return 1
+  local total=0 d=${BASH_REMATCH[1]:-} h=${BASH_REMATCH[2]:-} m=${BASH_REMATCH[3]:-} sec=${BASH_REMATCH[4]:-}
+  [ -n "$d" ] && total=$((total + ${d%d} * 86400))
+  [ -n "$h" ] && total=$((total + ${h%h} * 3600))
+  [ -n "$m" ] && total=$((total + ${m%m} * 60))
+  [ -n "$sec" ] && total=$((total + ${sec%s}))
+  echo "$total"
+}
+
+fmt_dur() { # giây -> "4h13m"
+  local s=$1
+  if [ "$s" -ge 3600 ]; then printf '%dh%02dm' $((s / 3600)) $((s % 3600 / 60))
+  elif [ "$s" -ge 60 ]; then printf '%dm%02ds' $((s / 60)) $((s % 60))
+  else printf '%ds' "$s"; fi
+}
+
+slots() { # liệt kê tên các slot, sắp xếp
+  local f
+  for f in "$ACCTS"/*.token; do
+    [ -e "$f" ] || continue
+    basename "$f" .token
+  done | sort
+}
+
+cooldown_until() { jq -r --arg n "$1" '.cooldown[$n] // 0' "$STATE"; }
+
+cmd_save() {
+  [ $# -eq 1 ] || die "dùng: agy-acct save <name>"
+  valid_name "$1"; need_jq
+  [ -f "$TOKEN" ] || die "chưa có token ($TOKEN). Hãy login bằng 'agy' trước"
+  init_state
+  cp "$TOKEN" "$ACCTS/$1.token"; chmod 600 "$ACCTS/$1.token"
+  state_update '.active=$n | del(.cooldown[$n])' --arg n "$1"
+  echo "đã lưu account '$1' (đang active)"
+}
+
+cmd_use() {
+  [ $# -eq 1 ] || die "dùng: agy-acct use <name>"
+  valid_name "$1"; need_jq; init_state
+  [ -f "$ACCTS/$1.token" ] || die "không có slot '$1' (xem: agy-acct list)"
+  local cur; cur="$(active_name)"
+  if [ -f "$TOKEN" ]; then
+    cp "$TOKEN" "$ACCTS/.last-token.bak"; chmod 600 "$ACCTS/.last-token.bak"
+    # giữ access token đã được agy refresh cho account đang active
+    if [ -n "$cur" ] && [ "$cur" != "$1" ] && [ -f "$ACCTS/$cur.token" ]; then
+      cp "$TOKEN" "$ACCTS/$cur.token"; chmod 600 "$ACCTS/$cur.token"
+    fi
+  fi
+  cp "$ACCTS/$1.token" "$TOKEN"; chmod 600 "$TOKEN"
+  state_update '.active=$n' --arg n "$1"
+  echo "đã chuyển sang account '$1'"
+}
+
+cmd_list() {
+  need_jq; init_state
+  local cur n until t rem
+  cur="$(active_name)"; t="$(now)"
+  local any=0
+  while read -r n; do
+    any=1
+    until="$(cooldown_until "$n")"
+    if [ "$until" -gt "$t" ]; then
+      rem=$((until - t))
+      printf '%s %-16s cooldown, còn %s (reset %s)\n' "$([ "$n" = "$cur" ] && echo '*' || echo ' ')" "$n" "$(fmt_dur "$rem")" "$(date -d "@$until" '+%F %H:%M')"
+    else
+      printf '%s %-16s sẵn sàng\n' "$([ "$n" = "$cur" ] && echo '*' || echo ' ')" "$n"
+    fi
+  done < <(slots)
+  [ "$any" -eq 1 ] || echo "(chưa có account nào; login bằng 'agy' rồi chạy 'agy-acct save <name>')"
+}
+
+cmd_cooldown() {
+  [ $# -ge 2 ] || die "dùng: agy-acct cooldown <name> <duration|'... Resets in 4h13m27s'>"
+  local name="$1"; shift
+  valid_name "$name"; need_jq; init_state
+  [ -f "$ACCTS/$name.token" ] || die "không có slot '$name'"
+  local secs
+  if ! secs="$(parse_duration "$*")"; then
+    echo "agy-acct: không parse được thời gian '$*', dùng mặc định 5h" >&2
+    secs=$DEFAULT_COOLDOWN
+  fi
+  local until=$(($(now) + secs))
+  state_update '.cooldown[$n]=$u' --arg n "$name" --argjson u "$until"
+  echo "account '$name' cooldown $(fmt_dur "$secs") (reset $(date -d "@$until" '+%F %H:%M'))"
+}
+
+cmd_clear() {
+  [ $# -eq 1 ] || die "dùng: agy-acct clear <name>"
+  valid_name "$1"; need_jq; init_state
+  state_update 'del(.cooldown[$n])' --arg n "$1"
+  echo "đã xóa cooldown của '$1'"
+}
+
+# In tên account sẵn sàng kế tiếp (vòng tròn, bắt đầu sau account active).
+# Hết sạch thì exit 3 và báo thời điểm reset sớm nhất.
+cmd_next() {
+  need_jq; init_state
+  local cur t; cur="$(active_name)"; t="$(now)"
+  local -a names=()
+  mapfile -t names < <(slots)
+  [ "${#names[@]}" -gt 0 ] || die "chưa có account nào" 2
+  local start=0 i
+  for i in "${!names[@]}"; do [ "${names[$i]}" = "$cur" ] && start=$((i + 1)); done
+  local k idx n until earliest=0 earliest_n=""
+  for ((k = 0; k < ${#names[@]}; k++)); do
+    idx=$(((start + k) % ${#names[@]}))
+    n="${names[$idx]}"
+    until="$(cooldown_until "$n")"
+    if [ "$until" -le "$t" ]; then echo "$n"; return 0; fi
+    if [ "$earliest" -eq 0 ] || [ "$until" -lt "$earliest" ]; then earliest=$until; earliest_n=$n; fi
+  done
+  echo "agy-acct: tất cả ${#names[@]} account đều đang cooldown; sớm nhất: '$earliest_n' reset $(date -d "@$earliest" '+%F %H:%M') (còn $(fmt_dur $((earliest - t))))" >&2
+  return 3
+}
+
+cmd_active() { need_jq; init_state; active_name; }
+
+usage() {
+  cat <<'EOF'
+agy-acct — xoay vòng nhiều account agy
+
+  save <name>               lưu token hiện tại thành slot <name> (đặt làm active)
+  use <name>                chuyển token sang slot <name> (sync token đang dùng về slot cũ)
+  list                      liệt kê slot, account active (*) và cooldown
+  active                    in tên account active
+  cooldown <name> <thời gian>   đánh dấu hết quota; nhận "4h13m27s", "43m", 90 hoặc cả câu "… Resets in 4h13m27s."
+  clear <name>              bỏ cooldown
+  next                      in account sẵn sàng kế tiếp; exit 3 nếu cả pool đang cooldown
+
+Sau mỗi lần login tay bằng 'agy', hãy chạy 'agy-acct save <name>' để slot không bị lệch.
+EOF
+}
+
+main() {
+  local c="${1:-}"; [ $# -gt 0 ] && shift
+  case "$c" in
+    save) cmd_save "$@" ;;
+    use) cmd_use "$@" ;;
+    list|ls) cmd_list "$@" ;;
+    active) cmd_active "$@" ;;
+    cooldown) cmd_cooldown "$@" ;;
+    clear) cmd_clear "$@" ;;
+    next) cmd_next "$@" ;;
+    ""|-h|--help|help) usage ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+main "$@"
