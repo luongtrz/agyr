@@ -343,6 +343,24 @@ out="$("$ACCT" list 2>&1)"; rc=$?
 eq "list: chưa có account -> exit 0" "0" "$rc"
 has "list: chưa có account -> hướng dẫn" "chưa có account nào" "$out"
 
+echo "== terminal"
+if command -v script >/dev/null; then
+  setup
+  export FAKE_TTY=1
+  cat >"$T/tty.sh" <<EOS
+snap() { stty -a | grep -oE -- '(^|[ ])-?(onlcr|icanon|echo)([ ;]|\$)' | tr -d ' ;' | tr '\n' ' '; }
+a="\$(snap)"
+"$ACCT" list >/dev/null 2>&1
+b="\$(snap)"
+[ -n "\$a" ] && [ "\$a" = "\$b" ] && echo SAME || echo "DIFF: [\$a] -> [\$b]"
+EOS
+  out="$(script -qec "bash $T/tty.sh" /dev/null 2>&1 | tr -d '\r' | tail -n 1)"
+  eq "list: không làm đổi thiết lập terminal (agy chạy song song không đụng tty)" "SAME" "$out"
+  unset FAKE_TTY
+else
+  echo "  (bỏ qua: không có lệnh 'script')"
+fi
+
 echo "== file token thật lệch với state (login tay mà chưa save)"
 mk3() { # 3 slot token JSON, active = acc1
   setup

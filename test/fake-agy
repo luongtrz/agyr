@@ -12,6 +12,7 @@ echo "$tok|$*" >>"${FAKE_ARGS_LOG:?}"
 #   FAKE_DEAD_TOKENS: token bị coi là chưa đăng nhập (status ERROR)
 #   FAKE_ZERO_TOKENS: token hết quota 5h (0%)
 #   FAKE_LOW_TOKENS:  token còn 5% quota 5h
+#   FAKE_TTY=1:       thử đổi chế độ terminal (stty) như agy thật
 #   FAKE_REFRESH=1:   ghi lại file token (mô phỏng agy tự làm mới access token)
 prev=""
 for a in "$@"; do
@@ -19,6 +20,8 @@ for a in "$@"; do
     for d in ${FAKE_DEAD_TOKENS:-}; do
       [ "$d" = "$tok" ] && { echo '{"event":"result","result":{"status":"ERROR","error":"not logged in"}}'; exit 1; }
     done
+    # FAKE_TTY=1: như agy thật, thử đổi chế độ terminal điều khiển (chỉ có tác dụng nếu agy-acct KHÔNG tách nó khỏi terminal)
+    if [ "${FAKE_TTY:-0}" = 1 ]; then stty -icanon -echo </dev/tty >/dev/null 2>&1 || true; fi
     # chữ số suy ra từ "rt-accN" trong token JSON, nếu không có thì từ ký tự cuối của token
     if [[ "$tok" =~ rt-acc([0-9]) ]]; then n="${BASH_REMATCH[1]}"; else n="${tok: -1}"; fi
     [[ "$n" =~ ^[0-9]$ ]] || n=0

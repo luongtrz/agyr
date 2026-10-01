@@ -232,8 +232,12 @@ cmd_rotate() {
 quota_fetch() {
   local home="$1" tmp out
   tmp="$(mktemp -d)"
-  out="$(HOME="$home" AGY_HOME="$home/.gemini/antigravity-cli" "$AGY_BIN" -p /quota --add-dir "$tmp" \
-    --model gemini-3.8-flash-high --output-format stream-json 2>/dev/null |
+  # setsid + stdin rỗng: agy chạy không có terminal điều khiển. Nếu không, nhiều agy chạy song song cùng đổi/khôi phục
+  # chế độ terminal của bạn (raw mode, truy vấn khả năng terminal) và để lại terminal bị vỡ (xuống dòng lệch, mất echo).
+  local -a detach=()
+  if command -v setsid >/dev/null; then detach=(setsid -w); fi
+  out="$(HOME="$home" AGY_HOME="$home/.gemini/antigravity-cli" "${detach[@]}" "$AGY_BIN" -p /quota --add-dir "$tmp" \
+    --model gemini-3.8-flash-high --output-format stream-json </dev/null 2>/dev/null |
     grep '^{' | jq -r 'select(.event=="result") | select(.result.status=="SUCCESS") | .result.response' 2>/dev/null)" || true
   rm -rf "$tmp"
   [ -n "$out" ] || return 1
