@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Test cho agy-acct và agy-run. Dùng token giả + agy giả, không đụng token thật.
+# Test cho agyr và agy-run. Dùng token giả + agy giả, không đụng token thật.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ACCT="$HERE/../bin/agy-acct"
+ACCT="$HERE/../bin/agyr"
 RUN="$HERE/../bin/agy-run"
 export AGY_BIN="$HERE/fake-agy"
 export AGY_ACCT="$ACCT"
 export AGY_RUN_POLL=0.1
 
-export TZ=UTC-7 # cùng múi giờ với agy-acct để dựng dòng log giả cho khớp
+export TZ=UTC-7 # cùng múi giờ với agyr để dựng dòng log giả cho khớp
 REAL_TOKEN="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
 REAL_MTIME_BEFORE="$(stat -c %Y "$REAL_TOKEN" 2>/dev/null || echo none)"
 
@@ -44,7 +44,7 @@ cd_of() { jq -r --arg n "$1" '.cooldown[$n] // 0' "$AGY_HOME/accounts/state.json
 runit() { "$RUN" --prompt "$T/prompt.txt" --add-dir "$T/work" --log "$T/run.jsonl" 2>"$T/run.err"; }
 lines() { wc -l <"$FAKE_ARGS_LOG" | tr -d ' '; }
 
-echo "== agy-acct"
+echo "== agyr"
 
 setup
 out="$("$ACCT" list)"

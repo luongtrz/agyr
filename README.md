@@ -1,4 +1,4 @@
-# agy-acct
+# agyr
 
 Xoay vòng nhiều account Google cho `agy` (Antigravity CLI) khi một account hết quota (429), và xem quota thật của từng account.
 
@@ -8,13 +8,13 @@ Chỉ làm việc với binary `agy` chính thức: copy file `~/.gemini/antigra
 
 Gồm hai lệnh trong `bin/`:
 
-- `agy-acct`: quản lý slot, xem quota, đổi account. Đây là lệnh bạn tự gõ.
+- `agyr`: quản lý slot, xem quota, đổi account. Đây là lệnh bạn tự gõ.
 - `agy-run`: chạy một task agy và tự đổi account khi hết quota. Chủ yếu do Claude gọi qua skill `agy`, xem phần [agy-run](#agy-run-dành-cho-claude).
 
 ## Cài
 
 ```bash
-ln -sf ~/tools/agy-acct/bin/agy-acct ~/.local/bin/agy-acct
+ln -sf ~/tools/agy-acct/bin/agyr ~/.local/bin/agyr
 ln -sf ~/tools/agy-acct/bin/agy-run  ~/.local/bin/agy-run
 ```
 
@@ -27,31 +27,31 @@ Tên slot do bạn tự đặt: chỉ gồm chữ cái không dấu, số, `-` v
 Với từng account, đăng nhập bằng `agy` rồi lưu slot. Làm tay vì cần đăng nhập Google. **Đừng dùng lệnh logout của agy** (chưa rõ nó có thu hồi token ở phía Google không); thay vào đó xóa file token cục bộ, slot đã giữ bản copy:
 
 ```bash
-agy-acct save acct1                 # account đang đăng nhập
+agyr save acct1                 # account đang đăng nhập
 rm ~/.gemini/antigravity-cli/antigravity-oauth-token
 agy                                 # đăng nhập account 2, rồi thoát
-agy-acct save acct2
+agyr save acct2
 rm ~/.gemini/antigravity-cli/antigravity-oauth-token
 agy                                 # đăng nhập account 3, rồi thoát
-agy-acct save acct3
+agyr save acct3
 ```
 
-Kiểm tra từng slot dùng được: `agy-acct use <tên>` rồi `agy models` (ra danh sách model là slot còn sống).
+Kiểm tra từng slot dùng được: `agyr use <tên>` rồi `agy models` (ra danh sách model là slot còn sống).
 
-Về sau, mỗi lần bạn login tay một account, chạy lại `agy-acct save <tên>`; nếu quên, lần `use` kế tiếp sẽ ghi token của account khác đè vào slot cũ.
+Về sau, mỗi lần bạn login tay một account, chạy lại `agyr save <tên>`; nếu quên, lần `use` kế tiếp sẽ ghi token của account khác đè vào slot cũ.
 
 ## Lệnh
 
 ```bash
-agy-acct list                 # slot, account đang active (*), cooldown, quota lần đo gần nhất
-agy-acct use <tên>            # đổi account
-agy-acct quota                # quota thật của account đang active (agy -p /quota, 0 token)
-agy-acct quota --all          # quota của cả pool; quota <tên> cho một account
-agy-acct rotate               # dùng agy tay mà hết quota: cooldown account hiện tại + đổi sang account kế tiếp
-agy-acct cooldown <tên> 4h13m # đánh dấu hết quota thủ công (nhận cả "… Resets in 4h13m27s")
-agy-acct clear <tên>          # bỏ cooldown
-agy-acct next                 # account sẵn sàng kế tiếp (exit 3 nếu cả pool cooldown)
-agy-acct active               # tên account đang active
+agyr list                 # slot, account đang active (*), cooldown, quota lần đo gần nhất
+agyr use <tên>            # đổi account
+agyr quota                # quota thật của account đang active (agy -p /quota, 0 token)
+agyr quota --all          # quota của cả pool; quota <tên> cho một account
+agyr rotate               # dùng agy tay mà hết quota: cooldown account hiện tại + đổi sang account kế tiếp
+agyr cooldown <tên> 4h13m # đánh dấu hết quota thủ công (nhận cả "… Resets in 4h13m27s")
+agyr clear <tên>          # bỏ cooldown
+agyr next                 # account sẵn sàng kế tiếp (exit 3 nếu cả pool cooldown)
+agyr active               # tên account đang active
 ```
 
 ## Khi đang dùng agy tay mà hết quota
@@ -59,7 +59,7 @@ agy-acct active               # tên account đang active
 Thoát agy (process đang chạy giữ token cũ), rồi:
 
 ```bash
-agy-acct rotate    # cooldown account hiện tại (đọc "Resets in …" từ log agy) + đổi sang account kế tiếp
+agyr rotate    # cooldown account hiện tại (đọc "Resets in …" từ log agy) + đổi sang account kế tiếp
 agy -c             # mở lại, tiếp tục conversation gần nhất
 ```
 
@@ -67,9 +67,9 @@ agy -c             # mở lại, tiếp tục conversation gần nhất
 
 ## Xem quota
 
-`agy-acct quota` chạy `agy -p /quota` (không gọi model, tốn 0 token) và in quota 5 giờ / quota tuần của Gemini và Claude/GPT. `quota --all` đi qua từng account: đổi token sang account đó, đo, rồi trả token về account ban đầu (kể cả khi bị Ctrl+C). Đừng chạy `quota --all` lúc có `agy-run` đang chạy, vì nó đổi file token tạm thời.
+`agyr quota` chạy `agy -p /quota` (không gọi model, tốn 0 token) và in quota 5 giờ / quota tuần của Gemini và Claude/GPT. `quota --all` đi qua từng account: đổi token sang account đó, đo, rồi trả token về account ban đầu (kể cả khi bị Ctrl+C). Đừng chạy `quota --all` lúc có `agy-run` đang chạy, vì nó đổi file token tạm thời.
 
-Kết quả mỗi lần đo được lưu lại, nên `agy-acct list` hiện thêm dòng `quota Gemini: 5h … · tuần … · đo lúc …` (số liệu cũ, nhìn giờ đo; phần đã qua giờ reset hiện "đã reset"). Account về 0% thì tự đặt cooldown tới đúng giờ reset, nên `next`, `rotate` và `agy-run` bỏ qua nó.
+Kết quả mỗi lần đo được lưu lại, nên `agyr list` hiện thêm dòng `quota Gemini: 5h … · tuần … · đo lúc …` (số liệu cũ, nhìn giờ đo; phần đã qua giờ reset hiện "đã reset"). Account về 0% thì tự đặt cooldown tới đúng giờ reset, nên `next`, `rotate` và `agy-run` bỏ qua nó.
 
 ## Múi giờ
 

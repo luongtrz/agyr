@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # agy-run — chạy một task agy; khi account hết quota (429) thì kill, đổi sang
-# account khác bằng agy-acct và resume đúng conversation đó.
+# account khác bằng agyr và resume đúng conversation đó.
 #
 # Dùng:
 #   agy-run --prompt FILE --add-dir DIR --log FILE.jsonl [--model M]
@@ -11,13 +11,13 @@
 #
 # Biến môi trường (dùng cho test):
 #   AGY_BIN             binary agy (mặc định agy)
-#   AGY_ACCT            lệnh agy-acct (mặc định: file cạnh script này)
+#   AGY_ACCT            lệnh agyr (mặc định: file cạnh script này)
 #   AGY_RUN_POLL        giây giữa hai lần soi log (mặc định 1)
 #   AGY_RUN_MAX_SWITCH  số lần đổi account tối đa (mặc định 6)
 set -uo pipefail
 
 AGY_BIN="${AGY_BIN:-agy}"
-AGY_ACCT="${AGY_ACCT:-$(dirname "$(readlink -f "$0")")/agy-acct}"
+AGY_ACCT="${AGY_ACCT:-$(dirname "$(readlink -f "$0")")/agyr}"
 POLL="${AGY_RUN_POLL:-1}"
 MAX_SWITCH="${AGY_RUN_MAX_SWITCH:-6}"
 MODEL="gemini-3.8-flash-high"
@@ -42,8 +42,8 @@ done
 [ -d "$ADD_DIR" ] || die "--add-dir phải là thư mục tồn tại" 2
 [ -n "$LOG_FILE" ] || die "thiếu --log" 2
 
-CUR="$("$AGY_ACCT" active)" || die "agy-acct lỗi" 1
-[ -n "$CUR" ] || die "chưa có account active; login rồi chạy: agy-acct save <name>" 4
+CUR="$("$AGY_ACCT" active)" || die "agyr lỗi" 1
+[ -n "$CUR" ] || die "chưa có account active; login rồi chạy: agyr save <name>" 4
 
 ORIG_PROMPT="$(cat "$PROMPT_FILE")"
 RESUME_NOTE="Continue the task from where you stopped. The previous account ran out of quota mid-run, so partial uncommitted edits may already exist in the working directory: check git status/diff first, finish and verify them, do not revert them."
@@ -101,7 +101,7 @@ while :; do
 
   case "$rc" in
     0) log "xong (account '$CUR')"; exit 0 ;;
-    11) die "lỗi đăng nhập trên account '$CUR': hãy login lại bằng '! agy' rồi 'agy-acct save $CUR'" 4 ;;
+    11) die "lỗi đăng nhập trên account '$CUR': hãy login lại bằng '! agy' rồi 'agyr save $CUR'" 4 ;;
     10) ;;
     *) exit 1 ;;
   esac
