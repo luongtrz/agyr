@@ -25,6 +25,28 @@ MODEL="gemini-3.8-flash-high"
 QUOTA_RE='Individual quota reached'
 AUTH_RE="authentication required|authentication failed or timed out|not logged into Antigravity"
 
+usage() {
+  cat <<'EOF'
+agy-run — run one agy task headless, rotating accounts when one runs out of quota
+
+Usage: agy-run --prompt FILE --add-dir DIR --log FILE.jsonl [--model M]
+
+  --prompt FILE   file containing the task prompt
+  --add-dir DIR   directory agy may work in (always pass it; for code changes use a dedicated git worktree)
+  --log FILE      stream-json log of the run (keep it as an audit trail)
+  --model M       model to use (default gemini-3.8-flash-high)
+
+agy runs with --dangerously-skip-permissions --output-format stream-json. As soon as the log shows "Individual quota
+reached", agy is killed, the account gets a cooldown (from "Resets in ..."), agyr switches to the next ready account and
+the same conversation is resumed with --conversation <id>.
+
+Exit codes:   0 done | 1 agy failed otherwise | 2 bad arguments | 4 login error or no active account |
+              5 whole pool out of quota | 6 switched accounts too many times
+Environment:  AGY_BIN | AGY_ACCT | AGY_RUN_POLL (seconds, default 1) | AGY_RUN_MAX_SWITCH (default 6)
+See also:     agyr help
+EOF
+}
+
 log() { echo "[agy-run] $*" >&2; }
 die() { log "$1"; exit "${2:-1}"; }
 
@@ -35,7 +57,8 @@ while [ $# -gt 0 ]; do
     --add-dir) ADD_DIR="${2:-}"; shift 2 ;;
     --log) LOG_FILE="${2:-}"; shift 2 ;;
     --model) MODEL="${2:-}"; shift 2 ;;
-    *) die "unknown argument: $1 (usage: --prompt FILE --add-dir DIR --log FILE [--model M])" 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown argument: $1 (usage: --prompt FILE --add-dir DIR --log FILE [--model M]; see --help)" 2 ;;
   esac
 done
 [ -f "$PROMPT_FILE" ] || die "--prompt must be an existing file" 2

@@ -398,26 +398,140 @@ cmd_active() { need_jq; init_state; active_name; }
 
 usage() {
   cat <<'EOF'
-agyr — rotate between multiple agy accounts
+agyr — rotate between multiple agy (Antigravity CLI) accounts
 
-  save <name>               save the current token as slot <name> (and make it active)
-  use <name>                switch the token to slot <name> (the token in use is synced back to its own slot first)
-  list [-c]                 measure every account's real quota (agy -p /quota, 0 tokens, in parallel, without touching the
-                            token in use) and print a table; * = selected account. -c: print saved data only.
-                            Accounts at 0% get a cooldown automatically
-  active                    print the active account's name
-  cooldown <name> <time>    mark as out of quota; accepts "4h13m27s", "43m", 90 or a sentence "… Resets in 4h13m27s."
-  clear <name>              remove the cooldown
-  next                      print the next ready account; exit 3 if the whole pool is on cooldown
-  rotate [time]             out of quota while using agy by hand: put the active account on cooldown (read 'Resets in'
-                            from the agy log, or give it by hand) and switch to the next account; then reopen with 'agy -c'
+Usage: agyr <command> [args]        (agyr help <command> for the details of one command)
+
+Commands:
+  list [-c]                Measure every account's quota and show a table (* = selected account)
+  save <name>              Save the current login as slot <name>
+  use <name>               Switch to slot <name>
+  active                   Print the name of the account in use
+  rotate [time]            Interactive agy ran out of quota: cool this account down, switch to the next one
+  next                     Print the next ready account
+  cooldown <name> <time>   Mark an account as out of quota for a while
+  clear <name>             Remove an account's cooldown
+  help [command]           This overview, or the details of one command
+
+Typical use:
+  agyr save work           After logging in with 'agy': store that login as slot 'work' (once per account)
+  agyr list                Which account still has quota?
+  agyr use other           Switch account, then reopen agy
+  agyr rotate              agy ran out of quota: cool this account down and switch, then run 'agy -c'
 
 After every manual login with 'agy', run 'agyr save <name>' so the slot does not drift from the real account.
+
+Exit codes:   0 ok | 1 error (or an account could not be measured) | 2 bad usage | 3 no account is ready
+Environment:  AGYR_COLOR=auto|always|never (also NO_COLOR) | AGY_TZ (default UTC-7, i.e. UTC+7) | AGY_HOME | AGY_BIN
+Files:        ~/.gemini/antigravity-cli/accounts/<name>.token (slots), accounts/state.json (active account, cooldowns,
+              last measured quota), accounts/.last-token.bak (token that was replaced by the last 'use')
+Also:         agy-run --help   (runs an agy task headless with automatic account rotation)
 EOF
+}
+
+# agyr help [command] / agyr <command> --help
+help_for() {
+  case "${1:-}" in
+    "") usage ;;
+    save) cat <<'EOF'
+Usage: agyr save <name>
+
+Save the login currently in use (the token file ~/.gemini/antigravity-cli/antigravity-oauth-token) as slot <name> and
+make <name> the active account. <name> may contain letters, digits, '-' and '_'.
+
+Run it once per account after logging in with 'agy', and again after every manual re-login.
+EOF
+      ;;
+    use) cat <<'EOF'
+Usage: agyr use <name>
+
+Switch to slot <name>. The token currently in use is first written back to the slot it belongs to (matched by
+refresh_token, so an access token that agy refreshed is not lost). A token that matches no slot is never written into
+any slot; it stays in accounts/.last-token.bak.
+
+A running agy keeps its old token: reopen agy after switching ('agy -c' continues the last conversation).
+EOF
+      ;;
+    list|ls) cat <<'EOF'
+Usage: agyr list [-c|--cached]        (alias: ls)
+
+Measure the real quota of every saved account with 'agy -p /quota' (no model call, 0 tokens) and print one table row per
+account. The accounts are measured in parallel, each in a throwaway HOME holding a copy of its token, so the token in use
+is never touched and running agy / agy-run processes are not disturbed.
+
+  *            marks the account the real token file belongs to
+  GEMINI 5H    % left of the 5-hour limit and when it resets
+  GEMINI WEEK  % left of the weekly limit and when it resets
+  STATUS       ready | low (10% or less left) | cooldown, <time> left | not measured | stale, past reset time |
+               measure failed
+
+An account at 0% automatically gets a cooldown until its reset time; an account with quota left has its cooldown cleared.
+Colours: green above 40%, yellow 11-40%, red 10% or less. Only on a terminal (see NO_COLOR and AGYR_COLOR).
+
+Options:
+  -c, --cached   do not call agy; print the data saved by the last measurement
+
+Exit code: 0 ok, 1 some account could not be measured.
+EOF
+      ;;
+    active) cat <<'EOF'
+Usage: agyr active
+
+Print the name of the account in use: the slot the real token file belongs to (matched by refresh_token). If the token
+file matches no slot, the name stored in state is printed instead. Prints nothing when there is no active account.
+EOF
+      ;;
+    cooldown) cat <<'EOF'
+Usage: agyr cooldown <name> <time>
+
+Mark <name> as out of quota for <time>; 'next', 'rotate' and agy-run skip it until then.
+
+<time> accepts 4h13m27s, 43m, 1d2h, plain seconds (90), or a whole sentence such as
+"Individual quota reached. Resets in 4h13m27s." If it cannot be parsed, 5h is used.
+
+'agyr list' sets and clears cooldowns by itself from the measured quota, so this is rarely needed by hand.
+EOF
+      ;;
+    clear) cat <<'EOF'
+Usage: agyr clear <name>
+
+Remove the cooldown of <name>.
+EOF
+      ;;
+    next) cat <<'EOF'
+Usage: agyr next
+
+Print the next ready account, round-robin starting after the active one (accounts on cooldown are skipped).
+If every account is on cooldown: print nothing, report on stderr which one resets first, and exit 3.
+EOF
+      ;;
+    rotate) cat <<'EOF'
+Usage: agyr rotate [<time>]
+
+For when an interactive agy runs out of quota: put the active account on cooldown and switch to the next ready one.
+The reset time is read from the most recent "Individual quota reached ... Resets in X" line in agy's log (only lines from
+the last hour); pass <time> (for example 4h13m) to give it yourself. If neither is available, 5h is used.
+
+Then exit agy and reopen it with 'agy -c' (a running agy keeps its old token).
+Exit code 3, and no switch, if every account is on cooldown.
+EOF
+      ;;
+    help) cat <<'EOF'
+Usage: agyr help [<command>]
+
+Show the overview, or the details of one command. 'agyr <command> --help' works too.
+EOF
+      ;;
+    *) echo "agyr: no such command '$1'" >&2; usage >&2; return 2 ;;
+  esac
 }
 
 main() {
   local c="${1:-}"; [ $# -gt 0 ] && shift
+  # agyr <command> --help
+  case "${1:-}" in
+    -h|--help) if [ -n "$c" ]; then help_for "$c"; exit $?; fi ;;
+  esac
   case "$c" in
     save) cmd_save "$@" ;;
     use) cmd_use "$@" ;;
@@ -427,7 +541,8 @@ main() {
     clear) cmd_clear "$@" ;;
     next) cmd_next "$@" ;;
     rotate) cmd_rotate "$@" ;;
-    ""|-h|--help|help) usage ;;
+    ""|-h|--help) usage ;;
+    help) help_for "$@" ;;
     *) usage >&2; exit 2 ;;
   esac
 }

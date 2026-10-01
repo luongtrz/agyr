@@ -52,7 +52,10 @@ agyr clear <tên>              # bỏ cooldown
 agyr next                     # account sẵn sàng kế tiếp (exit 3 nếu cả pool cooldown)
 agyr active                   # tên account đang dùng
 agyr save <tên>               # lưu token hiện tại thành slot
+agyr help [lệnh]              # tổng quan, hoặc chi tiết một lệnh (agyr <lệnh> --help cũng được)
 ```
+
+Help của chương trình viết bằng tiếng Anh: `agyr help` có danh sách lệnh, ví dụ, exit code, biến môi trường và file dữ liệu; `agyr help list` (hoặc `agyr list --help`) cho chi tiết từng lệnh; `agy-run --help` cho lệnh chạy task.
 
 ## Khi đang dùng agy tay mà hết quota
 
@@ -111,7 +114,7 @@ Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nh
 bash test/run.sh
 ```
 
-167 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật.
+240 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật.
 
 ## Giới hạn đã biết
 
