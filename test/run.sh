@@ -361,6 +361,56 @@ else
   echo "  (bỏ qua: không có lệnh 'script')"
 fi
 
+echo "== màu"
+ESC=$'\033'
+GREEN="${ESC}[32m"; YELLOW="${ESC}[33m"; RED="${ESC}[31m"
+strip() { sed "s/${ESC}\[[0-9;]*m//g"; }
+setup
+"$ACCT" list >/dev/null 2>&1
+out="$("$ACCT" list -c)"
+hasnt "không in ra terminal -> không có mã màu" "$ESC" "$out"
+plain="$out"
+out="$(AGYR_COLOR=always "$ACCT" list -c)"
+has "always: >40% -> xanh" "${GREEN} 60%" "$out"
+has "always: trạng thái sẵn sàng màu xanh" "${GREEN}sẵn sàng" "$out"
+eq "always: bỏ mã màu thì giống hệt bản không màu (căn lề không lệch)" "$plain" "$(strip <<<"$out")"
+out="$(AGYR_COLOR=never NO_COLOR= "$ACCT" list -c)"
+hasnt "never: không có mã màu" "$ESC" "$out"
+
+setup
+FAKE_P5=30 "$ACCT" list >/dev/null 2>&1
+out="$(AGYR_COLOR=always "$ACCT" list -c)"
+has "always: 11-40% -> vàng" "${YELLOW} 30%" "$out"
+setup
+FAKE_P5=5 "$ACCT" list >/dev/null 2>&1
+out="$(AGYR_COLOR=always "$ACCT" list -c)"
+has "always: <=10% -> đỏ" "${RED}  5%" "$out"
+has "always: 'sắp hết' màu đỏ" "${RED}sắp hết" "$out"
+setup
+FAKE_P5=0 "$ACCT" list >/dev/null 2>&1
+out="$(AGYR_COLOR=always "$ACCT" list -c)"
+has "always: 0% -> đỏ" "${RED}  0%" "$out"
+has "always: cooldown màu đỏ" "${RED}cooldown" "$out"
+setup
+out="$(AGYR_COLOR=always "$ACCT" list -c)"
+has "always: chưa đo màu vàng" "${YELLOW}chưa đo" "$out"
+setup
+export FAKE_DEAD_TOKENS="tok-acc2"
+out="$(AGYR_COLOR=always "$ACCT" list 2>&1)"
+has "always: không đo được màu đỏ" "${RED}không đo được" "$out"
+unset FAKE_DEAD_TOKENS
+
+if command -v script >/dev/null; then
+  setup
+  "$ACCT" list >/dev/null 2>&1
+  out="$(script -qec "$ACCT list -c" /dev/null 2>&1)"
+  has "in ra terminal (auto) -> có màu" "${GREEN}" "$out"
+  out="$(NO_COLOR=1 script -qec "$ACCT list -c" /dev/null 2>&1)"
+  hasnt "NO_COLOR -> tắt màu dù ở terminal" "$ESC[3" "$out"
+  out="$(AGYR_COLOR=never script -qec "$ACCT list -c" /dev/null 2>&1)"
+  hasnt "AGYR_COLOR=never -> tắt màu dù ở terminal" "$ESC[3" "$out"
+fi
+
 echo "== file token thật lệch với state (login tay mà chưa save)"
 mk3() { # 3 slot token JSON, active = acc1
   setup

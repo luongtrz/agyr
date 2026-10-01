@@ -11,6 +11,7 @@ echo "$tok|$*" >>"${FAKE_ARGS_LOG:?}"
 # /quota giả, cùng định dạng agy thật. Phần trăm suy ra từ ký tự cuối của token: 5h = 50+10n, tuần = 40+10n.
 #   FAKE_DEAD_TOKENS: token bị coi là chưa đăng nhập (status ERROR)
 #   FAKE_ZERO_TOKENS: token hết quota 5h (0%)
+#   FAKE_P5:          ép phần trăm 5h cho mọi token
 #   FAKE_LOW_TOKENS:  token còn 5% quota 5h
 #   FAKE_TTY=1:       thử đổi chế độ terminal (stty) như agy thật
 #   FAKE_REFRESH=1:   ghi lại file token (mô phỏng agy tự làm mới access token)
@@ -27,6 +28,7 @@ for a in "$@"; do
     [[ "$n" =~ ^[0-9]$ ]] || n=0
     p5=$((50 + n * 10)); pw=$((40 + n * 10))
     for z in ${FAKE_ZERO_TOKENS:-}; do [ "$z" = "$tok" ] && p5=0; done
+    [[ "${FAKE_P5:-}" =~ ^[0-9]+$ ]] && p5="$FAKE_P5"
     for z in ${FAKE_LOW_TOKENS:-}; do [ "$z" = "$tok" ] && p5=5; done
     # FAKE_REFRESH=1: agy "tự làm mới token" bằng cách ghi lại file token trong HOME của nó
     if [ "${FAKE_REFRESH:-0}" = 1 ]; then echo "$tok-refreshed" >"$AGY_HOME/antigravity-oauth-token"; fi

@@ -311,11 +311,25 @@ measure_all() {
 
 # In bảng từ state. $1 = tên các account đo lỗi, $2 = 1 nếu vừa đo xong.
 print_table() {
-  local failed=" $1 " live="$2" t cur n snap g5 g5r gw gwr at until st oldest=0 mark
+  local failed=" $1 " live="$2" t cur n snap g5 g5r gw gwr at until st sc oldest=0 mark
   t="$(now)"; cur="$(real_owner)"
+  # Màu: xanh = ổn, vàng = cần chú ý, đỏ = gần hết / không dùng được. Chỉ tô khi in ra terminal (hoặc AGYR_COLOR=always);
+  # NO_COLOR hoặc AGYR_COLOR=never thì tắt. Mã màu nằm ngoài phần căn lề nên bảng vẫn thẳng hàng.
+  local G="" Y="" R="" Z="" usecolor=0
+  case "${AGYR_COLOR:-auto}" in
+    always) usecolor=1 ;;
+    never) usecolor=0 ;;
+    *) if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then usecolor=1; fi ;;
+  esac
+  if [ "$usecolor" = 1 ]; then G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; Z=$'\033[0m'; fi
+  pct() { # $1 = % còn lại: <=10 đỏ, <=40 vàng, còn lại xanh
+    local c="$G"
+    if [ "$1" -le 10 ]; then c="$R"; elif [ "$1" -le 40 ]; then c="$Y"; fi
+    printf '%s%3s%%%s' "$c" "$1" "$Z"
+  }
   cell() { # $1 = % còn lại, $2 = giờ reset (epoch)
     if [ -z "$1" ] || [ "$2" -le "$t" ]; then printf '%4s  %-19s' '-' ''
-    else printf '%3s%%  %-19s' "$1" "$(fmt_time "$2")"; fi
+    else printf '%s  %-19s' "$(pct "$1")" "$(fmt_time "$2")"; fi
   }
   printf '  %-14s %-25s   %-25s   %s\n' "ACCOUNT" "GEMINI 5H" "GEMINI WEEK" "STATUS"
   while read -r n; do
@@ -325,17 +339,17 @@ print_table() {
     if [[ "$failed" == *" $n "* ]]; then g5=""; fi
     if [ -n "$g5" ] && { [ "$oldest" -eq 0 ] || [ "$at" -lt "$oldest" ]; }; then oldest=$at; fi
     until="$(cooldown_until "$n")"
-    if [[ "$failed" == *" $n "* ]]; then st="không đo được (token hết hạn hoặc agy lỗi)"
-    elif [ "$until" -gt "$t" ]; then st="cooldown, còn $(fmt_dur $((until - t)))"
-    elif [ -z "$g5" ]; then st="chưa đo"
-    elif [ "$g5r" -le "$t" ] || [ "$gwr" -le "$t" ]; then st="số liệu cũ, đã qua giờ reset"
-    elif [ "$g5" -le 10 ] || [ "$gw" -le 10 ]; then st="sắp hết"
-    else st="sẵn sàng"; fi
+    if [[ "$failed" == *" $n "* ]]; then st="không đo được (token hết hạn hoặc agy lỗi)"; sc="$R"
+    elif [ "$until" -gt "$t" ]; then st="cooldown, còn $(fmt_dur $((until - t)))"; sc="$R"
+    elif [ -z "$g5" ]; then st="chưa đo"; sc="$Y"
+    elif [ "$g5r" -le "$t" ] || [ "$gwr" -le "$t" ]; then st="số liệu cũ, đã qua giờ reset"; sc="$Y"
+    elif [ "$g5" -le 10 ] || [ "$gw" -le 10 ]; then st="sắp hết"; sc="$R"
+    else st="sẵn sàng"; sc="$G"; fi
     mark=" "; if [ "$n" = "$cur" ]; then mark="*"; fi
-    printf '%s %-14s %s   %s   %s\n' "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$st"
+    printf '%s %-14s %s   %s   %s%s%s\n' "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$sc" "$st" "$Z"
   done < <(slots)
   if [ -f "$TOKEN" ] && [ -z "$cur" ]; then
-    echo "! File token đang dùng không khớp slot nào (vừa login account khác?). Chạy 'agyr save <tên>' để lưu nó; 'agyr use' sẽ không ghi đè slot nào."
+    echo "${Y}! File token đang dùng không khớp slot nào (vừa login account khác?). Chạy 'agyr save <tên>' để lưu nó; 'agyr use' sẽ không ghi đè slot nào.${Z}"
   fi
   if [ "$live" = 1 ]; then
     echo "Đo lúc $(fmt_time "$t")   (* = account đang chọn)"
