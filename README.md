@@ -37,6 +37,7 @@ agy-acct list                 # slot, account đang active (*), cooldown
 agy-acct use acc2             # đổi tay
 agy-acct cooldown acc1 4h13m  # đánh dấu hết quota
 agy-acct next                 # account sẵn sàng kế tiếp (exit 3 nếu cả pool cooldown)
+agy-acct quota                # quota thật của account đang active (agy -p /quota, 0 token); `quota --all` cho cả 3, `quota <tên>` cho một account
 agy-acct rotate               # dùng agy tay mà hết quota: cooldown account hiện tại + đổi sang account kế tiếp
 
 agy-run --prompt task.txt --add-dir /path/to/worktree --log task.jsonl [--model M]
@@ -45,6 +46,16 @@ agy-run --prompt task.txt --add-dir /path/to/worktree --log task.jsonl [--model 
 `agy-run` chạy agy với `--dangerously-skip-permissions --output-format stream-json`. Gặp `Individual quota reached` thì kill ngay (không chờ agy retry), ghi cooldown theo `Resets in …`, chuyển sang account kế tiếp và resume bằng `--conversation <id>`.
 
 Exit code của `agy-run`: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nhập hoặc chưa có account active, `5` cả pool hết quota, `6` đổi account quá `AGY_RUN_MAX_SWITCH` (mặc định 6) lần.
+
+## Xem quota
+
+`agy-acct quota` chạy `agy -p /quota` (không gọi model, tốn 0 token) và in quota 5 giờ / quota tuần của Gemini và Claude/GPT. `quota --all` đi qua từng account: đổi token sang account đó, đo, rồi trả token về account ban đầu (kể cả khi bị Ctrl+C). Đừng chạy `quota --all` lúc có `agy-run` đang chạy, vì nó đổi file token tạm thời.
+
+Kết quả mỗi lần đo được lưu lại, nên `agy-acct list` hiện thêm dòng `quota Gemini: 5h … · tuần … · đo lúc …` (số liệu cũ, nhìn giờ đo). Account về 0% thì tự đặt cooldown tới đúng giờ reset, nên `next`, `rotate` và `agy-run` bỏ qua nó.
+
+## Múi giờ
+
+Mọi giờ hiển thị đều theo **UTC+7**, không phụ thuộc múi giờ của máy. Đổi bằng biến môi trường `AGY_TZ` (ví dụ `AGY_TZ=UTC`; theo quy ước POSIX thì `UTC-7` nghĩa là UTC+7, và là giá trị mặc định). Giờ trong log của agy cũng được đọc theo múi giờ này.
 
 ## Khi đang dùng agy tay mà hết quota
 
