@@ -12,6 +12,9 @@ export FAKE_KEYRING=1 # emulate agy >= 1.2.14: it ignores the token file unless 
 export TZ=UTC-7 # same timezone as agyr, so the fake log lines line up
 REAL_TOKEN="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
 REAL_MTIME_BEFORE="$(stat -c %Y "$REAL_TOKEN" 2>/dev/null || echo none)"
+# real agy / agy-run processes (not fake-agy) rewrite the real token file themselves (account switches, token refresh)
+real_agy_busy() { pgrep -x agy >/dev/null 2>&1 || pgrep -x agy-run >/dev/null 2>&1; }
+REAL_BUSY=0; real_agy_busy && REAL_BUSY=1
 
 PASS=0 FAIL=0
 pass() { PASS=$((PASS + 1)); echo "  ok   $1"; }
@@ -204,7 +207,7 @@ has "rotate: says it read the agy log" "read from the agy log" "$out"
 eq "rotate: acc1 cooldown = log time + Resets in" "$((1000000 - 120 + 11631))" "$(cd_of acc1)"
 eq "rotate: switches to acc2" "acc2" "$("$ACCT" active)"
 eq "rotate: token = acc2" "tok-acc2" "$(cat "$AGY_HOME/antigravity-oauth-token")"
-has "rotate: tells you to reopen with agyr run -c" "agyr run -c" "$out"
+has "rotate: tells you to reopen with agyr -c" "agyr -c" "$out"
 hasnt "rotate: does not print the token" "tok-" "$out"
 
 setup
@@ -474,7 +477,7 @@ has "AM/PM does not depend on the machine's locale" "09:46 PM" "$out"
 
 echo "== help"
 setup
-for form in "help" "--help" "-h" ""; do
+for form in "help" "--help" "-h"; do
   out="$("$ACCT" $form 2>&1)"; rc=$?
   eq "agyr ${form:-<no args>}: exit 0" "0" "$rc"
   has "agyr ${form:-<no args>}: has the command list" "Commands:" "$out"
@@ -525,6 +528,33 @@ eq "agy-run --help does not run agy" "0" "$(lines)"
 out="$("$RUN" --bogus 2>&1)"
 has "agy-run: an unknown argument points to --help" "see --help" "$out"
 
+echo "== plain agyr starts agy"
+setup
+"$ACCT" >/dev/null 2>&1
+eq "plain 'agyr' starts agy once" "1" "$(lines)"
+has "plain 'agyr': agy uses the selected account's token file" "tok-acc1|" "$(cat "$FAKE_ARGS_LOG")"
+"$ACCT" use acc3 >/dev/null
+"$ACCT" -c >/dev/null 2>&1
+has "'agyr -c' passes -c to agy, with the selected account" "tok-acc3|-c" "$(tail -1 "$FAKE_ARGS_LOG")"
+"$ACCT" -p "do it" --model x >/dev/null 2>&1
+has "'agyr -p ...' passes all flags through" "tok-acc3|-p do it --model x" "$(tail -1 "$FAKE_ARGS_LOG")"
+"$ACCT" run models >/dev/null 2>&1
+has "'agyr run <word>' passes a non-flag word to agy" "tok-acc3|models" "$(tail -1 "$FAKE_ARGS_LOG")"
+n0="$(lines)"
+"$ACCT" --help >/dev/null 2>&1; "$ACCT" -h >/dev/null 2>&1; "$ACCT" help >/dev/null 2>&1
+eq "--help, -h and help do not start agy" "$n0" "$(lines)"
+"$ACCT" bogus >/dev/null 2>&1; rc=$?
+eq "'agyr <unknown word>' is still an error (exit 2), agy is not started" "2" "$rc"
+eq "unknown word: agy not started" "$n0" "$(lines)"
+"$ACCT" run --help >/dev/null 2>&1
+eq "'agyr run --help' shows help, does not start agy" "$n0" "$(lines)"
+out="$("$ACCT" help run)"
+has "help run mentions the shorthand" "shorthand: agyr [agy arguments...]" "$out"
+has "overview mentions plain agyr" "start agy with the selected account" "$("$ACCT" help)"
+out="$(AGY_BIN=/nonexistent/agy "$ACCT" 2>&1)"; rc=$?
+eq "plain agyr without agy -> error" "1" "$rc"
+has "plain agyr without agy -> message" "agy not found" "$out"
+
 echo "== run / keyring (agy >= 1.2.14)"
 setup
 "$ACCT" run -p hello >/dev/null 2>&1
@@ -555,10 +585,17 @@ runit >/dev/null 2>&1
 has "agy-run: agy ran with the selected account's token, not the keyring's" "tok-acc1|" "$(cat "$FAKE_ARGS_LOG")"
 hasnt "agy-run: the keyring account was not used" "keyring-account" "$(cat "$FAKE_ARGS_LOG")"
 out="$("$ACCT" rotate 1h 2>&1)"
-has "rotate: tells you to reopen with agyr run -c" "agyr run -c" "$out"
+has "rotate: tells you to reopen with agyr -c" "agyr -c" "$out"
 
 echo "== safety"
-eq "the real token is untouched (mtime)" "$REAL_MTIME_BEFORE" "$(stat -c %Y "$REAL_TOKEN" 2>/dev/null || echo none)"
+real_agy_busy && REAL_BUSY=1
+if [ "$REAL_BUSY" = 1 ]; then
+  echo "  skip the real token mtime check: real agy / agy-run processes are running and rewrite that file themselves"
+else
+  eq "the real token is untouched (mtime)" "$REAL_MTIME_BEFORE" "$(stat -c %Y "$REAL_TOKEN" 2>/dev/null || echo none)"
+fi
+# static guarantee, valid even when the check above is skipped: no test code points at the real agy directory
+eq "no test code hard-codes the real agy directory (only the read-only REAL_TOKEN probe)" "0" "$(grep -n '\.gemini' "$HERE/run.sh" "$HERE/fake-agy" | grep -vc -e 'REAL_TOKEN=' -e 'hard-codes the real agy directory')"
 
 echo
 echo "result: $PASS pass, $FAIL fail"

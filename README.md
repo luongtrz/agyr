@@ -24,7 +24,7 @@ Cần `bash` và `jq`.
 
 Từ bản **1.2.14** (tự cập nhật ngày 02/10/2026), `agy` lưu đăng nhập trong **kho mật khẩu của GNOME** (libsecret, qua D-Bus; mục `Password for 'antigravity' on 'gemini'`) và **bỏ qua file token** miễn là kho đó còn truy cập được. Hậu quả: `agyr use` đổi file token nhưng `agy` chạy bình thường vẫn dùng account nằm trong kho (banner không đổi), và mọi lần đo quota đều ra cùng một account.
 
-Cách `agyr` xử lý: mọi `agy` do `agyr` hoặc `agy-run` khởi động đều được chạy với địa chỉ D-Bus không tồn tại, nên agy không với tới kho mật khẩu và quay về dùng file token. `agyr list` và `agy-run` tự làm vậy. Khi bạn tự mở agy, hãy dùng **`agyr run`** thay cho `agy` (nhận mọi tham số của agy, ví dụ `agyr run -c`); có thể đặt alias `alias agy='agyr run'` trong `~/.zshrc` (alias không ảnh hưởng các script của `agyr`). `agy` chạy trần vẫn dùng account trong kho mật khẩu, bỏ qua `agyr use`.
+Cách `agyr` xử lý: mọi `agy` do `agyr` hoặc `agy-run` khởi động đều được chạy với địa chỉ D-Bus không tồn tại, nên agy không với tới kho mật khẩu và quay về dùng file token. `agyr list` và `agy-run` tự làm vậy. Khi bạn tự mở agy, hãy gõ **`agyr`** thay cho `agy`: `agyr` trần mở agy, `agyr -c` tiếp tục conversation gần nhất, và mọi cờ của agy đều dùng được (ví dụ `agyr -p "..."`). Tham số đầu tiên không bắt đầu bằng `-` được hiểu là lệnh của `agyr` (ví dụ `agyr list`); muốn truyền một từ như vậy cho agy thì viết `agyr run models`. `agyr run ...` vẫn dùng được và giống hệt. Không cần alias. `agy` chạy trần vẫn dùng account trong kho mật khẩu, bỏ qua `agyr use`.
 
 ## Setup một lần
 
@@ -58,7 +58,8 @@ agyr clear <tên>              # bỏ cooldown
 agyr next                     # account sẵn sàng kế tiếp (exit 3 nếu cả pool cooldown)
 agyr active                   # tên account đang dùng
 agyr save <tên>               # lưu token hiện tại thành slot
-agyr run [tham số agy]        # mở agy bằng account đang chọn (thay cho `agy`, xem mục trên)
+agyr                          # mở agy bằng account đang chọn (thay cho `agy`, xem mục trên); agyr -c, agyr -p "..." cũng được
+agyr run [tham số agy]        # giống hệt `agyr [tham số agy]`; dùng khi tham số đầu là một từ, ví dụ `agyr run models`
 agyr help [lệnh]              # tổng quan, hoặc chi tiết một lệnh (agyr <lệnh> --help cũng được)
 ```
 
@@ -70,7 +71,7 @@ Thoát agy (process đang chạy giữ token cũ), rồi:
 
 ```bash
 agyr rotate    # cooldown account hiện tại (đọc "Resets in …" từ log agy) + đổi sang account kế tiếp
-agyr run -c        # mở lại bằng account mới, tiếp tục conversation gần nhất
+agyr -c            # mở lại bằng account mới, tiếp tục conversation gần nhất
 ```
 
 `rotate [thời gian]` nhận thời gian nhập tay (ví dụ `rotate 4h13m`) nếu log không có lỗi quota trong 1 giờ gần đây (khi đó mặc định 5h). Cả pool đang cooldown thì exit 3 và không đổi token.
@@ -121,7 +122,7 @@ Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nh
 bash test/run.sh
 ```
 
-263 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật.
+271 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật.
 
 ## Giới hạn đã biết
 

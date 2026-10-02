@@ -230,7 +230,7 @@ cmd_rotate() {
   local nxt
   if ! nxt="$(cmd_next)"; then return 3; fi
   cmd_use "$nxt"
-  echo "reopen agy (it must be a new process) with: agyr run -c"
+  echo "reopen agy (it must be a new process) with: agyr -c"
 }
 
 # Run `agy -p /quota` (no model call, 0 tokens) with HOME = $1 (a temp dir holding a copy of the token);
@@ -413,13 +413,14 @@ usage() {
 agyr — rotate between multiple agy (Antigravity CLI) accounts
 
 Usage: agyr <command> [args]        (agyr help <command> for the details of one command)
+       agyr [agy arguments]         start agy with the selected account (same as 'agyr run'): 'agyr', 'agyr -c', 'agyr -p "..."'
 
 Commands:
   list [-c]                Measure every account's quota and show a table (* = selected account)
   save <name>              Save the current login as slot <name>
   use <name>               Switch to slot <name>
   active                   Print the name of the account in use
-  run [agy args]           Start agy with the account selected here (agy >= 1.2.14 ignores 'use' otherwise)
+  run [agy args]           Start agy with the selected account; plain 'agyr' / 'agyr -c' do the same
   rotate [time]            Interactive agy ran out of quota: cool this account down, switch to the next one
   next                     Print the next ready account
   cooldown <name> <time>   Mark an account as out of quota for a while
@@ -429,12 +430,12 @@ Commands:
 Typical use:
   agyr save work           After logging in with 'agy': store that login as slot 'work' (once per account)
   agyr list                Which account still has quota?
-  agyr use other           Switch account, then reopen agy with 'agyr run'
-  agyr rotate              agy ran out of quota: cool this account down and switch, then run 'agyr run -c'
+  agyr use other           Switch account, then reopen agy with 'agyr'
+  agyr rotate              agy ran out of quota: cool this account down and switch, then run 'agyr -c'
 
 After every manual login with 'agy', run 'agyr save <name>' so the slot does not drift from the real account.
 IMPORTANT: agy 1.2.14+ keeps its login in the OS keyring and ignores the token file, so a plain 'agy' always uses the
-account stored there, whatever 'agyr use' selected. Start agy with 'agyr run' (alias it: alias agy='agyr run') to use
+account stored there, whatever 'agyr use' selected. Start agy with plain 'agyr' (same as 'agyr run'; 'agyr -c' continues the last conversation) to use
 the selected account. 'agyr list' and agy-run already take care of this themselves.
 
 Exit codes:   0 ok | 1 error (or an account could not be measured) | 2 bad usage | 3 no account is ready
@@ -533,16 +534,17 @@ Exit code 3, and no switch, if every account is on cooldown.
 EOF
       ;;
     run) cat <<'EOF'
-Usage: agyr run [agy arguments...]
+Usage: agyr run [agy arguments...]        (shorthand: agyr [agy arguments...])
 
-Start agy (interactive, or any agy arguments you pass, e.g. 'agyr run -c' or 'agyr run -p "..."') using the login saved
+Start agy (interactive, or any agy arguments you pass, e.g. 'agyr -c' or 'agyr -p "..."') using the login saved
 in the token file, i.e. the account selected by 'agyr use' / 'agyr rotate' / 'agyr list'.
 
 Why it exists: since agy 1.2.14 the login is kept in the OS keyring (GNOME keyring over D-Bus) and the token file is
 ignored while the keyring is reachable, so a plain 'agy' keeps using whatever account is stored there. 'agyr run' starts
-agy with the session bus made unreachable, so agy falls back to the token file. Tip: alias agy='agyr run'.
+agy with the session bus made unreachable, so agy falls back to the token file. Shorthand: 'agyr' alone, or 'agyr' followed by a flag, is the same as 'agyr run ...'.
 
-Note: '--help' / '-h' as the first argument shows this help instead of being passed to agy.
+Note: '--help' / '-h' as the first argument shows agyr's help instead of being passed to agy, and a first argument that
+does not start with '-' is read as an agyr command (use 'agyr run <word>' to pass such an argument to agy, e.g. 'agyr run models').
 EOF
       ;;
     help) cat <<'EOF'
@@ -556,7 +558,13 @@ EOF
 }
 
 main() {
-  local c="${1:-}"; [ $# -gt 0 ] && shift
+  # bare 'agyr' and 'agyr -<flag> ...' start agy (same as 'agyr run ...'); only -h/--help show agyr's help
+  if [ $# -eq 0 ]; then cmd_run; fi
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -*) cmd_run "$@" ;;
+  esac
+  local c="$1"; shift
   # agyr <command> --help
   case "${1:-}" in
     -h|--help) if [ -n "$c" ]; then help_for "$c"; exit $?; fi ;;
@@ -571,7 +579,7 @@ main() {
     next) cmd_next "$@" ;;
     rotate) cmd_rotate "$@" ;;
     run) cmd_run "$@" ;;
-    ""|-h|--help) usage ;;
+    "") usage ;;
     help) help_for "$@" ;;
     *) usage >&2; exit 2 ;;
   esac
