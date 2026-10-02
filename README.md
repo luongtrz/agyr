@@ -116,6 +116,16 @@ Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nh
 | `AGY_RUN_MAX_SWITCH` | `6` | số lần đổi account tối đa của `agy-run` |
 | `AGY_RUN_POLL` | `1` | giây giữa hai lần `agy-run` soi log |
 
+## Skill `agy` (bản sao)
+
+`skill/agy/SKILL.md` là **bản sao** của skill Claude Code `agy` (`~/.claude/skills/agy/SKILL.md`), chụp ngày 02/10/2026: cách giao việc cho agy, quy tắc an toàn, và cách dùng `agyr`/`agy-run`. Bản đang dùng thật nằm ở `~/.claude/skills/agy/`, file trong repo không tự cập nhật theo.
+
+```bash
+cp ~/.claude/skills/agy/SKILL.md skill/agy/SKILL.md          # cập nhật bản sao trong repo
+mkdir -p ~/.claude/skills/agy && cp skill/agy/SKILL.md ~/.claude/skills/agy/   # cài lên máy khác
+```
+
+
 ## Test
 
 ```bash
