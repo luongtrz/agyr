@@ -18,6 +18,11 @@ export LC_TIME=C # so %p is always AM/PM, regardless of the machine's language
 
 AGY_HOME="${AGY_HOME:-$HOME/.gemini/antigravity-cli}"
 AGY_BIN="${AGY_BIN:-agy}"
+# Since agy 1.2.14 the login lives in the OS keyring (GNOME keyring / libsecret, reached over D-Bus) and the token file
+# is ignored whenever the keyring is reachable: swapping the token file then changes nothing (observed 2026-10-02: the
+# banner kept showing the old account, and every account measured the same quota). Without a reachable session bus agy
+# falls back to the token file in its HOME, so every agy that agyr starts gets this unreachable bus address.
+NOKEYRING_BUS="unix:path=/nonexistent"
 TOKEN="$AGY_HOME/antigravity-oauth-token"
 ACCTS="$AGY_HOME/accounts"
 STATE="$ACCTS/state.json"
@@ -225,7 +230,7 @@ cmd_rotate() {
   local nxt
   if ! nxt="$(cmd_next)"; then return 3; fi
   cmd_use "$nxt"
-  echo "reopen agy (it must be a new process) with: agy -c"
+  echo "reopen agy (it must be a new process) with: agyr run -c"
 }
 
 # Run `agy -p /quota` (no model call, 0 tokens) with HOME = $1 (a temp dir holding a copy of the token);
@@ -239,7 +244,8 @@ quota_fetch() {
   # (staircase newlines, no echo).
   local -a detach=()
   if command -v setsid >/dev/null; then detach=(setsid -w); fi
-  out="$(HOME="$home" AGY_HOME="$home/.gemini/antigravity-cli" "${detach[@]}" "$AGY_BIN" -p /quota --add-dir "$tmp" \
+  out="$(HOME="$home" AGY_HOME="$home/.gemini/antigravity-cli" DBUS_SESSION_BUS_ADDRESS="$NOKEYRING_BUS" \
+    "${detach[@]}" "$AGY_BIN" -p /quota --add-dir "$tmp" \
     --model gemini-3.8-flash-high --output-format stream-json </dev/null 2>/dev/null |
     grep '^{' | jq -r 'select(.event=="result") | select(.result.status=="SUCCESS") | .result.response' 2>/dev/null)" || true
   rm -rf "$tmp"
@@ -394,6 +400,12 @@ cmd_list() {
   [ -z "$failed" ]
 }
 
+# run [agy args...]: start agy with the login saved in the token file instead of the OS keyring, so 'agyr use' works.
+cmd_run() {
+  command -v "$AGY_BIN" >/dev/null || die "agy not found ($AGY_BIN)"
+  DBUS_SESSION_BUS_ADDRESS="$NOKEYRING_BUS" exec "$AGY_BIN" "$@"
+}
+
 cmd_active() { need_jq; init_state; active_name; }
 
 usage() {
@@ -407,6 +419,7 @@ Commands:
   save <name>              Save the current login as slot <name>
   use <name>               Switch to slot <name>
   active                   Print the name of the account in use
+  run [agy args]           Start agy with the account selected here (agy >= 1.2.14 ignores 'use' otherwise)
   rotate [time]            Interactive agy ran out of quota: cool this account down, switch to the next one
   next                     Print the next ready account
   cooldown <name> <time>   Mark an account as out of quota for a while
@@ -416,10 +429,13 @@ Commands:
 Typical use:
   agyr save work           After logging in with 'agy': store that login as slot 'work' (once per account)
   agyr list                Which account still has quota?
-  agyr use other           Switch account, then reopen agy
-  agyr rotate              agy ran out of quota: cool this account down and switch, then run 'agy -c'
+  agyr use other           Switch account, then reopen agy with 'agyr run'
+  agyr rotate              agy ran out of quota: cool this account down and switch, then run 'agyr run -c'
 
 After every manual login with 'agy', run 'agyr save <name>' so the slot does not drift from the real account.
+IMPORTANT: agy 1.2.14+ keeps its login in the OS keyring and ignores the token file, so a plain 'agy' always uses the
+account stored there, whatever 'agyr use' selected. Start agy with 'agyr run' (alias it: alias agy='agyr run') to use
+the selected account. 'agyr list' and agy-run already take care of this themselves.
 
 Exit codes:   0 ok | 1 error (or an account could not be measured) | 2 bad usage | 3 no account is ready
 Environment:  AGYR_COLOR=auto|always|never (also NO_COLOR) | AGY_TZ (default UTC-7, i.e. UTC+7) | AGY_HOME | AGY_BIN
@@ -516,6 +532,19 @@ Then exit agy and reopen it with 'agy -c' (a running agy keeps its old token).
 Exit code 3, and no switch, if every account is on cooldown.
 EOF
       ;;
+    run) cat <<'EOF'
+Usage: agyr run [agy arguments...]
+
+Start agy (interactive, or any agy arguments you pass, e.g. 'agyr run -c' or 'agyr run -p "..."') using the login saved
+in the token file, i.e. the account selected by 'agyr use' / 'agyr rotate' / 'agyr list'.
+
+Why it exists: since agy 1.2.14 the login is kept in the OS keyring (GNOME keyring over D-Bus) and the token file is
+ignored while the keyring is reachable, so a plain 'agy' keeps using whatever account is stored there. 'agyr run' starts
+agy with the session bus made unreachable, so agy falls back to the token file. Tip: alias agy='agyr run'.
+
+Note: '--help' / '-h' as the first argument shows this help instead of being passed to agy.
+EOF
+      ;;
     help) cat <<'EOF'
 Usage: agyr help [<command>]
 
@@ -541,6 +570,7 @@ main() {
     clear) cmd_clear "$@" ;;
     next) cmd_next "$@" ;;
     rotate) cmd_rotate "$@" ;;
+    run) cmd_run "$@" ;;
     ""|-h|--help) usage ;;
     help) help_for "$@" ;;
     *) usage >&2; exit 2 ;;

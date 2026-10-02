@@ -3,10 +3,14 @@
 #   - token listed in FAKE_QUOTA_TOKENS (space-separated) -> print a 429 error, then hang like agy retrying
 #   - FAKE_AUTH=1 -> print a login error, exit 1
 #   - FAKE_STALE_ERROR=1 -> init + a result event with status ERROR that merely echoes an old quota error
+#   - FAKE_KEYRING=1 -> use the "keyring" account unless DBUS_SESSION_BUS_ADDRESS is unreachable
 #   - otherwise -> init + SUCCESS result
 # Every call appends "token|argv" to $FAKE_ARGS_LOG.
 set -u
 tok="$(cat "$AGY_HOME/antigravity-oauth-token")"
+# FAKE_KEYRING=1 emulates agy >= 1.2.14: the login comes from the OS keyring and the token file is ignored, unless the
+# session bus is unreachable (then it falls back to the token file).
+if [ "${FAKE_KEYRING:-0}" = 1 ] && [ "${DBUS_SESSION_BUS_ADDRESS:-}" != "unix:path=/nonexistent" ]; then tok="keyring-account"; fi
 echo "$tok|$*" >>"${FAKE_ARGS_LOG:?}"
 
 # Fake /quota, same format as the real agy. Percentages derive from the token's last character: 5h = 50+10n, week = 40+10n.

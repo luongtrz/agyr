@@ -7,6 +7,7 @@ RUN="$HERE/../bin/agy-run"
 export AGY_BIN="$HERE/fake-agy"
 export AGY_ACCT="$ACCT"
 export AGY_RUN_POLL=0.1
+export FAKE_KEYRING=1 # emulate agy >= 1.2.14: it ignores the token file unless the keyring is unreachable
 
 export TZ=UTC-7 # same timezone as agyr, so the fake log lines line up
 REAL_TOKEN="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"
@@ -203,7 +204,7 @@ has "rotate: says it read the agy log" "read from the agy log" "$out"
 eq "rotate: acc1 cooldown = log time + Resets in" "$((1000000 - 120 + 11631))" "$(cd_of acc1)"
 eq "rotate: switches to acc2" "acc2" "$("$ACCT" active)"
 eq "rotate: token = acc2" "tok-acc2" "$(cat "$AGY_HOME/antigravity-oauth-token")"
-has "rotate: tells you to reopen with agy -c" "agy -c" "$out"
+has "rotate: tells you to reopen with agyr run -c" "agyr run -c" "$out"
 hasnt "rotate: does not print the token" "tok-" "$out"
 
 setup
@@ -482,10 +483,11 @@ for form in "help" "--help" "-h" ""; do
   has "agyr ${form:-<no args>}: has environment variables" "Environment:" "$out"
 done
 overview="$("$ACCT" help)"
-for c in list save use active rotate next cooldown clear help; do
+for c in list save use active run rotate next cooldown clear help; do
   has "overview lists '$c'" "  $c" "$overview"
 done
-for c in list save use active cooldown clear next rotate help; do
+has "overview warns about the keyring" "OS keyring" "$overview"
+for c in list save use active run cooldown clear next rotate help; do
   h="$("$ACCT" help "$c" 2>&1)"; rc=$?
   eq "agyr help $c: exit 0" "0" "$rc"
   has "agyr help $c: has its usage line" "Usage: agyr $c" "$h"
@@ -522,6 +524,38 @@ eq "agy-run --help does not run agy" "0" "$(lines)"
 "$RUN" -h >/dev/null 2>&1; eq "agy-run -h: exit 0" "0" "$?"
 out="$("$RUN" --bogus 2>&1)"
 has "agy-run: an unknown argument points to --help" "see --help" "$out"
+
+echo "== run / keyring (agy >= 1.2.14)"
+setup
+"$ACCT" run -p hello >/dev/null 2>&1
+has "agyr run: agy uses the token file (keyring made unreachable)" "tok-acc1|-p hello" "$(cat "$FAKE_ARGS_LOG")"
+"$ACCT" use acc2 >/dev/null
+"$ACCT" run -c >/dev/null 2>&1
+has "agyr run: follows 'agyr use' (acc2)" "tok-acc2|-c" "$(sed -n 2p "$FAKE_ARGS_LOG")"
+out="$(FAKE_QUOTA_TOKENS="tok-acc2" "$ACCT" run -p x 2>&1 | head -1)"
+has "agyr run: passes agy's output through" "init" "$out"
+"$ACCT" run --version >/dev/null 2>&1; rc=$?
+eq "agyr run: the exit code of agy is propagated (fake agy ignores unknown flags)" "0" "$rc"
+out="$(AGY_BIN=/nonexistent/agy "$ACCT" run 2>&1)"; rc=$?
+eq "agyr run: no agy -> error" "1" "$rc"
+has "agyr run: no agy -> message" "agy not found" "$out"
+mkdir -p "$T/empty2"
+AGY_HOME="$T/empty2" "$ACCT" run -p hi >/dev/null 2>&1
+eq "agyr run does not create the accounts directory" "no" "$([ -e "$T/empty2/accounts" ] && echo yes || echo no)"
+# the fake really does ignore the token file when the keyring is reachable (so the checks above are meaningful)
+setup
+DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/x/bus "$AGY_BIN" -p hi >/dev/null 2>&1
+has "sanity: with a reachable keyring the fake agy uses the keyring account" "keyring-account|-p hi" "$(tail -1 "$FAKE_ARGS_LOG")"
+# agyr list and agy-run measure / run every account with its own token even though the keyring says otherwise
+setup
+"$ACCT" list >/dev/null 2>&1
+eq "list: every account measured with its own token, not the keyring's" "tok-acc1 tok-acc2 tok-acc3 " "$(cut -d'|' -f1 "$FAKE_ARGS_LOG" | sort | tr '\n' ' ')"
+setup
+runit >/dev/null 2>&1
+has "agy-run: agy ran with the selected account's token, not the keyring's" "tok-acc1|" "$(cat "$FAKE_ARGS_LOG")"
+hasnt "agy-run: the keyring account was not used" "keyring-account" "$(cat "$FAKE_ARGS_LOG")"
+out="$("$ACCT" rotate 1h 2>&1)"
+has "rotate: tells you to reopen with agyr run -c" "agyr run -c" "$out"
 
 echo "== safety"
 eq "the real token is untouched (mtime)" "$REAL_MTIME_BEFORE" "$(stat -c %Y "$REAL_TOKEN" 2>/dev/null || echo none)"

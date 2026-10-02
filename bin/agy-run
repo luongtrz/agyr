@@ -21,6 +21,9 @@ AGY_ACCT="${AGY_ACCT:-$(dirname "$(readlink -f "$0")")/agyr}"
 POLL="${AGY_RUN_POLL:-1}"
 MAX_SWITCH="${AGY_RUN_MAX_SWITCH:-6}"
 MODEL="gemini-3.8-flash-high"
+# agy >= 1.2.14 reads its login from the OS keyring and ignores the token file that agyr swaps, unless the keyring is
+# unreachable (see NOKEYRING_BUS in agyr). Every agy started here gets an unreachable session bus.
+NOKEYRING_BUS="unix:path=/nonexistent"
 
 # A real 429 shows up as plain-text lines at the start of a line ("error: Individual quota reached ..." and
 # "AGY_ERROR: {... RESOURCE_EXHAUSTED (code 429) ...}"). When a conversation is resumed, agy can ALSO echo the old quota
@@ -82,7 +85,7 @@ OFF=0
 # run agy once; returns: 0 finished with SUCCESS | 10 quota | 11 auth | 1 other failure
 run_attempt() {
   OFF="$(stat -c %s "$LOG_FILE" 2>/dev/null || echo 0)"
-  setsid "$AGY_BIN" "$@" --add-dir "$ADD_DIR" --model "$MODEL" \
+  setsid env DBUS_SESSION_BUS_ADDRESS="$NOKEYRING_BUS" "$AGY_BIN" "$@" --add-dir "$ADD_DIR" --model "$MODEL" \
     --dangerously-skip-permissions --output-format stream-json >>"$LOG_FILE" 2>&1 &
   PID=$!
   local chunk
