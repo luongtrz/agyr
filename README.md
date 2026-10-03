@@ -20,7 +20,44 @@ ln -sf ~/tools/agy-acct/bin/agy-run  ~/.local/bin/agy-run
 
 Cần `bash` và `jq`.
 
-## Quan trọng: agy từ bản 1.2.14 dùng kho mật khẩu của hệ điều hành
+## Windows (Git Bash)
+
+Chạy trong **Git Bash**, cần `jq` (ví dụ `winget install jqlang.jq`). Trong Git Bash `ln -sf` chỉ tạo bản copy, nên cài bằng wrapper nhỏ trỏ thẳng vào repo (`git pull` là cập nhật):
+
+```bash
+mkdir -p ~/.local/bin
+for n in agyr agy-run; do
+  printf '#!/usr/bin/env bash\nexec "$HOME/tools/agy-acct/bin/%s" "$@"\n' "$n" > ~/.local/bin/$n
+  chmod +x ~/.local/bin/$n
+done
+```
+
+Trên Windows `agy` lưu đăng nhập trong **một mục Windows Credential Manager** (target `gemini:antigravity`, loại generic, nội dung là JSON giống file token trên Linux). Không có file token, và không có cách chuyển hướng cho từng tiến trình, nên `agyr` tự chọn backend `wincred` (xem `agyr backend`) và đổi account bằng cách **ghi đè chính mục đó**:
+
+- `agyr save <tên>`: đọc mục đó vào slot `accounts/<tên>.token` (cùng định dạng slot như bản Linux).
+- `agyr use <tên>`: backup login đang dùng vào `accounts/.last-token.bak`, rồi ghi slot đè lên mục đó. Sau đó `agy` trần và `agyr` hoạt động giống hệt nhau (không cần mẹo D-Bus như trên Linux).
+- `agyr list`: **đo lần lượt**, không song song (mỗi account một lần: ghi login vào, chạy `agy -p /quota`, lấy lại token mà agy đã refresh). Xong thì đặt lại login đang dùng, kể cả khi bị Ctrl+C hoặc lỗi giữa chừng. Trong lúc đo đừng mở agy hay đăng nhập tay.
+- `agyr forget`: xóa login hiện tại **chỉ ở máy này** (không thu hồi gì phía Google), để `agy` hỏi đăng nhập account khác. Thay cho `rm ~/.gemini/antigravity-cli/antigravity-oauth-token` của Linux. Từ chối nếu login chưa nằm trong slot nào (trừ khi `--force`).
+- Mọi thao tác ghi vào Credential Manager đều dùng khóa `accounts/.swap.lock`, để `agy-run` và `agyr list` chạy cùng lúc không giẫm lên nhau.
+
+Setup một lần trên Windows:
+
+```bash
+agy                       # đăng nhập account 1, rồi thoát
+agyr save acct1
+agyr forget
+agy                       # đăng nhập account 2, rồi thoát
+agyr save acct2
+agyr forget
+agy                       # đăng nhập account 3...
+agyr save acct3
+agyr use acct1 # chọn account dùng hằng ngày
+agyr list                 # kiểm tra từng slot còn sống
+```
+
+Slot là file thường, được bảo vệ bằng quyền của thư mục profile Windows (không có `chmod 600` trên NTFS). Các file riêng của Windows nằm trong `win/`: `cred.sh` + `cred.ps1` (đọc/ghi/xóa mục Credential Manager, không bao giờ in nội dung) và `inspect-cred.ps1` (chỉ in metadata của mục, không in giá trị, để chẩn đoán). Đổi target bằng `AGY_CRED_TARGET`, ép backend bằng `AGYR_BACKEND=file|wincred`.
+
+## Quan trọng (Linux): agy từ bản 1.2.14 dùng kho mật khẩu của hệ điều hành
 
 Từ bản **1.2.14** (tự cập nhật ngày 02/10/2026), `agy` lưu đăng nhập trong **kho mật khẩu của GNOME** (libsecret, qua D-Bus; mục `Password for 'antigravity' on 'gemini'`) và **bỏ qua file token** miễn là kho đó còn truy cập được. Hậu quả: `agyr use` đổi file token nhưng `agy` chạy bình thường vẫn dùng account nằm trong kho (banner không đổi), và mọi lần đo quota đều ra cùng một account.
 
@@ -132,7 +169,7 @@ mkdir -p ~/.claude/skills/agy && cp skill/agy/SKILL.md ~/.claude/skills/agy/   #
 bash test/run.sh
 ```
 
-271 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật.
+348 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
 
 ## Giới hạn đã biết
 
@@ -143,3 +180,5 @@ bash test/run.sh
 - Chạy nhiều `agy-run` song song dùng chung một pool theo kiểu best-effort: mỗi lần một lệnh đổi account thì file token thật đổi theo, nên dấu `*` trong `agyr list` nhảy qua lại trong lúc chúng đang chạy. Các process đang chạy vẫn giữ token riêng của mình.
 - `agyr list` đo bằng bản sao token trong HOME tạm. Token đã bị thu hồi thì báo `measure failed` thay vì đoán.
 - State (cooldown, active, snapshot quota) nằm ở `~/.gemini/antigravity-cli/accounts/state.json`; token backup trước mỗi lần `use` ở `accounts/.last-token.bak`.
+- **Windows:** backend `wincred` chỉ được test bằng helper giả (`test/fake-cred`); `win/cred.ps1` chạy thật lần đầu nên đi từng bước: `agyr save` (chỉ đọc) trước, rồi `agyr use`, rồi `agyr list`. Mỗi lần đọc/ghi Credential Manager gọi một tiến trình PowerShell (khoảng 1 giây), nên `agyr list` chậm hơn Linux: các account được đo tuần tự, không song song.
+- **Windows:** vì chỉ có một mục Credential Manager chung cho cả máy, trong lúc `agyr list` hoặc `agyr use` chạy mà bạn mở/đăng nhập agy tay thì login có thể bị ghi đè lẫn nhau. Login gốc luôn còn trong `accounts/.last-token.bak` và trong slot tương ứng.

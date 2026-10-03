@@ -7,10 +7,16 @@
 #   - otherwise -> init + SUCCESS result
 # Every call appends "token|argv" to $FAKE_ARGS_LOG.
 set -u
-tok="$(cat "$AGY_HOME/antigravity-oauth-token")"
-# FAKE_KEYRING=1 emulates agy >= 1.2.14: the login comes from the OS keyring and the token file is ignored, unless the
-# session bus is unreachable (then it falls back to the token file).
-if [ "${FAKE_KEYRING:-0}" = 1 ] && [ "${DBUS_SESSION_BUS_ADDRESS:-}" != "unix:path=/nonexistent" ]; then tok="keyring-account"; fi
+JQ=(jq); if jq -b -n . >/dev/null 2>&1; then JQ=(jq -b); fi # a native Windows jq.exe would print CRLF without -b
+if [ -n "${FAKE_CRED_FILE:-}" ]; then
+  # FAKE_CRED_FILE emulates agy on Windows: the login is the (fake) Credential Manager entry, whatever is in $AGY_HOME
+  tok="$(cat "$FAKE_CRED_FILE" 2>/dev/null)" || tok="no-login"
+else
+  tok="$(cat "$AGY_HOME/antigravity-oauth-token")"
+  # FAKE_KEYRING=1 emulates agy >= 1.2.14: the login comes from the OS keyring and the token file is ignored, unless the
+  # session bus is unreachable (then it falls back to the token file).
+  if [ "${FAKE_KEYRING:-0}" = 1 ] && [ "${DBUS_SESSION_BUS_ADDRESS:-}" != "unix:path=/nonexistent" ]; then tok="keyring-account"; fi
+fi
 echo "$tok|$*" >>"${FAKE_ARGS_LOG:?}"
 
 # Fake /quota, same format as the real agy. Percentages derive from the token's last character: 5h = 50+10n, week = 40+10n.
@@ -36,12 +42,16 @@ for a in "$@"; do
     [[ "${FAKE_P5:-}" =~ ^[0-9]+$ ]] && p5="$FAKE_P5"
     for z in ${FAKE_LOW_TOKENS:-}; do [ "$z" = "$tok" ] && p5=5; done
     # FAKE_REFRESH=1: agy "refreshes the token itself" by rewriting the token file in its own HOME
-    if [ "${FAKE_REFRESH:-0}" = 1 ]; then echo "$tok-refreshed" >"$AGY_HOME/antigravity-oauth-token"; fi
+    # (a JSON login keeps its refresh_token and only gets a new access_token, like the real thing)
+    if [ "${FAKE_REFRESH:-0}" = 1 ]; then
+      dest="${FAKE_CRED_FILE:-$AGY_HOME/antigravity-oauth-token}"
+      if [[ "$tok" == "{"* ]]; then "${JQ[@]}" -c '.token.access_token += "-refreshed"' <<<"$tok" >"$dest"; else echo "$tok-refreshed" >"$dest"; fi
+    fi
     now="${AGY_NOW:-$(date +%s)}"
     r5="$(date -u -d "@$((now + 3600))" +%Y-%m-%dT%H:%M:%SZ)"
     rw="$(date -u -d "@$((now + 259200))" +%Y-%m-%dT%H:%M:%SZ)"
     resp="$(printf 'Gemini Models\tWeekly Limit Remaining\t%s%%\t%s\nGemini Models\tFive Hour Limit Remaining\t%s%%\t%s\nClaude and GPT models\tWeekly Limit Remaining\t100%%\t%s\nClaude and GPT models\tFive Hour Limit Remaining\t100%%\t%s\n' "$pw" "$rw" "$p5" "$r5" "$rw" "$r5")"
-    jq -nc --arg r "$resp" '{event:"result",result:{status:"SUCCESS",response:$r,num_turns:0}}'
+    "${JQ[@]}" -nc --arg r "$resp" '{event:"result",result:{status:"SUCCESS",response:$r,num_turns:0}}'
     exit 0
   fi
   prev="$a"

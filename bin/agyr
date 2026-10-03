@@ -35,6 +35,25 @@ need_jq() { command -v jq >/dev/null || die "jq is required"; }
 
 valid_name() { [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "account name may only contain letters, digits, '-' and '_': '$1'"; }
 
+# --- where the login lives -------------------------------------------------------------------------------------------
+# file     (Linux)   agy's token file; agy is pointed at it by hiding the keyring (NOKEYRING_BUS).
+# wincred  (Windows) ONE Windows Credential Manager entry (target gemini:antigravity) shared by every agy of this user.
+#                    agy cannot be redirected there, so 'use' overwrites that entry with the slot's copy and 'list'
+#                    measures the accounts one after another (not in parallel), then puts the original login back.
+# Chosen by the OS; override with AGYR_BACKEND=file|wincred. AGYR_CRED_HELPER replaces win/cred.sh (used by the tests):
+# it is called as 'helper read FILE' | 'helper write FILE' | 'helper delete' and exits 3 when there is no entry.
+SELF_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) ON_WINDOWS=1 ;; *) ON_WINDOWS=0 ;; esac
+case "${AGYR_BACKEND:-auto}" in
+  file|wincred) BACKEND="$AGYR_BACKEND" ;;
+  auto) if [ "$ON_WINDOWS" = 1 ]; then BACKEND=wincred; else BACKEND=file; fi ;;
+  *) die "AGYR_BACKEND must be file or wincred (got '$AGYR_BACKEND')" 2 ;;
+esac
+CRED_HELPER="${AGYR_CRED_HELPER:-$SELF_DIR/../win/cred.sh}"
+if [ "$BACKEND" = wincred ]; then TOKEN_WHERE="Credential Manager entry ${AGY_CRED_TARGET:-gemini:antigravity}"; else TOKEN_WHERE="$TOKEN"; fi
+# a native Windows jq.exe prints CRLF; the \r would end up inside names and numbers (-b / --binary prevents that)
+if [ "$ON_WINDOWS" = 1 ] && command jq -b -n . >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi
+
 init_state() {
   mkdir -p "$ACCTS"
   chmod 700 "$ACCTS"
@@ -49,6 +68,92 @@ state_update() {
   if jq "$@" "$expr" "$STATE" >"$tmp"; then mv "$tmp" "$STATE"; else rm -f "$tmp"; die "failed to write state"; fi
 }
 
+# --- the login in use ("live") ---------------------------------------------------------------------------------------
+# LIVE = path of a readable copy of the login agy is using now, empty if there is none. Set by live_load, which must run
+# in the main shell (not in $(...)), and again after anything that changes the login. With the file backend LIVE is the
+# token file itself; with wincred it is an export of the Credential Manager entry into a private temp dir.
+LIVE="" LIVE_TMP="" LOCK_HELD=0 RESTORE_KIND="" RESTORE_FILE=""
+LOCKDIR="$ACCTS/.swap.lock"
+
+live_load() {
+  LIVE=""
+  case "$BACKEND" in
+    file) if [ -f "$TOKEN" ]; then LIVE="$TOKEN"; fi ;;
+    wincred)
+      [ -n "$LIVE_TMP" ] || LIVE_TMP="$(mktemp -d)"
+      rm -f "$LIVE_TMP/live"
+      local rc=0
+      "$CRED_HELPER" read "$LIVE_TMP/live" || rc=$?
+      case "$rc" in
+        0) LIVE="$LIVE_TMP/live" ;;
+        3) ;;
+        *) die "cannot read the login from Credential Manager (helper exit $rc)" ;;
+      esac
+      ;;
+  esac
+  return 0
+}
+
+# install file $1 as the login in use
+live_put() {
+  case "$BACKEND" in
+    file) cp "$1" "$TOKEN"; chmod 600 "$TOKEN"; LIVE="$TOKEN" ;;
+    wincred)
+      "$CRED_HELPER" write "$1" || die "cannot write the login to Credential Manager"
+      # LIVE now mirrors what was just written
+      [ -n "$LIVE_TMP" ] || LIVE_TMP="$(mktemp -d)"
+      cp "$1" "$LIVE_TMP/live.new" && mv -f "$LIVE_TMP/live.new" "$LIVE_TMP/live"; LIVE="$LIVE_TMP/live"
+      ;;
+  esac
+}
+
+# remove the login in use (only to undo a measurement that started with no login at all)
+live_clear() {
+  case "$BACKEND" in
+    file) rm -f "$TOKEN" ;;
+    wincred) "$CRED_HELPER" delete || [ $? -eq 3 ] ;;
+  esac
+  LIVE=""
+}
+
+# wincred only: whoever swaps the one shared login must hold this lock (mkdir is atomic); a lock whose owner is gone is stolen
+lock_acquire() {
+  [ "$BACKEND" = wincred ] || return 0
+  [ "$LOCK_HELD" = 0 ] || return 0
+  mkdir -p "$ACCTS"
+  local waited=0 owner
+  until mkdir "$LOCKDIR" 2>/dev/null; do
+    owner="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then rm -rf "$LOCKDIR"; continue; fi
+    waited=$((waited + 1))
+    [ "$waited" -le "${AGYR_LOCK_WAIT:-120}" ] || die "another agyr is switching accounts (lock: $LOCKDIR); try again in a moment"
+    sleep 1
+  done
+  echo $$ >"$LOCKDIR/pid"
+  LOCK_HELD=1
+}
+
+lock_release() {
+  if [ "$LOCK_HELD" = 1 ]; then rm -rf "$LOCKDIR"; LOCK_HELD=0; fi
+  return 0
+}
+
+on_exit() {
+  local rc=$?
+  trap - EXIT
+  # interrupted while a measurement had another account's login installed: put the original back
+  case "$RESTORE_KIND" in
+    file) "$CRED_HELPER" write "$RESTORE_FILE" || echo "agyr: COULD NOT RESTORE your login; the original is in $RESTORE_FILE" >&2 ;;
+    none) "$CRED_HELPER" delete || true ;;
+  esac
+  [ -z "$LIVE_TMP" ] || rm -rf "$LIVE_TMP"
+  lock_release
+  exit "$rc"
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 # Internal identity of a token file, for comparison only — NEVER printed: the refresh_token if it is JSON, else the whole content.
 ident_of() {
   local r
@@ -58,9 +163,9 @@ ident_of() {
 
 # The slot the real token file belongs to (by identity); empty if it matches no slot (e.g. just logged in to an unsaved account).
 real_owner() {
-  [ -f "$TOKEN" ] || return 0
+  [ -n "$LIVE" ] || return 0
   local id n
-  id="$(ident_of "$TOKEN")"
+  id="$(ident_of "$LIVE")"
   while read -r n; do
     if [ "$(ident_of "$ACCTS/$n.token")" = "$id" ]; then echo "$n"; return 0; fi
   done < <(slots)
@@ -112,9 +217,9 @@ cooldown_until() { jq -r --arg n "$1" '.cooldown[$n] // 0' "$STATE"; }
 cmd_save() {
   [ $# -eq 1 ] || die "usage: agyr save <name>"
   valid_name "$1"; need_jq
-  [ -f "$TOKEN" ] || die "no token yet ($TOKEN). Log in with 'agy' first"
+  [ -n "$LIVE" ] || die "no login yet (${TOKEN_WHERE}). Log in with 'agy' first"
   init_state
-  cp "$TOKEN" "$ACCTS/$1.token"; chmod 600 "$ACCTS/$1.token"
+  cp "$LIVE" "$ACCTS/$1.token"; chmod 600 "$ACCTS/$1.token"
   state_update '.active=$n | del(.cooldown[$n])' --arg n "$1"
   echo "saved account '$1' (now active)"
 }
@@ -123,16 +228,20 @@ cmd_use() {
   [ $# -eq 1 ] || die "usage: agyr use <name>"
   valid_name "$1"; need_jq; init_state
   [ -f "$ACCTS/$1.token" ] || die "no slot '$1' (see: agyr list)"
+  lock_acquire
+  live_load # again: the login may have changed while waiting for the lock
   local cur; cur="$(real_owner)"
-  if [ -f "$TOKEN" ]; then
-    cp "$TOKEN" "$ACCTS/.last-token.bak"; chmod 600 "$ACCTS/.last-token.bak"
+  if [ -n "$LIVE" ]; then
+    # backup first, before anything is overwritten
+    cp "$LIVE" "$ACCTS/.last-token.bak"; chmod 600 "$ACCTS/.last-token.bak"
     # keep the access token agy refreshed, but only write it back to the slot it belongs to; if it matches no slot,
     # no slot is overwritten (the unsaved token is still in .last-token.bak)
     if [ -n "$cur" ] && [ "$cur" != "$1" ]; then
-      cp "$TOKEN" "$ACCTS/$cur.token"; chmod 600 "$ACCTS/$cur.token"
+      cp "$LIVE" "$ACCTS/$cur.token"; chmod 600 "$ACCTS/$cur.token"
     fi
   fi
-  cp "$ACCTS/$1.token" "$TOKEN"; chmod 600 "$TOKEN"
+  live_put "$ACCTS/$1.token"
+  lock_release
   state_update '.active=$n' --arg n "$1"
   echo "switched to account '$1'"
 }
@@ -237,14 +346,16 @@ cmd_rotate() {
 # print lines "<group>\t<metric>\t<percent>\t<reset time UTC>". Returns 1 on failure.
 # AGY_HOME is also pointed there so the fake agy in tests reads the right token; real agy ignores it.
 quota_fetch() {
-  local home="$1" tmp out
+  local home="$1" agyhome="$2" tmp out
   tmp="$(mktemp -d)"
   # setsid + empty stdin: agy runs without a controlling terminal. Otherwise several agy processes running in parallel
   # all change/restore your terminal mode (raw mode, terminal capability queries) and leave the terminal garbled
   # (staircase newlines, no echo).
   local -a detach=()
   if command -v setsid >/dev/null; then detach=(setsid -w); fi
-  out="$(HOME="$home" AGY_HOME="$home/.gemini/antigravity-cli" DBUS_SESSION_BUS_ADDRESS="$NOKEYRING_BUS" \
+  # MSYS2_ARG_CONV_EXCL: Git Bash would turn the argument /quota into C:/Program Files/Git/quota before handing it to the
+  # native agy.exe, which then treats it as an ordinary prompt instead of the /quota command (every account "failed").
+  out="$(HOME="$home" AGY_HOME="$agyhome" DBUS_SESSION_BUS_ADDRESS="$NOKEYRING_BUS" MSYS2_ARG_CONV_EXCL="/quota" \
     "${detach[@]}" "$AGY_BIN" -p /quota --add-dir "$tmp" \
     --model gemini-3.8-flash-high --output-format stream-json </dev/null 2>/dev/null |
     grep '^{' | jq -r 'select(.event=="result") | select(.result.status=="SUCCESS") | .result.response' 2>/dev/null)" || true
@@ -261,11 +372,11 @@ measure_one() {
   trap 'rm -rf "$home"' EXIT INT TERM
   d="$home/.gemini/antigravity-cli"
   mkdir -p "$d"
-  if [ "$name" = "$act" ] && [ -f "$TOKEN" ]; then src="$TOKEN"; else src="$ACCTS/$name.token"; fi
+  if [ "$name" = "$act" ] && [ -n "$LIVE" ]; then src="$LIVE"; else src="$ACCTS/$name.token"; fi
   cp "$src" "$d/antigravity-oauth-token"; chmod 600 "$d/antigravity-oauth-token"
   # keep the same installation_id so Google sees the same agy installation
   if [ -f "$AGY_HOME/installation_id" ]; then cp "$AGY_HOME/installation_id" "$d/installation_id"; fi
-  quota_fetch "$home" >"$out" 2>/dev/null || rc=$?
+  quota_fetch "$home" "$d" >"$out" 2>/dev/null || rc=$?
   # agy may have refreshed the token itself: write it back to the slot (for the active account the real token file is the source of truth)
   if [ "$name" != "$act" ] && [ -s "$d/antigravity-oauth-token" ] && ! cmp -s "$d/antigravity-oauth-token" "$ACCTS/$name.token"; then
     cp "$d/antigravity-oauth-token" "$ACCTS/$name.token"; chmod 600 "$ACCTS/$name.token"
@@ -300,8 +411,15 @@ quota_ingest() {
   return 0
 }
 
-# Measure all slots ($@) in parallel and store snapshots; print the names of accounts that failed (space-separated).
+# Measure all slots ($@) and store snapshots; MEASURE_FAILED = names of the accounts that failed (space-separated).
+# Runs in the main shell (never in $(...)): the wincred variant must keep its restore/lock state and traps.
+MEASURE_FAILED=""
 measure_all() {
+  if [ "$BACKEND" = wincred ]; then measure_all_swap "$@"; else measure_all_parallel "$@"; fi
+}
+
+# file backend: every account is measured in parallel, in its own throwaway HOME
+measure_all_parallel() {
   local -a names=("$@") pids=() failed=()
   local d act i n
   d="$(mktemp -d)"
@@ -315,7 +433,47 @@ measure_all() {
     if wait "${pids[$i]}" && quota_ingest "$n" "$(cat "$d/$n.out")"; then :; else failed+=("$n"); fi
   done
   rm -rf "$d"
-  echo "${failed[*]:-}"
+  MEASURE_FAILED="${failed[*]:-}"
+}
+
+# wincred backend: the login is ONE shared entry, so the accounts are measured one after another: install a slot's login,
+# run agy -p /quota, take back whatever agy refreshed, go on to the next. At the end the login that was in use is put
+# back (also when interrupted: RESTORE_* + on_exit). A running agy keeps its own copy of the old login, but do not log in
+# or refresh agy by hand while this runs.
+measure_all_swap() {
+  local -a names=("$@") failed=()
+  local d act n
+  d="$(mktemp -d)"
+  lock_acquire
+  live_load
+  act="$(real_owner)"
+  if [ -n "$LIVE" ]; then
+    cp "$LIVE" "$d/orig"
+    cp "$LIVE" "$ACCTS/.last-token.bak"; chmod 600 "$ACCTS/.last-token.bak"
+    # the freshest copy of the login in use goes back into its slot first (as 'use' does)
+    if [ -n "$act" ]; then cp "$LIVE" "$ACCTS/$act.token"; chmod 600 "$ACCTS/$act.token"; fi
+    RESTORE_KIND=file; RESTORE_FILE="$d/orig"
+  else
+    RESTORE_KIND=none
+  fi
+  for n in "${names[@]}"; do
+    live_put "$ACCTS/$n.token"
+    if quota_fetch "$HOME" "$AGY_HOME" >"$d/$n.out" 2>/dev/null && quota_ingest "$n" "$(cat "$d/$n.out")"; then :; else failed+=("$n"); fi
+    # agy may have refreshed the login itself: take it back into the slot, but only if it is still the same account
+    live_load
+    if [ -n "$LIVE" ] && [ "$(ident_of "$LIVE")" = "$(ident_of "$ACCTS/$n.token")" ] && ! cmp -s "$LIVE" "$ACCTS/$n.token"; then
+      cp "$LIVE" "$ACCTS/$n.token"; chmod 600 "$ACCTS/$n.token"
+    fi
+  done
+  # put the login that was in use back: its slot (freshest), else the unsaved original, else no login at all
+  if [ -n "$act" ]; then live_put "$ACCTS/$act.token"
+  elif [ -f "$d/orig" ]; then live_put "$d/orig"
+  else live_clear
+  fi
+  RESTORE_KIND=""; RESTORE_FILE=""
+  lock_release
+  rm -rf "$d"
+  MEASURE_FAILED="${failed[*]:-}"
 }
 
 # Print the table from state. $1 = names of accounts that failed to measure, $2 = 1 if measured just now.
@@ -357,8 +515,8 @@ print_table() {
     mark=" "; if [ "$n" = "$cur" ]; then mark="*"; fi
     printf '%s %-14s %s   %s   %s%s%s\n' "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$sc" "$st" "$Z"
   done < <(slots)
-  if [ -f "$TOKEN" ] && [ -z "$cur" ]; then
-    echo "${Y}! The token file in use matches no slot (just logged in to another account?). Run 'agyr save <name>' to store it; 'agyr use' will not overwrite any slot.${Z}"
+  if [ -n "$LIVE" ] && [ -z "$cur" ]; then
+    echo "${Y}! The login in use matches no slot (just logged in to another account?). Run 'agyr save <name>' to store it; 'agyr use' will not overwrite any slot.${Z}"
   fi
   if [ "$live" = 1 ]; then
     echo "Measured at $(fmt_time "$t")   (* = selected account)"
@@ -389,7 +547,8 @@ cmd_list() {
   if [ "$cached" -eq 0 ]; then
     if command -v "$AGY_BIN" >/dev/null; then
       if [ -t 2 ]; then printf 'Measuring quota of %d accounts…' "${#names[@]}" >&2; fi
-      failed="$(measure_all "${names[@]}")"
+      measure_all "${names[@]}"
+      failed="$MEASURE_FAILED"
       if [ -t 2 ]; then printf '\r\033[K' >&2; fi
       live=1
     else
@@ -403,10 +562,39 @@ cmd_list() {
 # run [agy args...]: start agy with the login saved in the token file instead of the OS keyring, so 'agyr use' works.
 cmd_run() {
   command -v "$AGY_BIN" >/dev/null || die "agy not found ($AGY_BIN)"
+  # wincred: the selected account already IS the login in Credential Manager, nothing to hide
+  if [ "$BACKEND" = wincred ]; then exec "$AGY_BIN" "$@"; fi
   DBUS_SESSION_BUS_ADDRESS="$NOKEYRING_BUS" exec "$AGY_BIN" "$@"
 }
 
 cmd_active() { need_jq; init_state; active_name; }
+
+cmd_backend() { echo "$BACKEND"; }
+
+# forget [--force]: drop the login in use LOCALLY so agy asks for a new login (replaces 'rm <token file>'; nothing is revoked at Google).
+# Refuses when the login belongs to no slot (it would be lost), unless --force; it is always backed up first.
+cmd_forget() {
+  local force=0
+  case "${1:-}" in
+    "") ;;
+    --force) force=1 ;;
+    *) die "usage: agyr forget [--force]" 2 ;;
+  esac
+  need_jq; init_state
+  lock_acquire
+  live_load # again: the login may have changed while waiting for the lock
+  if [ -z "$LIVE" ]; then echo "no login in use; nothing to forget"; lock_release; return 0; fi
+  local cur; cur="$(real_owner)"
+  if [ -z "$cur" ] && [ "$force" = 0 ]; then
+    die "the login in use matches no slot, so forgetting it would lose it: run 'agyr save <name>' first (or 'agyr forget --force'; it is kept in $ACCTS/.last-token.bak either way)"
+  fi
+  cp "$LIVE" "$ACCTS/.last-token.bak"; chmod 600 "$ACCTS/.last-token.bak"
+  if [ -n "$cur" ]; then cp "$LIVE" "$ACCTS/$cur.token"; chmod 600 "$ACCTS/$cur.token"; fi # keep the freshest copy
+  live_clear
+  lock_release
+  echo "login removed from this machine${cur:+ (still saved as slot '$cur')}; nothing was revoked at Google."
+  echo "run 'agy' to log in to another account, then 'agyr save <name>'"
+}
 
 usage() {
   cat <<'EOF'
@@ -425,6 +613,8 @@ Commands:
   next                     Print the next ready account
   cooldown <name> <time>   Mark an account as out of quota for a while
   clear <name>             Remove an account's cooldown
+  forget [--force]         Drop the login in use locally, so 'agy' asks for a new login (replaces 'rm <token file>')
+  backend                  Print where the login lives: file (Linux) or wincred (Windows Credential Manager)
   help [command]           This overview, or the details of one command
 
 Typical use:
@@ -434,12 +624,25 @@ Typical use:
   agyr rotate              agy ran out of quota: cool this account down and switch, then run 'agyr -c'
 
 After every manual login with 'agy', run 'agyr save <name>' so the slot does not drift from the real account.
+EOF
+  if [ "$BACKEND" = wincred ]; then
+    cat <<'EOF'
+WINDOWS: agy keeps its login in ONE Windows Credential Manager entry (gemini:antigravity). 'agyr use' overwrites that
+entry with the slot's login (the previous login is backed up in accounts/.last-token.bak), so plain 'agy' and 'agyr'
+behave the same afterwards. 'agyr list' measures the accounts one after another, then puts your login back.
+EOF
+  else
+    cat <<'EOF'
 IMPORTANT: agy 1.2.14+ keeps its login in the OS keyring and ignores the token file, so a plain 'agy' always uses the
 account stored there, whatever 'agyr use' selected. Start agy with plain 'agyr' (same as 'agyr run'; 'agyr -c' continues the last conversation) to use
 the selected account. 'agyr list' and agy-run already take care of this themselves.
+EOF
+  fi
+  cat <<'EOF'
 
 Exit codes:   0 ok | 1 error (or an account could not be measured) | 2 bad usage | 3 no account is ready
-Environment:  AGYR_COLOR=auto|always|never (also NO_COLOR) | AGY_TZ (default UTC-7, i.e. UTC+7) | AGY_HOME | AGY_BIN
+Environment:  AGYR_COLOR=auto|always|never (also NO_COLOR) | AGY_TZ (default UTC-7, i.e. UTC+7) | AGY_HOME | AGY_BIN |
+              AGYR_BACKEND=file|wincred (default: by OS) | AGY_CRED_TARGET (wincred entry, default gemini:antigravity)
 Files:        ~/.gemini/antigravity-cli/accounts/<name>.token (slots), accounts/state.json (active account, cooldowns,
               last measured quota), accounts/.last-token.bak (token that was replaced by the last 'use')
 Also:         agy-run --help   (runs an agy task headless with automatic account rotation)
@@ -547,6 +750,17 @@ Note: '--help' / '-h' as the first argument shows agyr's help instead of being p
 does not start with '-' is read as an agyr command (use 'agyr run <word>' to pass such an argument to agy, e.g. 'agyr run models').
 EOF
       ;;
+    forget) cat <<'EOF'
+Usage: agyr forget [--force]
+
+Remove the login in use from THIS machine only (the token file on Linux, the Credential Manager entry on Windows), so the
+next 'agy' asks you to log in again. Nothing is revoked at Google, which is why this is used instead of agy's own logout.
+Use it between logging in to different accounts: 'agy' (log in), 'agyr save <name>', 'agyr forget', 'agy' (next account)...
+
+The login is backed up in accounts/.last-token.bak first. If it belongs to no slot it would be lost, so forget refuses
+until you run 'agyr save <name>' (or pass --force).
+EOF
+      ;;
     help) cat <<'EOF'
 Usage: agyr help [<command>]
 
@@ -569,7 +783,11 @@ main() {
   case "${1:-}" in
     -h|--help) if [ -n "$c" ]; then help_for "$c"; exit $?; fi ;;
   esac
+  # commands that look at the login in use (cmd_use loads it itself, under the lock)
+  case "$c" in save|list|ls|active|next|rotate) live_load ;; esac
   case "$c" in
+    backend) cmd_backend ;;
+    forget) cmd_forget "$@" ;;
     save) cmd_save "$@" ;;
     use) cmd_use "$@" ;;
     list|ls) cmd_list "$@" ;;
