@@ -67,21 +67,23 @@ Cách `agyr` xử lý: mọi `agy` do `agyr` hoặc `agy-run` khởi động đ�
 
 Tên slot do bạn tự đặt: chỉ gồm chữ cái không dấu, số, `-` và `_` (ví dụ `acct2`, `work`). Không dùng dấu cách, dấu chấm, `@` hay `/`.
 
-Với từng account, đăng nhập bằng `agy` rồi lưu slot. Làm tay vì cần đăng nhập Google. **Đừng dùng lệnh logout của agy** (chưa rõ nó có thu hồi token ở phía Google không); thay vào đó xóa file token cục bộ, slot đã giữ bản copy:
+Với từng account, đăng nhập bằng `agyr` rồi lưu slot. Làm tay vì cần đăng nhập Google. **Đừng dùng lệnh logout của agy** (chưa rõ nó có thu hồi token ở phía Google không); thay vào đó dùng `agyr forget` (xóa file token cục bộ, tương đương `rm ~/.gemini/antigravity-cli/antigravity-oauth-token`, slot đã giữ bản copy):
 
 ```bash
 agyr save acct1                 # account đang đăng nhập
-rm ~/.gemini/antigravity-cli/antigravity-oauth-token
-agy                                 # đăng nhập account 2, rồi thoát
+agyr forget                     # bỏ login hiện tại
+agyr                            # đăng nhập account 2, rồi thoát
 agyr save acct2
-rm ~/.gemini/antigravity-cli/antigravity-oauth-token
-agy                                 # đăng nhập account 3, rồi thoát
+agyr forget
+agyr                            # đăng nhập account 3, rồi thoát
 agyr save acct3
 ```
 
-Kiểm tra từng slot dùng được: `agyr use <tên>` rồi `agy models` (ra danh sách model là slot còn sống).
+Kiểm tra: `agyr list` phải hiện số quota riêng cho từng slot (slot hỏng báo `measure failed`).
 
-Về sau, mỗi lần bạn login tay một account, chạy lại `agyr save <tên>`; nếu quên, lần `use` kế tiếp sẽ ghi token của account khác đè vào slot cũ.
+`agyr forget` từ chối (exit 1, không xóa gì) khi login hiện tại chưa được lưu thành slot, để bạn không mất nó; `agyr save <tên>` trước, hoặc `agyr forget -f` nếu muốn bỏ luôn (bản sao vẫn nằm trong `accounts/.last-token.bak` đến lần `use`/`forget` kế tiếp). Nó chỉ xóa file token trên máy: không đăng xuất ở phía Google, và `agy` chạy trần vẫn dùng login trong kho mật khẩu.
+
+Sau mỗi lần login tay một account, chạy `agyr save <tên>`. Nếu quên, `agyr list` cảnh báo token không khớp slot nào, và `agyr use` không ghi đè slot nào.
 
 ## Lệnh
 
@@ -96,6 +98,7 @@ agyr next                     # account sẵn sàng kế tiếp (exit 3 nếu c�
 agyr active                   # tên account đang dùng
 agyr save <tên>               # lưu token hiện tại thành slot
 agyr rename <cũ> <mới>        # đổi tên slot (login, cooldown và số quota đi theo); từ chối nếu tên mới đã tồn tại
+agyr forget                   # bỏ login hiện tại (xóa file token) để đăng nhập account khác; từ chối nếu login chưa lưu (-f để ép)
 agyr                          # mở agy bằng account đang chọn (thay cho `agy`, xem mục trên); agyr -c, agyr -p "..." cũng được
 agyr run [tham số agy]        # giống hệt `agyr [tham số agy]`; dùng khi tham số đầu là một từ, ví dụ `agyr run models`
 agyr help [lệnh]              # tổng quan, hoặc chi tiết một lệnh (agyr <lệnh> --help cũng được)
@@ -170,7 +173,7 @@ mkdir -p ~/.claude/skills/agy && cp skill/agy/SKILL.md ~/.claude/skills/agy/   #
 bash test/run.sh
 ```
 
-348 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
+428 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
 
 ## Giới hạn đã biết
 

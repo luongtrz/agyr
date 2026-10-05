@@ -593,8 +593,8 @@ cmd_forget() {
   local force=0
   case "${1:-}" in
     "") ;;
-    --force) force=1 ;;
-    *) die "usage: agyr forget [--force]" 2 ;;
+    -f|--force) force=1 ;;
+    *) die "usage: agyr forget [-f|--force]" 2 ;;
   esac
   need_jq; init_state
   lock_acquire
@@ -607,9 +607,10 @@ cmd_forget() {
   cp "$LIVE" "$ACCTS/.last-token.bak"; chmod 600 "$ACCTS/.last-token.bak"
   if [ -n "$cur" ]; then cp "$LIVE" "$ACCTS/$cur.token"; chmod 600 "$ACCTS/$cur.token"; fi # keep the freshest copy
   live_clear
+  state_update '.active=""' # nobody is logged in now: 'agyr active' prints nothing and agy-run stops with "no active account"
   lock_release
   echo "login removed from this machine${cur:+ (still saved as slot '$cur')}; nothing was revoked at Google."
-  echo "run 'agy' to log in to another account, then 'agyr save <name>'"
+  echo "run 'agyr' to log in to another account, then 'agyr save <name>'"
 }
 
 usage() {
@@ -630,7 +631,7 @@ Commands:
   next                     Print the next ready account
   cooldown <name> <time>   Mark an account as out of quota for a while
   clear <name>             Remove an account's cooldown
-  forget [--force]         Drop the login in use locally, so 'agy' asks for a new login (replaces 'rm <token file>')
+  forget [-f|--force]      Drop the login in use locally, so 'agyr' asks for a new login (replaces 'rm <token file>')
   backend                  Print where the login lives: file (Linux) or wincred (Windows Credential Manager)
   help [command]           This overview, or the details of one command
 
@@ -778,14 +779,16 @@ does not start with '-' is read as an agyr command (use 'agyr run <word>' to pas
 EOF
       ;;
     forget) cat <<'EOF'
-Usage: agyr forget [--force]
+Usage: agyr forget [-f|--force]
 
 Remove the login in use from THIS machine only (the token file on Linux, the Credential Manager entry on Windows), so the
-next 'agy' asks you to log in again. Nothing is revoked at Google, which is why this is used instead of agy's own logout.
-Use it between logging in to different accounts: 'agy' (log in), 'agyr save <name>', 'agyr forget', 'agy' (next account)...
+next 'agyr' asks you to log in again. Nothing is revoked at Google, which is why this is used instead of agy's own logout.
+Use it between logging in to different accounts: 'agyr' (log in), 'agyr save <name>', 'agyr forget', 'agyr' (next account)...
+Log in with 'agyr', not a bare 'agy': on Linux a bare 'agy' (1.2.14+) logs in through the OS keyring and leaves the token file stale.
 
 The login is backed up in accounts/.last-token.bak first. If it belongs to no slot it would be lost, so forget refuses
-until you run 'agyr save <name>' (or pass --force).
+until you run 'agyr save <name>' (or pass -f / --force). It also clears the "active" mark, so 'agyr active' prints nothing and
+agy-run refuses to start (exit 4) until a login exists again. Do not forget while an agy-run is running.
 EOF
       ;;
     help) cat <<'EOF'
@@ -814,10 +817,10 @@ main() {
   case "$c" in save|list|ls|active|next|rotate) live_load ;; esac
   case "$c" in
     backend) cmd_backend ;;
-    forget) cmd_forget "$@" ;;
     save) cmd_save "$@" ;;
     use) cmd_use "$@" ;;
     rename) cmd_rename "$@" ;;
+    forget) cmd_forget "$@" ;;
     list|ls) cmd_list "$@" ;;
     active) cmd_active "$@" ;;
     cooldown) cmd_cooldown "$@" ;;
