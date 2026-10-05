@@ -98,6 +98,7 @@ agyr next                     # account sẵn sàng kế tiếp (exit 3 nếu c�
 agyr active                   # tên account đang dùng
 agyr save <tên>               # lưu token hiện tại thành slot
 agyr rename <cũ> <mới>        # đổi tên slot (login, cooldown và số quota đi theo); từ chối nếu tên mới đã tồn tại
+agyr test [tên...]            # gửi "Hi" cho mọi account để khởi động cửa sổ 5 giờ (TỐN quota thật, xem mục bên dưới)
 agyr forget                   # bỏ login hiện tại (xóa file token) để đăng nhập account khác; từ chối nếu login chưa lưu (-f để ép)
 agyr                          # mở agy bằng account đang chọn (thay cho `agy`, xem mục trên); agyr -c, agyr -p "..." cũng được
 agyr run [tham số agy]        # giống hệt `agyr [tham số agy]`; dùng khi tham số đầu là một từ, ví dụ `agyr run models`
@@ -135,6 +136,26 @@ Measured at 01/10/2026 02:58 PM   (* = selected account)
 - **Đo thấy 0%** thì tự đặt cooldown tới đúng giờ reset; **đo thấy còn quota** thì xóa cooldown cũ (ví dụ cooldown mặc định 5 giờ). Nhờ vậy `next`, `rotate` và `agy-run` luôn dựa trên số liệu thật.
 - **Trạng thái** (chữ tiếng Anh trong bảng): `ready`; `low` (còn ≤10%); `cooldown, 15m left`; `not measured`; `stale, past reset time` (chỉ với `-c`: đã qua giờ reset, cần đo lại); `measure failed` (token hết hạn hoặc agy lỗi; khi đó exit code là 1).
 
+## agyr test: gửi "Hi" cho từng account
+
+```
+$ agyr test
+Sending "Hi" to 3 account(s): one real request each, so it uses a little quota...
+  ACCOUNT        HI                                             GEMINI 5H    RESETS
+  acct3          ok in 11s: "Hello! How can I help yo"          16%>16%      05/10/2026 04:49 PM
+  work           ok in 9s: "Hello! How can I help yo"           100%>99%     05/10/2026 07:31 PM (was 07:04 PM)
+  acct1          skipped (cooldown, 45m left)
+Measured at 05/10/2026 02:19 PM   (GEMINI 5H = before>after; RESETS = end of the account's current 5-hour window; "(was ...)" = it moved because of the Hi)
+```
+
+Mỗi account được đo quota (0 token), nhận một request `agy -p Hi` (model `gemini-3.8-flash-high`, không công cụ, thư mục tạm trống, không đọc gì của bạn), rồi đo lại. Bảng hiện câu trả lời hoặc lỗi, quota 5 giờ trước>sau, và giờ reset (kèm `(was ...)` nếu request làm giờ reset dịch chuyển).
+
+- **Tốn quota thật:** một request mỗi account. Thử thật trên một account: quota 5 giờ vẫn 16% sau lần gọi (dưới 1%). Một lần chạy agy luôn có phần nền khoảng 20 nghìn token dù prompt chỉ một từ.
+- **Mục đích** là bắt đầu đếm ngược 5 giờ của mọi account cùng lúc. **Giả thuyết "cửa sổ 5 giờ bắt đầu từ request đầu tiên" chưa được kiểm chứng**, agy không ghi tài liệu về việc này, và số đo thật chưa xác nhận: `work` đang 100% giữ nguyên giờ reset 07:04 PM qua hai lần đo cách nhau 15 phút (không trôi theo giờ hiện tại, cũng không rõ nó tính từ đâu). Cách kiểm chứng: chạy `agyr test <tên>` trên một account 100% chưa dùng; nếu cột RESETS có `(was ...)` thì request đã dịch giờ reset, nếu không thì "Hi" không mở cửa sổ mới.
+- Không đặt tên thì bỏ qua account đang cooldown (hết quota). Đặt tên (`agyr test acct1 work`) thì account đó luôn được thử.
+- Không đụng login đang dùng; cách đo giống `agyr list` (song song trên Linux, lần lượt trên Windows). Quá `AGYR_TEST_TIMEOUT` giây (mặc định 120) thì cắt agy và báo `agy gave no answer`.
+- Exit code: 0 nếu mọi account được thử đều trả lời, 1 nếu có account không trả lời.
+
 ## Múi giờ
 
 Mọi giờ hiển thị đều theo **UTC+7** và có dạng `dd/mm/yyyy hh:mm AM|PM` (ví dụ `01/10/2026 07:14 PM`), không phụ thuộc múi giờ hay ngôn ngữ của máy. Đổi bằng biến môi trường `AGY_TZ` (ví dụ `AGY_TZ=UTC`; theo quy ước POSIX thì `UTC-7` nghĩa là UTC+7, và là giá trị mặc định). Giờ trong log của agy cũng được đọc theo múi giờ này.
@@ -154,6 +175,7 @@ Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nh
 | `AGY_TZ` | `UTC-7` | múi giờ hiển thị |
 | `AGY_NOW` | giờ hiện tại | chỉ để test: giả lập "bây giờ" |
 | `AGYR_COLOR` | `auto` | `auto` (có màu khi in ra terminal và không đặt `NO_COLOR`), `always`, `never` |
+| `AGYR_TEST_TIMEOUT` | `120` | số giây tối đa cho mỗi account trong `agyr test` |
 | `AGY_RUN_MAX_SWITCH` | `6` | số lần đổi account tối đa của `agy-run` |
 | `AGY_RUN_POLL` | `1` | giây giữa hai lần `agy-run` soi log |
 
@@ -173,7 +195,7 @@ mkdir -p ~/.claude/skills/agy && cp skill/agy/SKILL.md ~/.claude/skills/agy/   #
 bash test/run.sh
 ```
 
-428 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
+497 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
 
 ## Giới hạn đã biết
 

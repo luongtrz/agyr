@@ -392,7 +392,7 @@ measure_one() {
   cp "$src" "$d/antigravity-oauth-token"; chmod 600 "$d/antigravity-oauth-token"
   # keep the same installation_id so Google sees the same agy installation
   if [ -f "$AGY_HOME/installation_id" ]; then cp "$AGY_HOME/installation_id" "$d/installation_id"; fi
-  quota_fetch "$home" "$d" >"$out" 2>/dev/null || rc=$?
+  "$PROBE_FN" "$home" "$d" "$name" >"$out" 2>/dev/null || rc=$?
   # agy may have refreshed the token itself: write it back to the slot (for the active account the real token file is the source of truth)
   if [ "$name" != "$act" ] && [ -s "$d/antigravity-oauth-token" ] && ! cmp -s "$d/antigravity-oauth-token" "$ACCTS/$name.token"; then
     cp "$d/antigravity-oauth-token" "$ACCTS/$name.token"; chmod 600 "$ACCTS/$name.token"
@@ -430,6 +430,10 @@ quota_ingest() {
 # Measure all slots ($@) and store snapshots; MEASURE_FAILED = names of the accounts that failed (space-separated).
 # Runs in the main shell (never in $(...)): the wincred variant must keep its restore/lock state and traps.
 MEASURE_FAILED=""
+# what measure_all runs per account: PROBE_FN <home> <agy home> <name> prints raw output, INGEST_FN <name> <raw> stores it
+# (default: the quota measurement; 'agyr test' swaps in a probe that also sends "Hi")
+PROBE_FN=quota_fetch INGEST_FN=quota_ingest TEST_DIR=""
+declare -A TEST_TRY=() TEST_SKIP=()
 measure_all() {
   if [ "$BACKEND" = wincred ]; then measure_all_swap "$@"; else measure_all_parallel "$@"; fi
 }
@@ -446,7 +450,7 @@ measure_all_parallel() {
   done
   for i in "${!names[@]}"; do
     n="${names[$i]}"
-    if wait "${pids[$i]}" && quota_ingest "$n" "$(cat "$d/$n.out")"; then :; else failed+=("$n"); fi
+    if wait "${pids[$i]}" && "$INGEST_FN" "$n" "$(cat "$d/$n.out")"; then :; else failed+=("$n"); fi
   done
   rm -rf "$d"
   MEASURE_FAILED="${failed[*]:-}"
@@ -474,7 +478,7 @@ measure_all_swap() {
   fi
   for n in "${names[@]}"; do
     live_put "$ACCTS/$n.token"
-    if quota_fetch "$HOME" "$AGY_HOME" >"$d/$n.out" 2>/dev/null && quota_ingest "$n" "$(cat "$d/$n.out")"; then :; else failed+=("$n"); fi
+    if "$PROBE_FN" "$HOME" "$AGY_HOME" "$n" >"$d/$n.out" 2>/dev/null && "$INGEST_FN" "$n" "$(cat "$d/$n.out")"; then :; else failed+=("$n"); fi
     # agy may have refreshed the login itself: take it back into the slot, but only if it is still the same account
     live_load
     if [ -n "$LIVE" ] && [ "$(ident_of "$LIVE")" = "$(ident_of "$ACCTS/$n.token")" ] && ! cmp -s "$LIVE" "$ACCTS/$n.token"; then
@@ -583,6 +587,130 @@ cmd_run() {
   DBUS_SESSION_BUS_ADDRESS="$NOKEYRING_BUS" exec "$AGY_BIN" "$@"
 }
 
+# ---- agyr test: send "Hi" to every account -------------------------------------------------------------------------------
+# One real request per account (~ the cost of the smallest possible agy run), so it uses a little quota. Purpose: the 5-hour
+# window of an account starts counting down from its first request, so this starts every account's window now.
+
+# hi_call <HOME for agy> <AGY_HOME for agy>: run 'agy -p Hi' in an empty temp directory, no tools needed, detached from the
+# terminal. Prints one line  STATUS<US>reply<US>error  (US = unit separator; reply/error on one line, cut at 200 chars)
+# or nothing when agy produced no result at all (then returns 1).
+hi_call() {
+  local home="$1" agyhome="$2" tmp res
+  tmp="$(mktemp -d)"
+  local -a detach=() cap=()
+  if command -v setsid >/dev/null; then detach=(setsid -w); fi
+  # timeout runs INSIDE setsid: it then leads its own process group and kills agy and whatever agy started
+  if command -v timeout >/dev/null; then cap=(timeout "${AGYR_TEST_TIMEOUT:-120}"); fi
+  res="$(cd "$tmp" && HOME="$home" AGY_HOME="$agyhome" DBUS_SESSION_BUS_ADDRESS="$NOKEYRING_BUS" \
+    "${detach[@]}" "${cap[@]}" "$AGY_BIN" -p Hi --add-dir "$tmp" --model gemini-3.8-flash-high --print-timeout 90s \
+    --output-format stream-json </dev/null 2>/dev/null |
+    grep '^{' | jq -r 'select(.event=="result") | .result
+      | "\(.status)\u001f\((.response // "") | gsub("[\\t\\r\\n]+"; " ") | .[0:200])\u001f\((.error // "") | gsub("[\\t\\r\\n]+"; " ") | .[0:200])"' 2>/dev/null |
+    tail -n 1)" || true
+  rm -rf "$tmp"
+  [ -n "$res" ] || return 1
+  printf '%s\n' "$res"
+}
+
+# the probe measure_all runs for 'agyr test': quota before, "Hi", quota after (prints the raw quota output of the last one)
+test_probe() {
+  local home="$1" agyhome="$2" name="$3" t0 res
+  quota_fetch "$home" "$agyhome" >"$TEST_DIR/$name.before" 2>/dev/null || : >"$TEST_DIR/$name.before"
+  t0="$(date +%s)"
+  res="$(hi_call "$home" "$agyhome")" || res="NO_RESULT"$'\x1f'$'\x1f'
+  printf '%s\x1f%s\n' "$res" "$(($(date +%s) - t0))" >"$TEST_DIR/$name.hi"
+  quota_fetch "$home" "$agyhome"
+}
+
+# the ingest for 'agyr test': store the quota; the account counts as failed unless it answered "Hi" and its quota was readable
+test_ingest() {
+  local name="$1" raw="$2" st
+  st="$(cut -d$'\x1f' -f1 "$TEST_DIR/$name.hi" 2>/dev/null)"
+  quota_ingest "$name" "$raw" || return 1
+  [ "$st" = SUCCESS ]
+}
+
+use_color() {
+  case "${AGYR_COLOR:-auto}" in always) return 0 ;; never) return 1 ;; *) [ -t 1 ] && [ -z "${NO_COLOR:-}" ] ;; esac
+}
+
+# table for 'agyr test'; every account of this run has its files in $TEST_DIR
+print_test_table() {
+  local n st resp err secs txt hcol before after snap g5 g5r reset b_iso b_epoch diff
+  local G="" Y="" R="" Z=""
+  if use_color; then G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; Z=$'\033[0m'; fi
+  printf '  %-14s %-46s %-12s %s\n' "ACCOUNT" "HI" "GEMINI 5H" "RESETS"
+  while read -r n; do
+    if [ -n "${TEST_SKIP[$n]:-}" ]; then
+      printf '  %-14s %s%s%s\n' "$n" "$Y" "skipped (${TEST_SKIP[$n]})" "$Z"
+      continue
+    fi
+    [ -n "${TEST_TRY[$n]:-}" ] || continue
+    st="" resp="" err="" secs=""
+    IFS=$'\x1f' read -r st resp err secs <"$TEST_DIR/$n.hi" || true
+    if [ "$st" = SUCCESS ]; then
+      txt="ok in ${secs}s"; [ -z "$resp" ] || txt="$txt: \"${resp:0:24}\""; hcol="$G"
+    elif [ "$st" = NO_RESULT ] || [ -z "$st" ]; then
+      txt="failed: agy gave no answer (${secs:-?}s)"; hcol="$R"
+    else
+      txt="failed: ${err:-$st}"; hcol="$R"
+    fi
+    [ "${#txt}" -le 46 ] || txt="${txt:0:43}..."
+    before="$(awk -F'\t' '$1=="Gemini Models" && $2 ~ /Five Hour/ {print $3; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
+    snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [.g5,.g5r] | @tsv' "$STATE")"
+    g5="" g5r=""; if [ -n "$snap" ]; then IFS=$'\t' read -r g5 g5r <<<"$snap"; fi
+    after="${g5:+$g5%}"; reset="-"; [ -z "$g5r" ] || reset="$(fmt_time "$g5r")"
+    # did the reset time move? (that is what shows that the request started a new 5-hour window)
+    b_iso="$(awk -F'\t' '$1=="Gemini Models" && $2 ~ /Five Hour/ {print $4; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
+    b_epoch=""; if [ -n "$b_iso" ]; then b_epoch="$(date -d "$b_iso" +%s 2>/dev/null)" || b_epoch=""; fi
+    if [ -n "$b_epoch" ] && [ -n "$g5r" ]; then
+      diff=$((g5r - b_epoch)); if [ "$diff" -lt 0 ]; then diff=$((-diff)); fi
+      if [ "$diff" -gt 120 ]; then reset="$reset (was $(date -d "@$b_epoch" '+%I:%M %p'))"; fi
+    fi
+    printf '  %-14s %s%-46s%s %-12s %s\n' "$n" "$hcol" "$txt" "$Z" "${before:-?}>${after:-?}" "$reset"
+  done < <(slots)
+  echo "Measured at $(fmt_time "$(now)")   (GEMINI 5H = before>after; RESETS = end of the account's current 5-hour window; \"(was ...)\" = it moved because of the Hi)"
+}
+
+# test [name...]: send "Hi" to every account (or only the named ones) and show what it cost
+cmd_test() {
+  need_jq; init_state
+  command -v "$AGY_BIN" >/dev/null || die "agy not found ($AGY_BIN)"
+  local a n t until
+  local -a all=() names=()
+  for a in "$@"; do
+    valid_name "$a"
+    [ -f "$ACCTS/$a.token" ] || die "no slot '$a' (see: agyr list)"
+  done
+  mapfile -t all < <(slots)
+  if [ "${#all[@]}" -eq 0 ]; then echo "(no accounts yet; log in with 'agyr', then run 'agyr save <name>')"; return 0; fi
+  TEST_TRY=() TEST_SKIP=()
+  t="$(now)"
+  if [ $# -gt 0 ]; then
+    for n in "$@"; do
+      if [ -z "${TEST_TRY[$n]:-}" ]; then TEST_TRY[$n]=1; names+=("$n"); fi
+    done
+  else
+    for n in "${all[@]}"; do
+      until="$(cooldown_until "$n")"
+      if [ "$until" -gt "$t" ]; then TEST_SKIP[$n]="cooldown, $(fmt_dur $((until - t))) left"; else TEST_TRY[$n]=1; names+=("$n"); fi
+    done
+  fi
+  if [ "${#names[@]}" -eq 0 ]; then
+    echo "nothing to do: every account is on cooldown (name an account to send it \"Hi\" anyway: agyr test <name>)"
+    return 0
+  fi
+  echo "Sending \"Hi\" to ${#names[@]} account(s): one real request each, so it uses a little quota..." >&2
+  TEST_DIR="$(mktemp -d)"
+  PROBE_FN=test_probe INGEST_FN=test_ingest
+  measure_all "${names[@]}"
+  PROBE_FN=quota_fetch INGEST_FN=quota_ingest
+  local failed="$MEASURE_FAILED"
+  print_test_table
+  rm -rf "$TEST_DIR"; TEST_DIR=""
+  [ -z "$failed" ]
+}
+
 cmd_active() { need_jq; init_state; active_name; }
 
 cmd_backend() { echo "$BACKEND"; }
@@ -631,6 +759,7 @@ Commands:
   next                     Print the next ready account
   cooldown <name> <time>   Mark an account as out of quota for a while
   clear <name>             Remove an account's cooldown
+  test [name...]           Send "Hi" to every account (uses a little real quota) to start each 5-hour window
   forget [-f|--force]      Drop the login in use locally, so 'agyr' asks for a new login (replaces 'rm <token file>')
   backend                  Print where the login lives: file (Linux) or wincred (Windows Credential Manager)
   help [command]           This overview, or the details of one command
@@ -778,6 +907,27 @@ Note: '--help' / '-h' as the first argument shows agyr's help instead of being p
 does not start with '-' is read as an agyr command (use 'agyr run <word>' to pass such an argument to agy, e.g. 'agyr run models').
 EOF
       ;;
+    test) cat <<'EOF'
+Usage: agyr test [<name>...]
+
+Send "Hi" to every account (or only the named ones) and show what it did: this is ONE REAL REQUEST per account, so it uses a
+little real quota (an agy run costs a baseline of roughly 20k tokens even for a one-word prompt).
+
+Why: the idea is that an account's 5-hour limit window starts counting down at its first request, so one "Hi" per account
+starts every window at the same moment. THAT IS AN ASSUMPTION, not something agy documents: check it. The RESETS column
+shows the reset time after the call and, when the call moved it, "(was hh:mm)" with the time before; if nothing moved for an
+account that had not been used, the Hi did not start a new window.
+
+For each account it measures the quota (0 tokens), sends "Hi" with 'agy -p Hi' (model gemini-3.8-flash-high, no tools,
+empty temporary directory, nothing of yours is read), then measures again. The table shows the reply (or the error), the
+5-hour % before>after and the reset time. The accounts are handled like in 'agyr list' (in parallel on Linux, one after the
+other on Windows), the login in use is never touched, and the saved quota data is updated.
+
+Without names, accounts that are on cooldown (out of quota) are skipped. A named account is always tried.
+Exit code: 0 if every tried account answered, 1 if some did not.
+Environment: AGYR_TEST_TIMEOUT (seconds an account may take, default 120)
+EOF
+      ;;
     forget) cat <<'EOF'
 Usage: agyr forget [-f|--force]
 
@@ -821,6 +971,7 @@ main() {
     use) cmd_use "$@" ;;
     rename) cmd_rename "$@" ;;
     forget) cmd_forget "$@" ;;
+    test) cmd_test "$@" ;;
     list|ls) cmd_list "$@" ;;
     active) cmd_active "$@" ;;
     cooldown) cmd_cooldown "$@" ;;
