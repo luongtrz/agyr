@@ -95,6 +95,7 @@ agyr clear <tên>              # bỏ cooldown
 agyr next                     # account sẵn sàng kế tiếp (exit 3 nếu cả pool cooldown)
 agyr active                   # tên account đang dùng
 agyr save <tên>               # lưu token hiện tại thành slot
+agyr rename <cũ> <mới>        # đổi tên slot (login, cooldown và số quota đi theo); từ chối nếu tên mới đã tồn tại
 agyr                          # mở agy bằng account đang chọn (thay cho `agy`, xem mục trên); agyr -c, agyr -p "..." cũng được
 agyr run [tham số agy]        # giống hệt `agyr [tham số agy]`; dùng khi tham số đầu là một từ, ví dụ `agyr run models`
 agyr help [lệnh]              # tổng quan, hoặc chi tiết một lệnh (agyr <lệnh> --help cũng được)
