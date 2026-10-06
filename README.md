@@ -272,12 +272,14 @@ Summary ghi vào `.agy-sessions/NAME.summary.txt` (và in ra stdout khi hoàn th
 
 ## Skill `agy` (bản sao)
 
-`skill/agy/SKILL.md` là **bản sao** của skill Claude Code `agy` (`~/.claude/skills/agy/SKILL.md`), chụp ngày 02/10/2026: cách giao việc cho agy, quy tắc an toàn, và cách dùng `agyr`/`agy-run`. Bản đang dùng thật nằm ở `~/.claude/skills/agy/`, file trong repo không tự cập nhật theo.
+`skill/agy/` là **bản sao** của skill Claude Code `agy` (`~/.claude/skills/agy/`), chụp ngày 06/10/2026: `SKILL.md` (quy trình giao việc, quy tắc an toàn, cách dùng `agy-task`/`agy-run`) và `references/` (chi tiết chỉ đọc khi gặp đúng tình huống: quota/đăng nhập, fallback 503, chạy song song, log và chi phí, quy trình thủ công). Bản đang dùng thật nằm ở `~/.claude/skills/agy/`, thư mục trong repo không tự cập nhật theo.
 
 ```bash
-cp ~/.claude/skills/agy/SKILL.md skill/agy/SKILL.md          # cập nhật bản sao trong repo
-mkdir -p ~/.claude/skills/agy && cp skill/agy/SKILL.md ~/.claude/skills/agy/   # cài lên máy khác
+rm -rf skill/agy && cp -r ~/.claude/skills/agy skill/agy                   # cập nhật bản sao trong repo
+mkdir -p ~/.claude/skills && cp -r skill/agy ~/.claude/skills/              # cài lên máy khác
 ```
+
+Khối HARD RULES cho task implement nằm ở `templates/hard-rules.txt` (`agy-task` tự ghép vào prompt); bản cho task chỉ-đọc nằm ở `skill/agy/references/hard-rules-explore.txt`.
 
 
 ## Test
