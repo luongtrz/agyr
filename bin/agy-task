@@ -1,0 +1,630 @@
+#!/usr/bin/env bash
+# agy-task — deterministic wrapper running one delegated implement task end to end.
+#
+# Usage:
+#   agy-task run --name NAME --task FILE [options]
+#   agy-task --help          (also printed with no arguments)
+#
+# Options of `run`:
+#   --name NAME         [a-z0-9-]+ . Worktree <repo>/.worktrees/agy-NAME, branch agy/NAME,
+#                       session files <repo>/.agy-sessions/NAME.* (required)
+#   --task FILE         file with ONLY the task part of the prompt (required)
+#   --repo DIR          main checkout (default: repo of current directory, or main checkout
+#                       if inside a linked worktree)
+#   --base REF          commit-ish the branch starts from (default: HEAD)
+#   --scope PATHSPEC    repeatable; paths agy may change (relative to worktree root)
+#   --allow-path PATH   repeatable; lets agy touch a normally forbidden path
+#   --verify NAME       repeatable; preset from config's VERIFY map
+#   --verify-cmd CMD    repeatable; ad-hoc shell command, run via bash -c from worktree root
+#   --verify-timeout S  timeout per verify command in seconds (default: 900)
+#   --no-setup          skip SETUP_CMDS and COPY_FILES
+#   --reuse-worktree    use an existing worktree instead of failing
+#   --model M           model passed through to agy-run
+#
+# Exit codes:
+#   0 success (agy-run succeeded, no scope violation, all verify commands passed)
+#   1, 4, 5, 6 agy-run failure codes (propagated unchanged)
+#   2 bad arguments / config error
+#   7 setup failure
+#   8 verify failure or scope violation
+#
+# Environment variables:
+#   AGY_RUN        path of agy-run (default: sibling of this script)
+#   AGY_TASK_CONF  config path override (default: <repo>/.agy-sessions/agy-task.conf)
+set -uo pipefail
+
+BIN_DIR="$(dirname "$(readlink -f "$0")")"
+AGY_RUN="${AGY_RUN:-$BIN_DIR/agy-run}"
+TEMPLATES_DIR="$(dirname "$BIN_DIR")/templates"
+
+log() { echo "[agy-task] $*" >&2; }
+die() { log "$1"; exit "${2:-1}"; }
+
+usage() {
+  cat <<'EOF'
+agy-task — deterministic wrapper running one delegated implement task end to end
+
+Usage:
+  agy-task run --name NAME --task FILE [options]
+  agy-task --help
+
+Options of `run`:
+  --name NAME         [a-z0-9-]+ . Worktree <repo>/.worktrees/agy-NAME, branch agy/NAME,
+                      session files <repo>/.agy-sessions/NAME.* (required)
+  --task FILE         file with ONLY the task part of the prompt (required)
+  --repo DIR          main checkout (default: repo of current directory; resolves
+                      linked worktree to main checkout)
+  --base REF          commit-ish the branch starts from (default: HEAD)
+  --scope PATHSPEC    repeatable; paths agy may change (relative to worktree root)
+  --allow-path PATH   repeatable; lets agy touch a normally forbidden path
+  --verify NAME       repeatable; preset from config's VERIFY map
+  --verify-cmd CMD    repeatable; ad-hoc shell command, run with bash -c
+  --verify-timeout S  timeout per verify command in seconds (default: 900)
+  --no-setup          skip SETUP_CMDS and COPY_FILES
+  --reuse-worktree    use an already existing worktree instead of failing
+  --model M           passed through to agy-run
+
+Exit codes:
+  0 success | 1, 4, 5, 6 agy-run exit code | 2 bad arguments or config error |
+  7 setup failure | 8 verify failure or scope violation
+EOF
+}
+
+# Config variables (sourceable at top level)
+SETUP_CMDS=()
+COPY_FILES=()
+declare -A VERIFY=()
+DEFAULT_VERIFY=()
+
+# Bare command or help
+if [ $# -eq 0 ]; then
+  usage
+  exit 0
+fi
+
+case "$1" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  run)
+    shift
+    ;;
+  *)
+    die "unknown command: $1 (see --help)" 2
+    ;;
+esac
+
+NAME=""
+TASK_FILE=""
+REPO_ARG="."
+BASE_REF="HEAD"
+SCOPE_LIST=()
+ALLOW_PATHS=()
+RAW_VERIFY_NAMES=()
+RAW_VERIFY_CMDS=()
+VERIFY_TIMEOUT=900
+NO_SETUP=false
+REUSE_WORKTREE=false
+MODEL=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --name)
+      [ $# -ge 2 ] || die "missing argument for --name" 2
+      NAME="$2"; shift 2 ;;
+    --task)
+      [ $# -ge 2 ] || die "missing argument for --task" 2
+      TASK_FILE="$2"; shift 2 ;;
+    --repo)
+      [ $# -ge 2 ] || die "missing argument for --repo" 2
+      REPO_ARG="$2"; shift 2 ;;
+    --base)
+      [ $# -ge 2 ] || die "missing argument for --base" 2
+      BASE_REF="$2"; shift 2 ;;
+    --scope)
+      [ $# -ge 2 ] || die "missing argument for --scope" 2
+      SCOPE_LIST+=("$2"); shift 2 ;;
+    --allow-path)
+      [ $# -ge 2 ] || die "missing argument for --allow-path" 2
+      ALLOW_PATHS+=("$2"); shift 2 ;;
+    --verify)
+      [ $# -ge 2 ] || die "missing argument for --verify" 2
+      RAW_VERIFY_NAMES+=("$2"); shift 2 ;;
+    --verify-cmd)
+      [ $# -ge 2 ] || die "missing argument for --verify-cmd" 2
+      RAW_VERIFY_CMDS+=("$2"); shift 2 ;;
+    --verify-timeout)
+      [ $# -ge 2 ] || die "missing argument for --verify-timeout" 2
+      VERIFY_TIMEOUT="$2"; shift 2 ;;
+    --no-setup)
+      NO_SETUP=true; shift ;;
+    --reuse-worktree)
+      REUSE_WORKTREE=true; shift ;;
+    --model)
+      [ $# -ge 2 ] || die "missing argument for --model" 2
+      MODEL="$2"; shift 2 ;;
+    -h|--help)
+      usage; exit 0 ;;
+    *)
+      die "unknown argument: $1 (see --help)" 2 ;;
+  esac
+done
+
+# Validate required arguments
+[ -n "$NAME" ] || die "missing required --name" 2
+[[ "$NAME" =~ ^[a-z0-9-]+$ ]] || die "invalid name '$NAME': must match [a-z0-9-]+" 2
+
+[ -n "$TASK_FILE" ] || die "missing required --task" 2
+[ -f "$TASK_FILE" ] || die "--task must be an existing file: $TASK_FILE" 2
+TASK_FILE="$(readlink -f "$TASK_FILE")"
+
+# Resolve main repository
+resolve_repo() {
+  local target_dir="${1:-.}"
+  [ -d "$target_dir" ] || die "--repo must be an existing directory: $target_dir" 2
+  local common_dir
+  common_dir="$(git -C "$target_dir" rev-parse --git-common-dir 2>/dev/null)" || die "not a git repository: $target_dir" 2
+  if [[ "$common_dir" != /* ]]; then
+    common_dir="$(cd "$target_dir" && cd "$common_dir" && pwd)"
+  else
+    common_dir="$(readlink -f "$common_dir")"
+  fi
+  MAIN_REPO="$(dirname "$common_dir")"
+  MAIN_REPO="$(readlink -f "$MAIN_REPO")"
+}
+resolve_repo "$REPO_ARG"
+
+# Source config file at top level
+if [ -n "${AGY_TASK_CONF:-}" ]; then
+  CONF_FILE="$AGY_TASK_CONF"
+else
+  CONF_FILE="$MAIN_REPO/.agy-sessions/agy-task.conf"
+fi
+
+if [ -f "$CONF_FILE" ]; then
+  # Sourced at top level so declare -A VERIFY is global
+  # shellcheck source=/dev/null
+  source "$CONF_FILE"
+else
+  log "warning: no config file found at $CONF_FILE (no setup, no copy, no presets)"
+fi
+
+# Resolve effective verify commands
+EFFECTIVE_VERIFY_CMDS=()
+for vname in "${RAW_VERIFY_NAMES[@]}"; do
+  [ -n "${VERIFY[$vname]+_}" ] || die "unknown verify preset: '$vname'" 2
+  EFFECTIVE_VERIFY_CMDS+=("${VERIFY[$vname]}")
+done
+for vcmd in "${RAW_VERIFY_CMDS[@]}"; do
+  EFFECTIVE_VERIFY_CMDS+=("$vcmd")
+done
+if [ ${#RAW_VERIFY_NAMES[@]} -eq 0 ] && [ ${#RAW_VERIFY_CMDS[@]} -eq 0 ]; then
+  for vname in "${DEFAULT_VERIFY[@]}"; do
+    [ -n "${VERIFY[$vname]+_}" ] || die "unknown default verify preset: '$vname'" 2
+    EFFECTIVE_VERIFY_CMDS+=("${VERIFY[$vname]}")
+  done
+fi
+
+WORKTREE_DIR="$MAIN_REPO/.worktrees/agy-$NAME"
+BRANCH_NAME="agy/$NAME"
+SESSIONS_DIR="$MAIN_REPO/.agy-sessions"
+PROMPT_FILE="$SESSIONS_DIR/$NAME.prompt.txt"
+SETUP_LOG="$SESSIONS_DIR/$NAME.setup.log"
+LOG_FILE="$SESSIONS_DIR/$NAME.jsonl"
+SUMMARY_FILE="$SESSIONS_DIR/$NAME.summary.txt"
+
+# Step 1: Worktree / branch conflict validation
+if [ -e "$WORKTREE_DIR" ] && [ "$REUSE_WORKTREE" = false ]; then
+  die "worktree already exists: $WORKTREE_DIR (use --reuse-worktree to reuse)" 2
+fi
+
+if git -C "$MAIN_REPO" show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
+  if [ ! -e "$WORKTREE_DIR" ]; then
+    die "branch $BRANCH_NAME exists while worktree $WORKTREE_DIR does not" 2
+  fi
+fi
+
+mkdir -p "$SESSIONS_DIR"
+
+# Step 2: Create worktree
+BASE_SHA="$(git -C "$MAIN_REPO" rev-parse --short "$BASE_REF" 2>/dev/null)" || die "invalid base ref: $BASE_REF" 2
+
+if [ ! -e "$WORKTREE_DIR" ]; then
+  mkdir -p "$MAIN_REPO/.worktrees"
+  git -C "$MAIN_REPO" worktree add --no-track -b "$BRANCH_NAME" "$WORKTREE_DIR" "$BASE_REF" >/dev/null 2>&1 || die "failed to create worktree $WORKTREE_DIR" 2
+fi
+log "base: $BASE_REF ($BASE_SHA)"
+
+# Helper for file hashes
+get_file_hash() {
+  local f="$1"
+  if [ -f "$f" ]; then
+    sha256sum "$f" | cut -d' ' -f1
+  elif [ -e "$f" ]; then
+    sha256sum "$f" 2>/dev/null | cut -d' ' -f1 || echo "__EXISTS__"
+  else
+    echo "__MISSING__"
+  fi
+}
+
+# Helper to write summary and print to stdout
+# Globals used: RESULT_LINE, WORKTREE_DIR, BRANCH_NAME, BASE_REF, BASE_SHA,
+# AGY_STATUS, NUM_TURNS, TOTAL_TOKENS, AGY_ELAPSED, AGY_RC, AGY_RESPONSE,
+# CHANGED_DIFF_STAT, UNTRACKED_CHANGED, SCOPE_SUMMARY_LINES, VERIFY_RESULTS,
+# SKIPPED_VERIFY, SUMMARY_FILE, LOG_FILE, SETUP_LOG
+write_and_print_summary() {
+  {
+    echo "$RESULT_LINE"
+    echo "worktree: $WORKTREE_DIR"
+    echo "branch:   $BRANCH_NAME"
+    echo "base:     $BASE_REF ($BASE_SHA)"
+    
+    # agy status line
+    if [ "$AGY_STATUS" = "not run" ]; then
+      echo "agy:      not run"
+    else
+      local agy_note=""
+      if [ "$AGY_STATUS" = "ERROR" ] && [ "$AGY_RC" -eq 0 ]; then
+        agy_note=" - agy reported ERROR - check the diff before trusting it"
+      fi
+      echo "agy:      status=${AGY_STATUS:-unknown}, turns=${NUM_TURNS:-unknown}, tokens=${TOTAL_TOKENS:-unknown} (${AGY_ELAPSED}s)${agy_note}"
+    fi
+
+    # changed files
+    echo "changed files:"
+    local has_changed=false
+    if [ -n "$CHANGED_DIFF_STAT" ]; then
+      echo "$CHANGED_DIFF_STAT"
+      has_changed=true
+    fi
+    if [ ${#UNTRACKED_CHANGED[@]} -gt 0 ]; then
+      for u in "${UNTRACKED_CHANGED[@]}"; do
+        echo "?? $u"
+      done
+      has_changed=true
+    fi
+    if [ "$has_changed" = false ]; then
+      echo "(none)"
+    fi
+
+    # scope
+    for sl in "${SCOPE_SUMMARY_LINES[@]}"; do
+      echo "$sl"
+    done
+
+    # verify
+    echo "verify:"
+    if [ ${#VERIFY_RESULTS[@]} -gt 0 ]; then
+      for vr in "${VERIFY_RESULTS[@]}"; do
+        IFS='|' read -r v_st v_cmd v_secs v_log <<<"$vr"
+        printf '%-8s %s  (%ss)\n' "$v_st" "$v_cmd" "$v_secs"
+        if [ "$v_st" = "FAIL" ] || [ "$v_st" = "TIMEOUT" ]; then
+          if [ -f "$v_log" ]; then
+            sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g' "$v_log" | tail -n 40 | sed 's/^/    /'
+          fi
+        fi
+      done
+    elif [ "$SKIPPED_VERIFY" = true ]; then
+      echo "skipped"
+    else
+      echo "none"
+    fi
+
+    # agy report
+    echo "agy report:"
+    if [ -n "$AGY_RESPONSE" ]; then
+      local total_lines
+      total_lines="$(printf '%s\n' "$AGY_RESPONSE" | wc -l)"
+      if [ "$total_lines" -gt 25 ]; then
+        printf '%s\n' "$AGY_RESPONSE" | head -n 25
+        local remaining=$((total_lines - 25))
+        echo "... ($remaining more lines, see $LOG_FILE)"
+      else
+        printf '%s\n' "$AGY_RESPONSE"
+      fi
+    else
+      echo "(none)"
+    fi
+
+    # logs
+    echo "logs:"
+    [ -f "$LOG_FILE" ] && echo "  jsonl:  $LOG_FILE"
+    [ -f "$SETUP_LOG" ] && echo "  setup:  $SETUP_LOG"
+    for vr in "${VERIFY_RESULTS[@]}"; do
+      IFS='|' read -r _ _ _ v_log <<<"$vr"
+      [ -f "$v_log" ] && echo "  verify: $v_log"
+    done
+  } > "$SUMMARY_FILE"
+  cat "$SUMMARY_FILE"
+}
+
+# State variables for summary
+AGY_STATUS="not run"
+NUM_TURNS="none"
+TOTAL_TOKENS="none"
+AGY_ELAPSED=0
+AGY_RC=0
+AGY_RESPONSE=""
+CHANGED_DIFF_STAT=""
+UNTRACKED_CHANGED=()
+SCOPE_SUMMARY_LINES=()
+VERIFY_RESULTS=()
+SKIPPED_VERIFY=false
+
+# Step 3: Setup (unless --no-setup)
+: > "$SETUP_LOG"
+if [ "$NO_SETUP" = false ]; then
+  for scmd in "${SETUP_CMDS[@]}"; do
+    log "setup: $scmd"
+    tmp_out="$(mktemp)"
+    set +e
+    (cd "$WORKTREE_DIR" && bash -c "$scmd") >"$tmp_out" 2>&1
+    sc_rc=$?
+    set -e
+    cat "$tmp_out" >> "$SETUP_LOG"
+    if [ $sc_rc -ne 0 ]; then
+      log "setup command failed: $scmd"
+      tail -n 30 "$tmp_out" >&2
+      rm -f "$tmp_out"
+      RESULT_LINE="RESULT=SETUP_FAILED (command exited $sc_rc)"
+      SKIPPED_VERIFY=true
+      SCOPE_SUMMARY_LINES=("scope: not checked (setup failed)")
+      write_and_print_summary
+      exit 7
+    fi
+    rm -f "$tmp_out"
+  done
+
+  for rel in "${COPY_FILES[@]}"; do
+    src="$MAIN_REPO/$rel"
+    dst="$WORKTREE_DIR/$rel"
+    if [ -f "$src" ]; then
+      mkdir -p "$(dirname "$dst")"
+      cp "$src" "$dst"
+      echo "copied $rel" >> "$SETUP_LOG"
+    elif [ -e "$src" ]; then
+      mkdir -p "$(dirname "$dst")"
+      cp -r "$src" "$dst"
+      echo "copied $rel" >> "$SETUP_LOG"
+    else
+      log "warning: copy source missing: $rel"
+      echo "warning: copy source missing: $rel" >> "$SETUP_LOG"
+    fi
+  done
+fi
+
+# Step 4: Baseline content hashes of modified/untracked files
+declare -A BASELINE_HASHES=()
+while IFS= read -r -d '' entry; do
+  [ -z "$entry" ] && continue
+  xy="${entry:0:2}"
+  p="${entry:3}"
+  if [[ "${xy:0:1}" =~ [RC] || "${xy:1:1}" =~ [RC] ]]; then
+    read -r -d '' orig_p
+    BASELINE_HASHES["$orig_p"]="$(get_file_hash "$WORKTREE_DIR/$orig_p")"
+  fi
+  BASELINE_HASHES["$p"]="$(get_file_hash "$WORKTREE_DIR/$p")"
+done < <(git -C "$WORKTREE_DIR" status --porcelain=v1 -z -uall)
+
+# Step 5: Build prompt
+HR_FILE="$MAIN_REPO/.agy-sessions/hard-rules.txt"
+if [ ! -f "$HR_FILE" ]; then
+  HR_FILE="$TEMPLATES_DIR/hard-rules.txt"
+fi
+[ -f "$HR_FILE" ] || die "hard-rules template not found: $HR_FILE" 2
+
+{
+  echo "Working directory: $WORKTREE_DIR."
+  echo
+  cat "$TASK_FILE"
+  echo
+  echo "Scope:"
+  if [ ${#SCOPE_LIST[@]} -gt 0 ]; then
+    for s in "${SCOPE_LIST[@]}"; do
+      echo "- $s"
+    done
+  else
+    echo "none given"
+  fi
+  echo
+  sed "s|<ABS_PATH>|$WORKTREE_DIR|g" "$HR_FILE"
+  echo
+  echo "Verification commands:"
+  if [ ${#EFFECTIVE_VERIFY_CMDS[@]} -gt 0 ]; then
+    for vc in "${EFFECTIVE_VERIFY_CMDS[@]}"; do
+      echo "- $vc"
+    done
+  else
+    echo "none"
+  fi
+  echo
+  echo "The harness runs these itself after you finish, independently of your report. While working run only the cheapest targeted checks you need (one test file, a type-check); do not repeat the whole suite, and keep any output you quote short."
+} > "$PROMPT_FILE"
+
+# Step 6: Run agy-run
+log "running agy-run..."
+agy_cmd=("$AGY_RUN" --prompt "$PROMPT_FILE" --add-dir "$WORKTREE_DIR" --log "$LOG_FILE")
+if [ -n "$MODEL" ]; then
+  agy_cmd+=(--model "$MODEL")
+fi
+
+agy_start=$SECONDS
+set +e
+"${agy_cmd[@]}"
+AGY_RC=$?
+set -e
+AGY_ELAPSED=$((SECONDS - agy_start))
+
+# Extract result JSON if available
+if [ -f "$LOG_FILE" ]; then
+  result_json="$(grep '^{' "$LOG_FILE" 2>/dev/null | jq -c 'select(.event=="result")' 2>/dev/null | tail -1 || true)"
+  if [ -n "$result_json" ]; then
+    AGY_STATUS="$(jq -r '.result.status // empty' <<<"$result_json" 2>/dev/null || true)"
+    NUM_TURNS="$(jq -r '.result.num_turns // empty' <<<"$result_json" 2>/dev/null || true)"
+    TOTAL_TOKENS="$(jq -r '.result.usage.total_tokens // empty' <<<"$result_json" 2>/dev/null || true)"
+    AGY_RESPONSE="$(jq -r '.result.response // empty' <<<"$result_json" 2>/dev/null || true)"
+  fi
+fi
+
+if [ $AGY_RC -ne 0 ]; then
+  RESULT_LINE="RESULT=AGY_FAILED (exit code $AGY_RC)"
+  CHANGED_DIFF_STAT="$(git -C "$WORKTREE_DIR" diff --stat HEAD 2>/dev/null || true)"
+  SKIPPED_VERIFY=true
+  SCOPE_SUMMARY_LINES=("scope: not checked (agy-run failed)")
+  write_and_print_summary
+  exit "$AGY_RC"
+fi
+
+# Step 7: Scope / forbidden check
+declare -A CURRENT_STATUS=()
+declare -A ALL_CURRENT_PATHS=()
+while IFS= read -r -d '' entry; do
+  [ -z "$entry" ] && continue
+  xy="${entry:0:2}"
+  p="${entry:3}"
+  if [[ "${xy:0:1}" =~ [RC] || "${xy:1:1}" =~ [RC] ]]; then
+    read -r -d '' orig_p
+    CURRENT_STATUS["$orig_p"]="$xy"
+    ALL_CURRENT_PATHS["$orig_p"]=1
+  fi
+  CURRENT_STATUS["$p"]="$xy"
+  ALL_CURRENT_PATHS["$p"]=1
+done < <(git -C "$WORKTREE_DIR" status --porcelain=v1 -z -uall)
+
+CHANGED_PATHS=()
+for p in "${!ALL_CURRENT_PATHS[@]}"; do
+  curr_hash="$(get_file_hash "$WORKTREE_DIR/$p")"
+  if [ -n "${BASELINE_HASHES[$p]+_}" ]; then
+    base_hash="${BASELINE_HASHES[$p]}"
+    if [ "$curr_hash" = "$base_hash" ]; then
+      continue
+    fi
+  fi
+  CHANGED_PATHS+=("$p")
+done
+
+# Sort changed paths
+if [ ${#CHANGED_PATHS[@]} -gt 0 ]; then
+  mapfile -t CHANGED_PATHS < <(for p in "${CHANGED_PATHS[@]}"; do echo "$p"; done | sort)
+fi
+
+# Determine untracked changed paths and diff stat
+CHANGED_DIFF_STAT="$(git -C "$WORKTREE_DIR" diff --stat HEAD 2>/dev/null || true)"
+UNTRACKED_CHANGED=()
+for p in "${CHANGED_PATHS[@]}"; do
+  if [ "${CURRENT_STATUS[$p]:-}" = "??" ]; then
+    UNTRACKED_CHANGED+=("$p")
+  fi
+done
+
+# Match against scope pathspecs
+declare -A IN_SCOPE_PATHS=()
+if [ ${#SCOPE_LIST[@]} -gt 0 ]; then
+  while IFS= read -r -d '' entry; do
+    [ -z "$entry" ] && continue
+    xy="${entry:0:2}"
+    p="${entry:3}"
+    if [[ "${xy:0:1}" =~ [RC] || "${xy:1:1}" =~ [RC] ]]; then
+      read -r -d '' orig_p
+      IN_SCOPE_PATHS["$orig_p"]=1
+    fi
+    IN_SCOPE_PATHS["$p"]=1
+  done < <(git -C "$WORKTREE_DIR" status --porcelain=v1 -z -uall -- "${SCOPE_LIST[@]}")
+fi
+
+is_forbidden() {
+  local p="$1"
+  local base
+  base="$(basename "$p")"
+  for allow in "${ALLOW_PATHS[@]}"; do
+    if [ "$p" = "$allow" ] || [ "$base" = "$allow" ]; then
+      return 1
+    fi
+  done
+  if [[ "$base" == .env* ]] || \
+     [[ "$base" == "pnpm-lock.yaml" ]] || \
+     [[ "$base" == "package-lock.json" ]] || \
+     [[ "$base" == "yarn.lock" ]] || \
+     [[ "$base" == CLAUDE*.md ]] || \
+     [[ "$base" == "AGENTS.md" ]] || \
+     [[ "$base" == GEMINI*.md ]]; then
+    return 0
+  fi
+  return 1
+}
+
+SCOPE_VIOLATIONS=()
+for p in "${CHANGED_PATHS[@]}"; do
+  forbidden=false
+  out_of_scope=false
+  if is_forbidden "$p"; then
+    forbidden=true
+  fi
+  if [ ${#SCOPE_LIST[@]} -gt 0 ]; then
+    if [ -z "${IN_SCOPE_PATHS[$p]+_}" ]; then
+      out_of_scope=true
+    fi
+  fi
+
+  if [ "$forbidden" = true ] && [ "$out_of_scope" = true ]; then
+    SCOPE_VIOLATIONS+=("scope: violation: $p (forbidden file, outside scope)")
+  elif [ "$forbidden" = true ]; then
+    SCOPE_VIOLATIONS+=("scope: violation: $p (forbidden file)")
+  elif [ "$out_of_scope" = true ]; then
+    SCOPE_VIOLATIONS+=("scope: violation: $p (outside scope)")
+  fi
+done
+
+HAS_SCOPE_VIOLATION=false
+if [ ${#SCOPE_VIOLATIONS[@]} -gt 0 ]; then
+  HAS_SCOPE_VIOLATION=true
+  SCOPE_SUMMARY_LINES=("${SCOPE_VIOLATIONS[@]}")
+else
+  if [ ${#SCOPE_LIST[@]} -eq 0 ]; then
+    SCOPE_SUMMARY_LINES=("scope: not checked (no --scope)")
+  else
+    SCOPE_SUMMARY_LINES=("scope: OK")
+  fi
+fi
+
+# Step 8: Verify
+HAS_VERIFY_FAILURE=false
+idx=1
+for vcmd in "${EFFECTIVE_VERIFY_CMDS[@]}"; do
+  v_log="$SESSIONS_DIR/$NAME.verify-$idx.log"
+  log "verify [$idx/${#EFFECTIVE_VERIFY_CMDS[@]}]: $vcmd"
+  v_start=$SECONDS
+  set +e
+  (cd "$WORKTREE_DIR" && timeout "$VERIFY_TIMEOUT" bash -c "$vcmd") >"$v_log" 2>&1
+  v_rc=$?
+  set -e
+  v_secs=$((SECONDS - v_start))
+
+  if [ $v_rc -eq 0 ]; then
+    v_st="PASS"
+  elif [ $v_rc -eq 124 ]; then
+    v_st="TIMEOUT"
+    HAS_VERIFY_FAILURE=true
+  else
+    v_st="FAIL"
+    HAS_VERIFY_FAILURE=true
+  fi
+  VERIFY_RESULTS+=("$v_st|$vcmd|$v_secs|$v_log")
+  idx=$((idx + 1))
+done
+
+# Step 9: Summary & Step 10: Exit code
+if [ "$HAS_SCOPE_VIOLATION" = true ]; then
+  RESULT_LINE="RESULT=SCOPE_VIOLATION"
+  EXIT_CODE=8
+elif [ "$HAS_VERIFY_FAILURE" = true ]; then
+  RESULT_LINE="RESULT=VERIFY_FAILED"
+  EXIT_CODE=8
+else
+  RESULT_LINE="RESULT=OK"
+  EXIT_CODE=0
+fi
+
+write_and_print_summary
+exit "$EXIT_CODE"
