@@ -1043,6 +1043,7 @@ echo "== agy-task"
 out="$("$TASK" --help 2>&1)"; rc=$?
 eq "agy-task --help: exit 0" "0" "$rc"
 has "agy-task --help: usage line" "agy-task run --name NAME --task FILE" "$out"
+has "agy-task --help: mentions rm" "agy-task rm NAME [-f] [--repo DIR]" "$out"
 has "agy-task --help: exit codes" "Exit codes:" "$out"
 
 out="$("$TASK" 2>&1)"; rc=$?
@@ -1054,6 +1055,10 @@ eq "agy-task -h: exit 0" "0" "$rc"
 
 out="$("$TASK" run --help 2>&1)"; rc=$?
 eq "agy-task run --help: exit 0" "0" "$rc"
+
+out="$("$TASK" rm --help 2>&1)"; rc=$?
+eq "agy-task rm --help: exit 0" "0" "$rc"
+has "agy-task rm --help: mentions rm" "agy-task rm NAME [-f] [--repo DIR]" "$out"
 
 task_repo() {
   local d
@@ -1423,6 +1428,161 @@ unset FAKE_TASK_EXIT FAKE_TASK_EDIT
 # 6b: no set -e / set +e re-enables in agy-task
 eq "no set -e re-enables in agy-task" "0" "$(grep -c 'set -e' "$TASK" || true)"
 eq "no set +e in agy-task" "0" "$(grep -c 'set +e' "$TASK" || true)"
+
+# agy-task rm tests
+# 1. clean worktree whose branch has no unique commits -> removed without -f, logs/summary kept, prompt file gone
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+export AGY_RUN="$FAKE_TASK_RUN"
+"$TASK" run --name rmclean --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+eq "rm clean: run exit 0" "0" "$?"
+eq "rm clean: worktree exists before rm" "yes" "$([ -d "$R/.worktrees/agy-rmclean" ] && echo yes || echo no)"
+eq "rm clean: prompt file exists before rm" "yes" "$([ -f "$R/.agy-sessions/rmclean.prompt.txt" ] && echo yes || echo no)"
+out="$("$TASK" rm rmclean --repo "$R" 2>"$R/rmclean.err")"; rc=$?
+eq "rm clean: exit 0" "0" "$rc"
+eq "rm clean: stdout line" "removed: worktree $R/.worktrees/agy-rmclean, branch agy/rmclean" "$out"
+has "rm clean: stderr has progress" "[agy-task] removing worktree" "$(cat "$R/rmclean.err")"
+eq "rm clean: worktree gone" "no" "$([ -e "$R/.worktrees/agy-rmclean" ] && echo yes || echo no)"
+eq "rm clean: branch gone" "no" "$(git -C "$R" show-ref --verify --quiet "refs/heads/agy/rmclean" && echo yes || echo no)"
+eq "rm clean: prompt file gone" "no" "$([ -f "$R/.agy-sessions/rmclean.prompt.txt" ] && echo yes || echo no)"
+eq "rm clean: summary kept" "yes" "$([ -f "$R/.agy-sessions/rmclean.summary.txt" ] && echo yes || echo no)"
+eq "rm clean: jsonl kept" "yes" "$([ -f "$R/.agy-sessions/rmclean.jsonl" ] && echo yes || echo no)"
+eq "rm clean: setup log kept" "yes" "$([ -f "$R/.agy-sessions/rmclean.setup.log" ] && echo yes || echo no)"
+eq "rm clean: verify log kept" "yes" "$([ -f "$R/.agy-sessions/rmclean.verify-1.log" ] && echo yes || echo no)"
+
+# 2. dirty worktree -> refused (exit 2, worktree still there), with -f removed
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+"$TASK" run --name rmdirty --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+echo "dirty edit" >> "$R/.worktrees/agy-rmdirty/file.txt"
+out="$("$TASK" rm rmdirty --repo "$R" 2>"$R/rmdirty.err")"; rc=$?
+eq "rm dirty without -f -> exit 2" "2" "$rc"
+has "rm dirty: stderr mentions uncommitted" "uncommitted changes" "$(cat "$R/rmdirty.err")"
+has "rm dirty: stderr mentions -f" "-f" "$(cat "$R/rmdirty.err")"
+eq "rm dirty: worktree still there" "yes" "$([ -d "$R/.worktrees/agy-rmdirty" ] && echo yes || echo no)"
+out="$("$TASK" rm rmdirty -f --repo "$R" 2>"$R/rmdirty_force.err")"; rc=$?
+eq "rm dirty with -f -> exit 0" "0" "$rc"
+eq "rm dirty: worktree gone with -f" "no" "$([ -e "$R/.worktrees/agy-rmdirty" ] && echo yes || echo no)"
+eq "rm dirty: branch gone with -f" "no" "$(git -C "$R" show-ref --verify --quiet "refs/heads/agy/rmdirty" && echo yes || echo no)"
+
+# 3. untracked non-ignored file -> refused
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+"$TASK" run --name rmuntracked --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+echo "untracked" > "$R/.worktrees/agy-rmuntracked/untracked.txt"
+out="$("$TASK" rm rmuntracked --repo "$R" 2>"$R/rmuntracked.err")"; rc=$?
+eq "rm untracked file without -f -> exit 2" "2" "$rc"
+has "rm untracked: stderr mentions untracked" "untracked files" "$(cat "$R/rmuntracked.err")"
+has "rm untracked: stderr mentions -f" "-f" "$(cat "$R/rmuntracked.err")"
+eq "rm untracked: worktree still there" "yes" "$([ -d "$R/.worktrees/agy-rmuntracked" ] && echo yes || echo no)"
+"$TASK" rm rmuntracked -f --repo "$R" >/dev/null 2>&1
+eq "rm untracked with -f: worktree gone" "no" "$([ -e "$R/.worktrees/agy-rmuntracked" ] && echo yes || echo no)"
+
+# 4. branch with an unmerged commit -> refused, with -f removed
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+"$TASK" run --name rmunmerged --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+echo "commit edit" >> "$R/.worktrees/agy-rmunmerged/file.txt"
+git -C "$R/.worktrees/agy-rmunmerged" -c user.name=t -c user.email=t@t commit -am "unique commit" >/dev/null
+out="$("$TASK" rm rmunmerged --repo "$R" 2>"$R/rmunmerged.err")"; rc=$?
+eq "rm unmerged branch without -f -> exit 2" "2" "$rc"
+has "rm unmerged: stderr mentions not reachable" "not reachable" "$(cat "$R/rmunmerged.err")"
+has "rm unmerged: stderr mentions -f" "-f" "$(cat "$R/rmunmerged.err")"
+eq "rm unmerged: worktree still there" "yes" "$([ -d "$R/.worktrees/agy-rmunmerged" ] && echo yes || echo no)"
+eq "rm unmerged: branch still there" "yes" "$(git -C "$R" show-ref --verify --quiet "refs/heads/agy/rmunmerged" && echo yes || echo no)"
+out="$("$TASK" rm rmunmerged -f --repo "$R" 2>/dev/null)"; rc=$?
+eq "rm unmerged with -f -> exit 0" "0" "$rc"
+eq "rm unmerged: worktree gone with -f" "no" "$([ -e "$R/.worktrees/agy-rmunmerged" ] && echo yes || echo no)"
+eq "rm unmerged: branch gone with -f" "no" "$(git -C "$R" show-ref --verify --quiet "refs/heads/agy/rmunmerged" && echo yes || echo no)"
+
+# 5. worktree gone but branch left -> branch removed
+R="$(task_repo)"
+git -C "$R" branch agy/wtgone
+out="$("$TASK" rm wtgone --repo "$R" 2>"$R/wtgone.err")"; rc=$?
+eq "rm worktree gone branch left: exit 0" "0" "$rc"
+eq "rm worktree gone branch left: stdout" "removed: branch agy/wtgone" "$out"
+eq "rm worktree gone branch left: branch gone" "no" "$(git -C "$R" show-ref --verify --quiet "refs/heads/agy/wtgone" && echo yes || echo no)"
+
+# 6. nothing exists -> exit 2
+R="$(task_repo)"
+out="$("$TASK" rm nothing --repo "$R" 2>"$R/nothing.err")"; rc=$?
+eq "rm nothing exists -> exit 2" "2" "$rc"
+has "rm nothing exists: stderr mentions nothing to remove" "nothing to remove" "$(cat "$R/nothing.err")"
+
+# 7. invalid NAME -> exit 2
+R="$(task_repo)"
+"$TASK" rm BAD_NAME --repo "$R" >/dev/null 2>&1
+eq "rm bad name (uppercase) -> exit 2" "2" "$?"
+"$TASK" rm bad_name --repo "$R" >/dev/null 2>&1
+eq "rm bad name (underscore) -> exit 2" "2" "$?"
+"$TASK" rm --repo "$R" >/dev/null 2>&1
+eq "rm missing name -> exit 2" "2" "$?"
+
+# 8. called from inside a linked worktree -> resolves to the main checkout
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+"$TASK" run --name rmtarget --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+mkdir -p "$R/.worktrees"
+git -C "$R" worktree add -b agy/caller "$R/.worktrees/agy-caller" HEAD >/dev/null 2>&1
+out="$( (cd "$R/.worktrees/agy-caller" && "$TASK" rm rmtarget 2>"$R/rmtarget.err") )"; rc=$?
+eq "rm inside linked worktree: exit 0" "0" "$rc"
+eq "rm inside linked worktree: stdout" "removed: worktree $R/.worktrees/agy-rmtarget, branch agy/rmtarget" "$out"
+eq "rm inside linked worktree: worktree gone" "no" "$([ -e "$R/.worktrees/agy-rmtarget" ] && echo yes || echo no)"
+eq "rm inside linked worktree: branch gone" "no" "$(git -C "$R" show-ref --verify --quiet "refs/heads/agy/rmtarget" && echo yes || echo no)"
+git -C "$R" worktree remove --force "$R/.worktrees/agy-caller" >/dev/null 2>&1
+git -C "$R" branch -D agy/caller >/dev/null 2>&1
+
+# agy-task usage log tests
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+
+# First run: header + 1 line with tokens 12345
+"$TASK" run --name ulog1 --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+eq "usage log: file exists" "yes" "$([ -f "$R/.agy-sessions/usage.tsv" ] && echo yes || echo no)"
+expected_hdr=$'timestamp\tname\tresult\tagy_status\tturns\ttokens\tagy_seconds\texit_code'
+actual_hdr="$(head -n 1 "$R/.agy-sessions/usage.tsv")"
+eq "usage log: header line matches" "$expected_hdr" "$actual_hdr"
+eq "usage log: line count after run 1" "2" "$(wc -l < "$R/.agy-sessions/usage.tsv" | tr -d ' ')"
+line1_data="$(sed -n '2p' "$R/.agy-sessions/usage.tsv")"
+eq "usage log run 1: name" "ulog1" "$(echo "$line1_data" | cut -f2)"
+eq "usage log run 1: result" "RESULT=OK" "$(echo "$line1_data" | cut -f3)"
+eq "usage log run 1: tokens" "12345" "$(echo "$line1_data" | cut -f6)"
+eq "usage log run 1: exit code" "0" "$(echo "$line1_data" | cut -f8)"
+
+# Second run appends (header still once)
+"$TASK" run --name ulog2 --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+eq "usage log: line count after run 2" "3" "$(wc -l < "$R/.agy-sessions/usage.tsv" | tr -d ' ')"
+actual_hdr2="$(head -n 1 "$R/.agy-sessions/usage.tsv")"
+eq "usage log: header line still once" "$expected_hdr" "$actual_hdr2"
+line2_data="$(sed -n '3p' "$R/.agy-sessions/usage.tsv")"
+eq "usage log run 2: name" "ulog2" "$(echo "$line2_data" | cut -f2)"
+eq "usage log run 2: result" "RESULT=OK" "$(echo "$line2_data" | cut -f3)"
+eq "usage log run 2: exit code" "0" "$(echo "$line2_data" | cut -f8)"
+
+# Setup failure appends line with exit code 7
+cat <<'EOF' > "$R/.agy-sessions/agy-task.conf"
+SETUP_CMDS=( 'exit 1' )
+EOF
+"$TASK" run --name ulog-sfail --task "$R/task.txt" --repo "$R" >/dev/null 2>&1
+eq "usage log: line count after setup fail" "4" "$(wc -l < "$R/.agy-sessions/usage.tsv" | tr -d ' ')"
+line3_data="$(sed -n '4p' "$R/.agy-sessions/usage.tsv")"
+eq "usage log sfail: name" "ulog-sfail" "$(echo "$line3_data" | cut -f2)"
+eq "usage log sfail: result" "RESULT=SETUP_FAILED" "$(echo "$line3_data" | cut -f3)"
+eq "usage log sfail: agy_status" "not run" "$(echo "$line3_data" | cut -f4)"
+eq "usage log sfail: turns" "-" "$(echo "$line3_data" | cut -f5)"
+eq "usage log sfail: tokens" "-" "$(echo "$line3_data" | cut -f6)"
+eq "usage log sfail: exit code" "7" "$(echo "$line3_data" | cut -f8)"
+rm -f "$R/.agy-sessions/agy-task.conf"
+
+# agy-run failure appends line with right exit code
+export FAKE_TASK_EXIT=1
+"$TASK" run --name ulog-afail --task "$R/task.txt" --repo "$R" >/dev/null 2>&1
+eq "usage log: line count after agy fail" "5" "$(wc -l < "$R/.agy-sessions/usage.tsv" | tr -d ' ')"
+line4_data="$(sed -n '5p' "$R/.agy-sessions/usage.tsv")"
+eq "usage log afail: name" "ulog-afail" "$(echo "$line4_data" | cut -f2)"
+eq "usage log afail: result" "RESULT=AGY_FAILED" "$(echo "$line4_data" | cut -f3)"
+eq "usage log afail: exit code" "1" "$(echo "$line4_data" | cut -f8)"
+unset FAKE_TASK_EXIT
 
 unset AGY_RUN
 

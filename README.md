@@ -6,16 +6,18 @@ Chỉ làm việc với binary `agy` chính thức: copy file `~/.gemini/antigra
 
 > Rủi ro: Google từng khóa account vì dùng tool/proxy bên thứ 3 để lấy quota Antigravity. Cách này giống hệt việc login tay đổi account, nhưng không có gì đảm bảo 0 rủi ro. Dùng ở mức vừa phải.
 
-Gồm hai lệnh trong `bin/`:
+Gồm ba lệnh trong `bin/`:
 
 - `agyr`: quản lý slot, xem quota, đổi account. Đây là lệnh bạn tự gõ.
 - `agy-run`: chạy một task agy và tự đổi account khi hết quota. Chủ yếu do Claude gọi qua skill `agy`, xem phần [agy-run](#agy-run-dành-cho-claude).
+- `agy-task`: chạy trọn gói một task IMPLEMENT trong git worktree riêng, kiểm tra scope, chạy verify và dọn dẹp. Xem phần [agy-task](#agy-task-dành-cho-claude).
 
 ## Cài
 
 ```bash
 ln -sf ~/tools/agy-acct/bin/agyr ~/.local/bin/agyr
 ln -sf ~/tools/agy-acct/bin/agy-run  ~/.local/bin/agy-run
+ln -sf ~/tools/agy-acct/bin/agy-task ~/.local/bin/agy-task
 ```
 
 Cần `bash` và `jq`.
@@ -26,7 +28,7 @@ Chạy trong **Git Bash**, cần `jq` (ví dụ `winget install jqlang.jq`). Tro
 
 ```bash
 mkdir -p ~/.local/bin
-for n in agyr agy-run; do
+for n in agyr agy-run agy-task; do
   printf '#!/usr/bin/env bash\nexec "$HOME/tools/agy-acct/bin/%s" "$@"\n' "$n" > ~/.local/bin/$n
   chmod +x ~/.local/bin/$n
 done
@@ -165,6 +167,95 @@ Mọi giờ hiển thị đều theo **UTC+7** và có dạng `dd/mm/yyyy hh:mm 
 `agy-run` không phải lệnh để gõ tay hằng ngày: Claude gọi nó thay cho `agy -p` khi giao việc cho agy (xem skill `agy`, mục "Account pool"). Nó chạy agy với `--dangerously-skip-permissions --output-format stream-json`; gặp `Individual quota reached` thì kill ngay (không chờ agy retry), ghi cooldown theo `Resets in …`, chuyển sang account kế tiếp và resume đúng conversation bằng `--conversation <id>`.
 
 Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nhập hoặc chưa có account active, `5` cả pool hết quota, `6` đổi account quá `AGY_RUN_MAX_SWITCH` (mặc định 6) lần.
+
+## agy-task (dành cho Claude)
+
+`agy-task` là wrapper tất định (deterministic) để giao **trọn gói một task IMPLEMENT** cho `agy` từ đầu đến cuối mà **không dùng bất kỳ LLM nào trong wrapper**: tự tạo worktree tách biệt, chạy setup, gọi `agy-run`, kiểm tra scope, chạy các lệnh verify và xuất file summary. Đối với việc đọc code tìm hiểu (read-only exploration), Claude vẫn dùng `agy-run` trực tiếp trên repo chính.
+
+### Luồng sử dụng điển hình
+
+1. Claude chuẩn bị nội dung task vào một file (ví dụ `task.txt`).
+2. Chạy `agy-task run --name x --task task.txt --scope 'paths' --verify web` ở background.
+3. Đọc kết quả trong `.agy-sessions/x.summary.txt` và xem `git diff` trong worktree `.worktrees/agy-x`.
+4. Nếu kết quả đạt, commit vào repo chính.
+5. Dọn dẹp bằng `agy-task rm x -f`.
+
+### File cấu hình
+
+`agy-task` tìm file cấu hình tại `.agy-sessions/agy-task.conf` của repo chính (hoặc đường dẫn override qua biến môi trường `$AGY_TASK_CONF`). File này được `source` trực tiếp như một script bash của người dùng (trusted file), gồm các biến:
+
+- `SETUP_CMDS`: mảng lệnh bash chạy trong worktree trước khi chạy agy (ví dụ cài dependency, build).
+- `COPY_FILES`: mảng đường dẫn file/thư mục tương đối copy từ repo chính sang worktree (ví dụ các file sinh tự động như `routeTree.gen.ts`; không nên copy file chứa credential vào worktree).
+- `VERIFY`: mảng liên kết (`declare -A VERIFY`) khai báo các preset lệnh verify đặt tên sẵn.
+- `DEFAULT_VERIFY`: mảng tên preset mặc định sẽ chạy nếu không chỉ định `--verify` hay `--verify-cmd`.
+
+File mẫu: tham khảo `templates/agy-task.conf.example`.
+
+### Bảng các cờ của `run`
+
+| Cờ | Ý nghĩa |
+|---|---|
+| `--name NAME` | Tên task (`[a-z0-9-]+`, bắt buộc). Tạo worktree tại `<repo>/.worktrees/agy-NAME`, nhánh `agy/NAME`, file phiên làm việc `<repo>/.agy-sessions/NAME.*`. |
+| `--task FILE` | File chỉ chứa phần task của prompt (bắt buộc). |
+| `--repo DIR` | Repo chính (mặc định: thư mục hiện tại; tự resolve về repo chính nếu gọi từ trong linked worktree). |
+| `--base REF` | Commit-ish xuất phát cho nhánh (mặc định: `HEAD`). |
+| `--scope PATHSPEC` | Đường dẫn agy được phép thay đổi (tính từ gốc worktree, lặp lại được). |
+| `--allow-path PATH` | Cho phép agy chạm vào một đường dẫn thông thường bị cấm (lặp lại được). |
+| `--verify NAME` | Tên preset từ cấu hình `VERIFY` (lặp lại được). |
+| `--verify-cmd CMD` | Lệnh shell ad-hoc chạy bằng `bash -c` từ gốc worktree (lặp lại được). |
+| `--verify-timeout S` | Timeout cho từng lệnh verify tính bằng giây (mặc định: 900). |
+| `--no-setup` | Bỏ qua chạy `SETUP_CMDS` và `COPY_FILES`. |
+| `--reuse-worktree` | Dùng lại worktree đã tồn tại thay vì báo lỗi. |
+| `--model M` | Model truyền tiếp sang `agy-run`. |
+
+### Lệnh `rm`
+
+```bash
+agy-task rm NAME [-f] [--repo DIR]
+```
+
+Xóa worktree `<repo>/.worktrees/agy-NAME` (`git worktree remove`), nhánh `agy/NAME` (`git branch -d`), và file prompt đã ghép `.agy-sessions/NAME.prompt.txt`. Giữ lại toàn bộ audit trail: `NAME.jsonl`, `NAME.summary.txt`, `NAME.setup.log`, `NAME.verify-*.log`.
+
+Nếu không có `-f`, lệnh từ chối (exit 2) khi: worktree có thay đổi chưa commit hoặc file untracked chưa ignore, hoặc nhánh `agy/NAME` có commit chưa merge vào HEAD của repo chính. Dùng `-f` để ép xóa (`git worktree remove --force` và `git branch -D`).
+
+### Exit codes
+
+- `0`: Thành công (`run`: agy-run thành công, không vi phạm scope, mọi verify đều pass; `rm`: xóa thành công).
+- `1, 4, 5, 6`: Mã lỗi từ `agy-run` truyền nguyên vẹn ra ngoài.
+- `2`: Tham số sai, lỗi cấu hình, hoặc `rm` bị từ chối / không có gì để xóa.
+- `7`: Setup thất bại (lệnh trong `SETUP_CMDS` lỗi).
+- `8`: Verify thất bại hoặc vi phạm scope/file cấm.
+
+### Bố cục file Summary
+
+Summary ghi vào `.agy-sessions/NAME.summary.txt` (và in ra stdout khi hoàn thành) gồm các khối:
+- Dòng kết quả đầu tiên: `RESULT=OK`, `RESULT=VERIFY_FAILED`, `RESULT=SCOPE_VIOLATION`, `RESULT=SETUP_FAILED`, hoặc `RESULT=AGY_FAILED`.
+- Thông tin môi trường: `worktree`, `branch`, `base`.
+- Dòng `agy`: trạng thái status, số lượt (turns), token sử dụng, thời gian chạy.
+- `changed files`: thống kê thay đổi theo git (`diff --stat`) và file untracked (`??`).
+- `scope`: kết quả kiểm tra scope (`scope: OK` hoặc danh sách vi phạm).
+- `verify`: bảng kết quả từng lệnh (`PASS`, `FAIL`, `TIMEOUT`) kèm thời gian và 40 dòng log cuối nếu lỗi.
+- `agy report`: trích đoạn phản hồi từ agy (tối đa 25 dòng).
+- `logs`: danh sách đường dẫn tới các file log.
+
+### Cơ chế kiểm tra Scope và File cấm
+
+- File cấm mặc định: `.env*`, lockfile (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`), file tài liệu prompt AI (`CLAUDE*.md`, `AGENTS.md`, `GEMINI*.md`). Muốn cho phép phải dùng `--allow-path`.
+- Khi có `--scope`, chỉ các thay đổi nằm trong pathspec mới được chấp nhận; file ngoài scope sẽ bị báo vi phạm.
+- **Di chuyển HEAD (commit):** agy không được phép tự ý commit. Nếu HEAD của worktree bị dịch chuyển (`START_HEAD != NOW_HEAD`), đó được tính là một vi phạm scope (`scope: violation: agy moved HEAD (committed)...`).
+
+### Nhật ký sử dụng (`usage.tsv`)
+
+Ở cuối mỗi lượt `run` đến được summary (ở mọi kết quả OK, VERIFY_FAILED, SCOPE_VIOLATION, SETUP_FAILED, AGY_FAILED), một dòng dạng TSV (tab-separated) được ghi nối vào `<repo>/.agy-sessions/usage.tsv`:
+- Các cột: `timestamp`, `name`, `result`, `agy_status`, `turns`, `tokens`, `agy_seconds`, `exit_code`.
+- Dòng tiêu đề được tự động ghi khi file chưa tồn tại.
+- File không bao giờ bị ghi đè, và lỗi ghi file (nếu có) sẽ được bỏ qua mà không làm hỏng tiến trình run. Giá trị thiếu được ghi thành `-`.
+
+### Giới hạn đã biết
+
+- Worktree bắt đầu từ commit `--base`, **không kế thừa các thay đổi chưa commit** của repo chính.
+- Kiểm tra scope và file cấm chỉ nhìn thấy các file được git báo cáo (nếu agy tạo một file nằm trong `.gitignore`, ví dụ `.env`, git không báo nên bộ kiểm tra không thấy).
+- `RESULT=OK` khi không có lệnh verify nào đồng nghĩa là chưa có bài kiểm tra nào được chạy thực tế (`RESULT=OK (no verify commands ran)`).
 
 ## Biến môi trường
 
