@@ -13,6 +13,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+if [ -n "${FAKE_STDOUT_NOISE:-}" ]; then
+  printf '%s\n' "$FAKE_STDOUT_NOISE"
+fi
+
 if [ -n "${FAKE_PROMPT_COPY:-}" ] && [ -n "$PROMPT" ] && [ -f "$PROMPT" ]; then
   mkdir -p "$(dirname "$FAKE_PROMPT_COPY")"
   cp "$PROMPT" "$FAKE_PROMPT_COPY"
@@ -38,6 +42,11 @@ if [ -n "${FAKE_TASK_RM:-}" ] && [ -n "$ADD_DIR" ]; then
     [ -z "$rel" ] && continue
     rm -f "$ADD_DIR/$rel"
   done <<< "$FAKE_TASK_RM"
+fi
+
+if [ "${FAKE_TASK_COMMIT:-0}" = "1" ] && [ -n "$ADD_DIR" ]; then
+  git -C "$ADD_DIR" add -A
+  git -C "$ADD_DIR" -c user.name=t -c user.email=t@t commit -qm fake
 fi
 
 status="${FAKE_STATUS:-SUCCESS}"

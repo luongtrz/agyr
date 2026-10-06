@@ -205,6 +205,9 @@ if [ ${#RAW_VERIFY_NAMES[@]} -eq 0 ] && [ ${#RAW_VERIFY_CMDS[@]} -eq 0 ]; then
     EFFECTIVE_VERIFY_CMDS+=("${VERIFY[$vname]}")
   done
 fi
+if [ ${#EFFECTIVE_VERIFY_CMDS[@]} -eq 0 ]; then
+  log "warning: no verify commands configured or specified"
+fi
 
 WORKTREE_DIR="$MAIN_REPO/.worktrees/agy-$NAME"
 BRANCH_NAME="agy/$NAME"
@@ -215,8 +218,23 @@ LOG_FILE="$SESSIONS_DIR/$NAME.jsonl"
 SUMMARY_FILE="$SESSIONS_DIR/$NAME.summary.txt"
 
 # Step 1: Worktree / branch conflict validation
-if [ -e "$WORKTREE_DIR" ] && [ "$REUSE_WORKTREE" = false ]; then
-  die "worktree already exists: $WORKTREE_DIR (use --reuse-worktree to reuse)" 2
+if [ -e "$WORKTREE_DIR" ]; then
+  if [ "$REUSE_WORKTREE" = false ]; then
+    die "worktree already exists: $WORKTREE_DIR (use --reuse-worktree to reuse)" 2
+  fi
+  if [ ! -d "$WORKTREE_DIR" ] || [ "$(git -C "$WORKTREE_DIR" rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ] || [ "$(readlink -f "$(git -C "$WORKTREE_DIR" rev-parse --show-toplevel 2>/dev/null)")" != "$(readlink -f "$WORKTREE_DIR")" ]; then
+    die "existing path is not a git worktree: $WORKTREE_DIR" 2
+  fi
+  wt_common_dir="$(git -C "$WORKTREE_DIR" rev-parse --git-common-dir 2>/dev/null)" || die "failed to resolve git-common-dir for $WORKTREE_DIR" 2
+  if [[ "$wt_common_dir" != /* ]]; then
+    wt_common_dir="$(cd "$WORKTREE_DIR" && cd "$wt_common_dir" && pwd)"
+  else
+    wt_common_dir="$(readlink -f "$wt_common_dir")"
+  fi
+  wt_repo="$(readlink -f "$(dirname "$wt_common_dir")")"
+  if [ "$wt_repo" != "$MAIN_REPO" ]; then
+    die "worktree $WORKTREE_DIR does not belong to main repository: $wt_repo (expected $MAIN_REPO)" 2
+  fi
 fi
 
 if git -C "$MAIN_REPO" show-ref --verify --quiet "refs/heads/$BRANCH_NAME"; then
@@ -232,7 +250,11 @@ BASE_SHA="$(git -C "$MAIN_REPO" rev-parse --short "$BASE_REF" 2>/dev/null)" || d
 
 if [ ! -e "$WORKTREE_DIR" ]; then
   mkdir -p "$MAIN_REPO/.worktrees"
-  git -C "$MAIN_REPO" worktree add --no-track -b "$BRANCH_NAME" "$WORKTREE_DIR" "$BASE_REF" >/dev/null 2>&1 || die "failed to create worktree $WORKTREE_DIR" 2
+  wt_err="$(git -C "$MAIN_REPO" worktree add --no-track -b "$BRANCH_NAME" "$WORKTREE_DIR" "$BASE_REF" 2>&1)" || {
+    log "failed to create worktree $WORKTREE_DIR:"
+    printf '%s\n' "$wt_err" | tail -n 20 >&2
+    exit 2
+  }
 fi
 log "base: $BASE_REF ($BASE_SHA)"
 
@@ -295,9 +317,12 @@ write_and_print_summary() {
 
     # verify
     echo "verify:"
-    if [ ${#VERIFY_RESULTS[@]} -gt 0 ]; then
-      for vr in "${VERIFY_RESULTS[@]}"; do
-        IFS='|' read -r v_st v_cmd v_secs v_log <<<"$vr"
+    if [ ${#VERIFY_STATUS[@]} -gt 0 ]; then
+      for i in "${!VERIFY_STATUS[@]}"; do
+        v_st="${VERIFY_STATUS[$i]}"
+        v_cmd="${VERIFY_RUN_CMDS[$i]}"
+        v_secs="${VERIFY_SECS[$i]}"
+        v_log="${VERIFY_LOGS[$i]}"
         printf '%-8s %s  (%ss)\n' "$v_st" "$v_cmd" "$v_secs"
         if [ "$v_st" = "FAIL" ] || [ "$v_st" = "TIMEOUT" ]; then
           if [ -f "$v_log" ]; then
@@ -331,8 +356,7 @@ write_and_print_summary() {
     echo "logs:"
     [ -f "$LOG_FILE" ] && echo "  jsonl:  $LOG_FILE"
     [ -f "$SETUP_LOG" ] && echo "  setup:  $SETUP_LOG"
-    for vr in "${VERIFY_RESULTS[@]}"; do
-      IFS='|' read -r _ _ _ v_log <<<"$vr"
+    for v_log in "${VERIFY_LOGS[@]}"; do
       [ -f "$v_log" ] && echo "  verify: $v_log"
     done
   } > "$SUMMARY_FILE"
@@ -347,10 +371,16 @@ AGY_ELAPSED=0
 AGY_RC=0
 AGY_RESPONSE=""
 CHANGED_DIFF_STAT=""
+CHANGED_PATHS=()
 UNTRACKED_CHANGED=()
 SCOPE_SUMMARY_LINES=()
-VERIFY_RESULTS=()
+VERIFY_STATUS=()
+VERIFY_RUN_CMDS=()
+VERIFY_SECS=()
+VERIFY_LOGS=()
 SKIPPED_VERIFY=false
+declare -A CURRENT_STATUS=()
+declare -A ALL_CURRENT_PATHS=()
 
 # Step 3: Setup (unless --no-setup)
 : > "$SETUP_LOG"
@@ -358,10 +388,8 @@ if [ "$NO_SETUP" = false ]; then
   for scmd in "${SETUP_CMDS[@]}"; do
     log "setup: $scmd"
     tmp_out="$(mktemp)"
-    set +e
     (cd "$WORKTREE_DIR" && bash -c "$scmd") >"$tmp_out" 2>&1
     sc_rc=$?
-    set -e
     cat "$tmp_out" >> "$SETUP_LOG"
     if [ $sc_rc -ne 0 ]; then
       log "setup command failed: $scmd"
@@ -393,6 +421,8 @@ if [ "$NO_SETUP" = false ]; then
     fi
   done
 fi
+
+START_HEAD="$(git -C "$WORKTREE_DIR" rev-parse HEAD)"
 
 # Step 4: Baseline content hashes of modified/untracked files
 declare -A BASELINE_HASHES=()
@@ -442,6 +472,53 @@ fi
   echo "The harness runs these itself after you finish, independently of your report. While working run only the cheapest targeted checks you need (one test file, a type-check); do not repeat the whole suite, and keep any output you quote short."
 } > "$PROMPT_FILE"
 
+# Helper to compute changed files and diff stat against START_HEAD
+compute_changed_files() {
+  CURRENT_STATUS=()
+  ALL_CURRENT_PATHS=()
+  while IFS= read -r -d '' entry; do
+    [ -z "$entry" ] && continue
+    xy="${entry:0:2}"
+    p="${entry:3}"
+    if [[ "${xy:0:1}" =~ [RC] || "${xy:1:1}" =~ [RC] ]]; then
+      read -r -d '' orig_p
+      CURRENT_STATUS["$orig_p"]="$xy"
+      ALL_CURRENT_PATHS["$orig_p"]=1
+    fi
+    CURRENT_STATUS["$p"]="$xy"
+    ALL_CURRENT_PATHS["$p"]=1
+  done < <(git -C "$WORKTREE_DIR" status --porcelain=v1 -z -uall)
+
+  while IFS= read -r -d '' p; do
+    [ -z "$p" ] && continue
+    ALL_CURRENT_PATHS["$p"]=1
+  done < <(git -C "$WORKTREE_DIR" diff --name-only -z "$START_HEAD")
+
+  CHANGED_PATHS=()
+  for p in "${!ALL_CURRENT_PATHS[@]}"; do
+    curr_hash="$(get_file_hash "$WORKTREE_DIR/$p")"
+    if [ -n "${BASELINE_HASHES[$p]+_}" ]; then
+      base_hash="${BASELINE_HASHES[$p]}"
+      if [ "$curr_hash" = "$base_hash" ]; then
+        continue
+      fi
+    fi
+    CHANGED_PATHS+=("$p")
+  done
+
+  if [ ${#CHANGED_PATHS[@]} -gt 0 ]; then
+    mapfile -t CHANGED_PATHS < <(for p in "${CHANGED_PATHS[@]}"; do echo "$p"; done | sort)
+  fi
+
+  CHANGED_DIFF_STAT="$(git -C "$WORKTREE_DIR" diff --stat "$START_HEAD" 2>/dev/null || true)"
+  UNTRACKED_CHANGED=()
+  for p in "${CHANGED_PATHS[@]}"; do
+    if [ "${CURRENT_STATUS[$p]:-}" = "??" ]; then
+      UNTRACKED_CHANGED+=("$p")
+    fi
+  done
+}
+
 # Step 6: Run agy-run
 log "running agy-run..."
 agy_cmd=("$AGY_RUN" --prompt "$PROMPT_FILE" --add-dir "$WORKTREE_DIR" --log "$LOG_FILE")
@@ -450,10 +527,8 @@ if [ -n "$MODEL" ]; then
 fi
 
 agy_start=$SECONDS
-set +e
-"${agy_cmd[@]}"
+"${agy_cmd[@]}" >&2
 AGY_RC=$?
-set -e
 AGY_ELAPSED=$((SECONDS - agy_start))
 
 # Extract result JSON if available
@@ -469,7 +544,7 @@ fi
 
 if [ $AGY_RC -ne 0 ]; then
   RESULT_LINE="RESULT=AGY_FAILED (exit code $AGY_RC)"
-  CHANGED_DIFF_STAT="$(git -C "$WORKTREE_DIR" diff --stat HEAD 2>/dev/null || true)"
+  compute_changed_files
   SKIPPED_VERIFY=true
   SCOPE_SUMMARY_LINES=("scope: not checked (agy-run failed)")
   write_and_print_summary
@@ -477,46 +552,7 @@ if [ $AGY_RC -ne 0 ]; then
 fi
 
 # Step 7: Scope / forbidden check
-declare -A CURRENT_STATUS=()
-declare -A ALL_CURRENT_PATHS=()
-while IFS= read -r -d '' entry; do
-  [ -z "$entry" ] && continue
-  xy="${entry:0:2}"
-  p="${entry:3}"
-  if [[ "${xy:0:1}" =~ [RC] || "${xy:1:1}" =~ [RC] ]]; then
-    read -r -d '' orig_p
-    CURRENT_STATUS["$orig_p"]="$xy"
-    ALL_CURRENT_PATHS["$orig_p"]=1
-  fi
-  CURRENT_STATUS["$p"]="$xy"
-  ALL_CURRENT_PATHS["$p"]=1
-done < <(git -C "$WORKTREE_DIR" status --porcelain=v1 -z -uall)
-
-CHANGED_PATHS=()
-for p in "${!ALL_CURRENT_PATHS[@]}"; do
-  curr_hash="$(get_file_hash "$WORKTREE_DIR/$p")"
-  if [ -n "${BASELINE_HASHES[$p]+_}" ]; then
-    base_hash="${BASELINE_HASHES[$p]}"
-    if [ "$curr_hash" = "$base_hash" ]; then
-      continue
-    fi
-  fi
-  CHANGED_PATHS+=("$p")
-done
-
-# Sort changed paths
-if [ ${#CHANGED_PATHS[@]} -gt 0 ]; then
-  mapfile -t CHANGED_PATHS < <(for p in "${CHANGED_PATHS[@]}"; do echo "$p"; done | sort)
-fi
-
-# Determine untracked changed paths and diff stat
-CHANGED_DIFF_STAT="$(git -C "$WORKTREE_DIR" diff --stat HEAD 2>/dev/null || true)"
-UNTRACKED_CHANGED=()
-for p in "${CHANGED_PATHS[@]}"; do
-  if [ "${CURRENT_STATUS[$p]:-}" = "??" ]; then
-    UNTRACKED_CHANGED+=("$p")
-  fi
-done
+compute_changed_files
 
 # Match against scope pathspecs
 declare -A IN_SCOPE_PATHS=()
@@ -531,6 +567,11 @@ if [ ${#SCOPE_LIST[@]} -gt 0 ]; then
     fi
     IN_SCOPE_PATHS["$p"]=1
   done < <(git -C "$WORKTREE_DIR" status --porcelain=v1 -z -uall -- "${SCOPE_LIST[@]}")
+
+  while IFS= read -r -d '' p; do
+    [ -z "$p" ] && continue
+    IN_SCOPE_PATHS["$p"]=1
+  done < <(git -C "$WORKTREE_DIR" diff --name-only -z "$START_HEAD" -- "${SCOPE_LIST[@]}")
 fi
 
 is_forbidden() {
@@ -555,6 +596,11 @@ is_forbidden() {
 }
 
 SCOPE_VIOLATIONS=()
+NOW_HEAD="$(git -C "$WORKTREE_DIR" rev-parse HEAD)"
+if [ "$NOW_HEAD" != "$START_HEAD" ]; then
+  SCOPE_VIOLATIONS+=("scope: violation: agy moved HEAD (committed): $START_HEAD -> $NOW_HEAD")
+fi
+
 for p in "${CHANGED_PATHS[@]}"; do
   forbidden=false
   out_of_scope=false
@@ -595,10 +641,8 @@ for vcmd in "${EFFECTIVE_VERIFY_CMDS[@]}"; do
   v_log="$SESSIONS_DIR/$NAME.verify-$idx.log"
   log "verify [$idx/${#EFFECTIVE_VERIFY_CMDS[@]}]: $vcmd"
   v_start=$SECONDS
-  set +e
   (cd "$WORKTREE_DIR" && timeout "$VERIFY_TIMEOUT" bash -c "$vcmd") >"$v_log" 2>&1
   v_rc=$?
-  set -e
   v_secs=$((SECONDS - v_start))
 
   if [ $v_rc -eq 0 ]; then
@@ -610,7 +654,10 @@ for vcmd in "${EFFECTIVE_VERIFY_CMDS[@]}"; do
     v_st="FAIL"
     HAS_VERIFY_FAILURE=true
   fi
-  VERIFY_RESULTS+=("$v_st|$vcmd|$v_secs|$v_log")
+  VERIFY_STATUS+=("$v_st")
+  VERIFY_RUN_CMDS+=("$vcmd")
+  VERIFY_SECS+=("$v_secs")
+  VERIFY_LOGS+=("$v_log")
   idx=$((idx + 1))
 done
 
@@ -622,7 +669,11 @@ elif [ "$HAS_VERIFY_FAILURE" = true ]; then
   RESULT_LINE="RESULT=VERIFY_FAILED"
   EXIT_CODE=8
 else
-  RESULT_LINE="RESULT=OK"
+  if [ ${#EFFECTIVE_VERIFY_CMDS[@]} -eq 0 ]; then
+    RESULT_LINE="RESULT=OK (no verify commands ran)"
+  else
+    RESULT_LINE="RESULT=OK"
+  fi
   EXIT_CODE=0
 fi
 

@@ -1304,6 +1304,126 @@ rc=$?
 eq "baseline: setup modification not blamed on agy -> exit 0" "0" "$rc"
 has "baseline: summary RESULT=OK" "RESULT=OK" "$out"
 hasnt "baseline: file.txt not in violations" "violation: file.txt" "$out"
+# Regression tests for defects 1-6
+
+# Defect 1: Verify command containing pipe
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+export AGY_RUN="$FAKE_TASK_RUN"
+unset FAKE_TASK_EDIT FAKE_TASK_RM FAKE_TASK_COMMIT FAKE_STDOUT_NOISE FAKE_TASK_EXIT
+out="$("$TASK" run --name vpipe --task "$R/task.txt" --repo "$R" --verify-cmd 'echo x | cat; echo BOOM >&2; exit 3' 2>"$R/vpipe.err")"
+rc=$?
+eq "verify command with pipe fails -> exit 8" "8" "$rc"
+has "verify with pipe: full command in summary" "FAIL     echo x | cat; echo BOOM >&2; exit 3" "$out"
+has "verify with pipe: output tail shown" "    BOOM" "$out"
+has "verify with pipe: verify log listed" "verify: $R/.agy-sessions/vpipe.verify-1.log" "$out"
+
+# Defect 2: agy commit bypasses scope check
+# 2a: agy commits an in-scope edit
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+export AGY_RUN="$FAKE_TASK_RUN"
+export FAKE_TASK_EDIT="file.txt:commit_edit"
+export FAKE_TASK_COMMIT=1
+out="$("$TASK" run --name cminscope --task "$R/task.txt" --repo "$R" --scope "file.txt" 2>"$R/cminscope.err")"
+rc=$?
+eq "committed in-scope edit -> exit 8" "8" "$rc"
+has "committed in-scope edit: HEAD-moved violation" "violation: agy moved HEAD (committed):" "$out"
+has "committed in-scope edit: file listed under changed files" "file.txt" "$out"
+has "committed in-scope edit: RESULT=SCOPE_VIOLATION" "RESULT=SCOPE_VIOLATION" "$out"
+hasnt "committed in-scope edit: file.txt not flagged as outside scope" "outside scope" "$out"
+
+# 2b: agy commits an out-of-scope file and a pnpm-lock.yaml
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+export AGY_RUN="$FAKE_TASK_RUN"
+export FAKE_TASK_EDIT=$'other.txt:out_scope\npnpm-lock.yaml:lock'
+export FAKE_TASK_COMMIT=1
+out="$("$TASK" run --name cmoutscope --task "$R/task.txt" --repo "$R" --scope "file.txt" 2>"$R/cmoutscope.err")"
+rc=$?
+eq "committed out-of-scope and forbidden -> exit 8" "8" "$rc"
+has "committed out-of-scope: HEAD-moved violation" "violation: agy moved HEAD (committed):" "$out"
+has "committed out-of-scope: other.txt flagged" "violation: other.txt (outside scope)" "$out"
+has "committed forbidden: pnpm-lock.yaml flagged" "violation: pnpm-lock.yaml" "$out"
+unset FAKE_TASK_COMMIT FAKE_TASK_EDIT
+
+# Defect 3: No verify commands warning and result line
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+export AGY_RUN="$FAKE_TASK_RUN"
+out="$("$TASK" run --name noverify --task "$R/task.txt" --repo "$R" 2>"$R/noverify.err")"
+rc=$?
+eq "no verify commands -> exit 0" "0" "$rc"
+has "no verify commands: warning printed to stderr" "warning: no verify commands" "$(cat "$R/noverify.err")"
+has "no verify commands: result line specifies no verify commands ran" "RESULT=OK (no verify commands ran)" "$out"
+
+out="$("$TASK" run --name withverify --task "$R/task.txt" --repo "$R" --verify-cmd 'true' 2>"$R/withverify.err")"
+rc=$?
+eq "with verify command -> exit 0" "0" "$rc"
+has "with verify command: plain RESULT=OK" "RESULT=OK" "$out"
+hasnt "with verify command: not no-verify result line" "RESULT=OK (no verify commands ran)" "$out"
+
+# Defect 4: agy-run stdout noise does not leak into agy-task stdout
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+export AGY_RUN="$FAKE_TASK_RUN"
+export FAKE_STDOUT_NOISE="noisy stdout from agy-run"
+out="$("$TASK" run --name noise --task "$R/task.txt" --repo "$R" --verify-cmd 'true' 2>"$R/noise.err")"
+rc=$?
+eq "stdout noise: exit 0" "0" "$rc"
+summary_file="$(cat "$R/.agy-sessions/noise.summary.txt")"
+eq "stdout noise: agy-task stdout byte-identical to summary file" "$summary_file" "$out"
+has "stdout noise: noise redirected to stderr" "noisy stdout from agy-run" "$(cat "$R/noise.err")"
+unset FAKE_STDOUT_NOISE
+
+# Defect 5: Worktree handling
+# 5a: git worktree add failure captures and logs stderr
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+touch "$R/.git/worktrees"
+out="$("$TASK" run --name wtfail --task "$R/task.txt" --repo "$R" 2>&1)"; rc=$?
+eq "git worktree add failure -> exit 2" "2" "$rc"
+has "git worktree add failure: error logged" "failed to create worktree" "$out"
+has "git worktree add failure: git stderr captured" "fatal: could not create leading directories" "$out"
+rm -f "$R/.git/worktrees"
+
+# 5b: Reusing invalid worktree paths with --reuse-worktree
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+mkdir -p "$R/.worktrees"
+touch "$R/.worktrees/agy-reuse-file"
+out="$("$TASK" run --name reuse-file --task "$R/task.txt" --repo "$R" --reuse-worktree 2>&1)"; rc=$?
+eq "reuse file as worktree -> exit 2" "2" "$rc"
+has "reuse file: clear error message" "existing path is not a git worktree" "$out"
+
+mkdir -p "$R/.worktrees/agy-reuse-dir"
+out="$("$TASK" run --name reuse-dir --task "$R/task.txt" --repo "$R" --reuse-worktree 2>&1)"; rc=$?
+eq "reuse plain dir as worktree -> exit 2" "2" "$rc"
+has "reuse plain dir: clear error message" "existing path is not a git worktree" "$out"
+
+R_OTHER="$(task_repo)"
+git -C "$R_OTHER" worktree add -b foreign "$R/.worktrees/agy-reuse-foreign" HEAD >/dev/null 2>&1
+out="$("$TASK" run --name reuse-foreign --task "$R/task.txt" --repo "$R" --reuse-worktree 2>&1)"; rc=$?
+eq "reuse worktree of foreign repo -> exit 2" "2" "$rc"
+has "reuse foreign worktree: clear error message" "does not belong to main repository" "$out"
+
+# Defect 6: errexit and untracked files on AGY_FAILED
+# 6a: AGY_FAILED lists untracked files under changed files
+R="$(task_repo)"
+echo "task" > "$R/task.txt"
+export AGY_RUN="$FAKE_TASK_RUN"
+export FAKE_TASK_EXIT=1
+export FAKE_TASK_EDIT="untracked_fail.txt:created"
+out="$("$TASK" run --name agyfail-untracked --task "$R/task.txt" --repo "$R" 2>"$R/agyfail-untracked.err")"
+rc=$?
+eq "stub agy-run exit 1 with untracked file: exit 1" "1" "$rc"
+has "stub agy-run exit 1: summary shows untracked file" "?? untracked_fail.txt" "$out"
+unset FAKE_TASK_EXIT FAKE_TASK_EDIT
+
+# 6b: no set -e / set +e re-enables in agy-task
+eq "no set -e re-enables in agy-task" "0" "$(grep -c 'set -e' "$TASK" || true)"
+eq "no set +e in agy-task" "0" "$(grep -c 'set +e' "$TASK" || true)"
+
 unset AGY_RUN
 
 echo "== safety"
