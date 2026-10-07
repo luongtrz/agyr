@@ -404,16 +404,25 @@ measure_one() {
 # at 0% set a cooldown until the reset time; with quota left, clear any cooldown (e.g. the default 5h one set before the reset time was known).
 # Fails if the Gemini numbers are missing.
 quota_ingest() {
-  local name="$1" raw="$2" grp metric pct reset epoch g5="" g5r=0 gw="" gwr=0
+  local name="$1" raw="$2" grp metric pct reset epoch g5="" g5r=0 gw="" gwr=0 g5off=0
   while IFS=$'\t' read -r grp metric pct reset; do
-    [ -n "$reset" ] || continue
-    epoch="$(date -d "$reset" +%s 2>/dev/null)" || continue
     case "$grp|$metric" in
-      "Gemini Models|Five Hour"*) g5="${pct%\%}"; g5r="$epoch" ;;
-      "Gemini Models|Weekly"*) gw="${pct%\%}"; gwr="$epoch" ;;
+      "Gemini Models|Five Hour"*)
+        if [ -n "$reset" ]; then
+          epoch="$(date -d "$reset" +%s 2>/dev/null)" || continue
+          g5="${pct%\%}"; g5r="$epoch"
+        elif [[ "$pct" =~ ^[A-Za-z]+$ ]]; then
+          g5off=1 # "disabled", no reset time: the weekly limit is used up, so the 5-hour limit does not apply
+        fi ;;
+      "Gemini Models|Weekly"*)
+        [ -n "$reset" ] || continue
+        epoch="$(date -d "$reset" +%s 2>/dev/null)" || continue
+        gw="${pct%\%}"; gwr="$epoch" ;;
     esac
   done <<<"$raw"
-  [[ "$g5" =~ ^[0-9]+$ && "$gw" =~ ^[0-9]+$ ]] || return 1
+  # g5 = -1 stands for "5-hour limit disabled" (state keeps numbers only, so -1 is the marker)
+  if [ "$g5off" = 1 ] && [ -z "$g5" ]; then g5=-1; g5r=0; fi
+  [[ "$g5" =~ ^-?[0-9]+$ && "$gw" =~ ^[0-9]+$ ]] || return 1
   state_update '.quota[$n]={at:$t,g5:$a,g5r:$ar,gw:$b,gwr:$br}' --arg n "$name" --argjson t "$(now)" \
     --argjson a "$g5" --argjson ar "$g5r" --argjson b "$gw" --argjson br "$gwr"
   local until=0
@@ -525,8 +534,9 @@ print_table() {
     if [ "$1" -le 10 ]; then c="$R"; elif [ "$1" -le 40 ]; then c="$Y"; fi
     printf '%s%3s%%%s' "$c" "$1" "$Z"
   }
-  cell() { # $1 = % left, $2 = reset time (epoch)
-    if [ -z "$1" ] || [ "$2" -le "$t" ]; then printf '%4s  %-19s' '-' ''
+  cell() { # $1 = % left (-1 = limit disabled), $2 = reset time (epoch)
+    if [ "$1" = -1 ]; then printf '%4s  %-19s' 'off' ''
+    elif [ -z "$1" ] || [ "$2" -le "$t" ]; then printf '%4s  %-19s' '-' ''
     else printf '%s  %-19s' "$(pct "$1")" "$(fmt_time "$2")"; fi
   }
   printf '  %-14s %-25s   %-25s   %s\n' "ACCOUNT" "GEMINI 5H" "GEMINI WEEK" "STATUS"
@@ -538,10 +548,11 @@ print_table() {
     if [ -n "$g5" ] && { [ "$oldest" -eq 0 ] || [ "$at" -lt "$oldest" ]; }; then oldest=$at; fi
     until="$(cooldown_until "$n")"
     if [[ "$failed" == *" $n "* ]]; then st="measure failed (token expired or agy error)"; sc="$R"
+    elif [ -n "$g5" ] && [ "$gw" -eq 0 ] && [ "$gwr" -gt "$t" ]; then st="weekly limit reached, $(fmt_dur $((gwr - t))) left"; sc="$R"
     elif [ "$until" -gt "$t" ]; then st="cooldown, $(fmt_dur $((until - t))) left"; sc="$R"
     elif [ -z "$g5" ]; then st="not measured"; sc="$Y"
-    elif [ "$g5r" -le "$t" ] || [ "$gwr" -le "$t" ]; then st="stale, past reset time"; sc="$Y"
-    elif [ "$g5" -le 10 ] || [ "$gw" -le 10 ]; then st="low"; sc="$R"
+    elif { [ "$g5" != -1 ] && [ "$g5r" -le "$t" ]; } || [ "$gwr" -le "$t" ]; then st="stale, past reset time"; sc="$Y"
+    elif { [ "$g5" != -1 ] && [ "$g5" -le 10 ]; } || [ "$gw" -le 10 ]; then st="low"; sc="$R"
     else st="ready"; sc="$G"; fi
     mark=" "; if [ "$n" = "$cur" ]; then mark="*"; fi
     printf '%s %-14s %s   %s   %s%s%s\n' "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$sc" "$st" "$Z"
@@ -670,7 +681,9 @@ print_test_table() {
     before="$(awk -F'\t' '$1=="Gemini Models" && $2 ~ /Five Hour/ {print $3; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
     snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [.g5,.g5r] | @tsv' "$STATE")"
     g5="" g5r=""; if [ -n "$snap" ]; then IFS=$'\t' read -r g5 g5r <<<"$snap"; fi
-    after="${g5:+$g5%}"; reset="-"; [ -z "$g5r" ] || reset="$(fmt_time "$g5r")"
+    after="${g5:+$g5%}"; if [ "$g5" = -1 ]; then after=off; fi
+    if [ "$before" = disabled ]; then before=off; fi
+    reset="-"; [ -z "$g5r" ] || [ "$g5r" = 0 ] || reset="$(fmt_time "$g5r")"
     # did the reset time move? (that is what shows that the request started a new 5-hour window)
     b_iso="$(awk -F'\t' '$1=="Gemini Models" && $2 ~ /Five Hour/ {print $4; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
     b_epoch=""; if [ -n "$b_iso" ]; then b_epoch="$(date -d "$b_iso" +%s 2>/dev/null)" || b_epoch=""; fi
@@ -843,8 +856,8 @@ last); this is the order in which the weekly limits free up.
   *            marks the account the real token file belongs to
   GEMINI 5H    % left of the 5-hour limit and when it resets
   GEMINI WEEK  % left of the weekly limit and when it resets
-  STATUS       ready | low (10% or less left) | cooldown, <time> left | not measured | stale, past reset time |
-               measure failed
+  STATUS       ready | low (10% or less left) | weekly limit reached, <time> left (the 5-hour limit then shows 'off':
+               it does not apply) | cooldown, <time> left | not measured | stale, past reset time | measure failed
 
 An account at 0% automatically gets a cooldown until its reset time; an account with quota left has its cooldown cleared.
 Colours: green above 40%, yellow 11-40%, red 10% or less. Only on a terminal (see NO_COLOR and AGYR_COLOR).

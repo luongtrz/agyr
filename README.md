@@ -137,7 +137,7 @@ Measured at 01/10/2026 02:58 PM   (* = selected account)
 - **Dấu `*`** đánh dấu account mà file token thật đang thuộc về (so `refresh_token` với từng slot), không phải tên đã ghi trong state. Nhờ đó nếu bạn tự login sang account khác bằng `agy`, bảng vẫn đánh dấu đúng, và `use` không ghi đè nhầm slot. Nếu token đang dùng không khớp slot nào (vừa login account chưa lưu) thì bảng cảnh báo và không đánh dấu `*`; chạy `agyr save <tên>`.
 - **Màu** (chỉ khi in ra terminal): phần trăm còn lại **xanh** khi trên 40%, **vàng** từ 11% đến 40%, **đỏ** từ 10% trở xuống. Cột trạng thái: `ready` xanh; `not measured` và `stale` vàng; `low`, `cooldown` và `measure failed` đỏ. Tắt màu bằng `NO_COLOR=1` hoặc `AGYR_COLOR=never`; ép bật khi chuyển hướng ra file/pipe bằng `AGYR_COLOR=always`.
 - **Đo thấy 0%** thì tự đặt cooldown tới đúng giờ reset; **đo thấy còn quota** thì xóa cooldown cũ (ví dụ cooldown mặc định 5 giờ). Nhờ vậy `next`, `rotate` và `agy-run` luôn dựa trên số liệu thật.
-- **Trạng thái** (chữ tiếng Anh trong bảng): `ready`; `low` (còn ≤10%); `cooldown, 15m left`; `not measured`; `stale, past reset time` (chỉ với `-c`: đã qua giờ reset, cần đo lại); `measure failed` (token hết hạn hoặc agy lỗi; khi đó exit code là 1).
+- **Trạng thái** (chữ tiếng Anh trong bảng): `ready`; `low` (còn ≤10%); `weekly limit reached, 1h36m left` (đã hết giới hạn tuần: agy khi đó ghi giới hạn 5 giờ là `disabled` và không có giờ reset, nên cột 5 giờ hiện `off`; account tự được đặt cooldown tới giờ reset tuần, và đây không phải lỗi đo); `cooldown, 15m left`; `not measured`; `stale, past reset time` (chỉ với `-c`: đã qua giờ reset, cần đo lại); `measure failed` (token hết hạn hoặc agy lỗi; khi đó exit code là 1).
 
 ## agyr test: gửi "Hi" cho từng account
 
@@ -289,7 +289,7 @@ Khối HARD RULES cho task implement nằm ở `templates/hard-rules.txt` (`agy-
 bash test/run.sh
 ```
 
-699 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
+718 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
 
 ## Giới hạn đã biết
 
