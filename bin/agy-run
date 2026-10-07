@@ -169,7 +169,7 @@ while :; do
 
   SWITCHES=$((SWITCHES + 1))
   [ "$SWITCHES" -le "$MAX_SWITCH" ] || die "switched accounts $MAX_SWITCH times, stopping" 6
-  if ! NEXT="$("$AGY_ACCT" next)"; then
+  if ! NEXT="$("$AGY_ACCT" next -v)"; then
     die "whole pool is out of quota (conversation ${CONV:-none}); wait for a reset or log in to another account" 5
   fi
   "$AGY_ACCT" use "$NEXT" >&2 || die "could not switch to '$NEXT'" 1

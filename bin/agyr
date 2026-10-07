@@ -284,25 +284,39 @@ cmd_clear() {
   echo "cleared cooldown of '$1'"
 }
 
-# Print the next ready account (round-robin, starting after the active one).
-# If none is ready: exit 3 and report the earliest reset time.
+# Print the account to switch to: among the READY accounts (no cooldown) the one whose weekly limit resets soonest, from the last
+# measurement (the same order 'agyr list' shows); accounts never measured come last, ties by name. The account in use is only
+# returned when nothing else is ready. If none is ready: exit 3 and report the earliest end of a cooldown.
+# -v / --why also prints, on stderr, which account was chosen and why.
 cmd_next() {
+  local why=0
+  case "${1:-}" in -v|--why) why=1 ;; esac
   need_jq; init_state
-  local cur t; cur="$(active_name)"; t="$(now)"
-  local -a names=()
-  mapfile -t names < <(slots)
-  [ "${#names[@]}" -gt 0 ] || die "no accounts yet" 2
-  local start=0 i
-  for i in "${!names[@]}"; do [ "${names[$i]}" = "$cur" ] && start=$((i + 1)); done
-  local k idx n until earliest=0 earliest_n=""
-  for ((k = 0; k < ${#names[@]}; k++)); do
-    idx=$(((start + k) % ${#names[@]}))
-    n="${names[$idx]}"
+  local cur t n until gwr earliest=0 earliest_n="" fallback="" total=0 nother=0 pick=""
+  cur="$(active_name)"; t="$(now)"
+  while read -r n; do
+    total=$((total + 1))
     until="$(cooldown_until "$n")"
-    if [ "$until" -le "$t" ]; then echo "$n"; return 0; fi
-    if [ "$earliest" -eq 0 ] || [ "$until" -lt "$earliest" ]; then earliest=$until; earliest_n=$n; fi
-  done
-  echo "agyr: all ${#names[@]} accounts are on cooldown; earliest: '$earliest_n' resets at $(fmt_time "$earliest") ($(fmt_dur $((earliest - t))) left)" >&2
+    if [ "$until" -gt "$t" ]; then
+      if [ "$earliest" -eq 0 ] || [ "$until" -lt "$earliest" ]; then earliest=$until; earliest_n=$n; fi
+    else
+      if [ "$n" = "$cur" ]; then fallback="$n"
+      else nother=$((nother + 1)); if [ -z "$pick" ]; then pick="$n"; fi; fi
+    fi
+  done < <(rows_by_week_reset " ")
+  [ "$total" -gt 0 ] || die "no accounts yet" 2
+  if [ -z "$pick" ] && [ -n "$fallback" ]; then pick="$fallback"; fi
+  if [ -n "$pick" ]; then
+    if [ "$why" = 1 ]; then
+      gwr="$(jq -r --arg n "$pick" '.quota[$n].gwr // empty' "$STATE")"
+      if [ "$nother" -eq 0 ]; then echo "agyr: next account '$pick': no other account is ready, so the one in use stays" >&2
+      elif [ -n "$gwr" ]; then echo "agyr: next account '$pick': weekly limit resets $(fmt_time "$gwr"), the soonest of the $nother other ready account(s)" >&2
+      else echo "agyr: next account '$pick': no quota data yet (run 'agyr list'); first of the $nother other ready account(s) by name" >&2; fi
+    fi
+    echo "$pick"
+    return 0
+  fi
+  echo "agyr: all $total accounts are on cooldown; earliest: '$earliest_n' resets at $(fmt_time "$earliest") ($(fmt_dur $((earliest - t))) left)" >&2
   return 3
 }
 
@@ -353,7 +367,7 @@ cmd_rotate() {
   state_update '.cooldown[$n]=$u' --arg n "$cur" --argjson u "$until"
   echo "account '$cur' cooldown $(fmt_dur "$secs") ($src; reset $(fmt_time "$until"))"
   local nxt
-  if ! nxt="$(cmd_next)"; then return 3; fi
+  if ! nxt="$(cmd_next -v)"; then return 3; fi
   cmd_use "$nxt"
   echo "reopen agy (it must be a new process) with: agyr -c"
 }
@@ -780,7 +794,7 @@ Commands:
   active                   Print the name of the account in use
   run [agy args]           Start agy with the selected account; plain 'agyr' / 'agyr -c' do the same
   rotate [time]            Interactive agy ran out of quota: cool this account down, switch to the next one
-  next                     Print the next ready account
+  next [-v]                Print the ready account whose weekly limit resets soonest (what agy-run switches to)
   cooldown <name> <time>   Mark an account as out of quota for a while
   clear <name>             Remove an account's cooldown
   test [name...]           Send "Hi" to every account (uses a little real quota) to start each 5-hour window
@@ -903,10 +917,14 @@ Remove the cooldown of <name>.
 EOF
       ;;
     next) cat <<'EOF'
-Usage: agyr next
+Usage: agyr next [-v|--why]
 
-Print the next ready account, round-robin starting after the active one (accounts on cooldown are skipped).
+Print the account to switch to: among the ready accounts (those not on cooldown) the one whose weekly limit resets soonest, from
+the last measurement; this is the order 'agyr list' shows. Accounts never measured come last, ties are broken by name. The
+account in use is returned only when nothing else is ready. 'agy-run' and 'agyr rotate' use this to pick the next account,
+so keep the numbers fresh with 'agyr list'.
 If every account is on cooldown: print nothing, report on stderr which one resets first, and exit 3.
+  -v, --why   also say on stderr which account was chosen and why
 EOF
       ;;
     rotate) cat <<'EOF'
