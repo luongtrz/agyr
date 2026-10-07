@@ -13,13 +13,13 @@
 #   AGY_BIN             agy binary (default agy)
 #   AGY_ACCT            agyr command (default: the file next to this script)
 #   AGY_RUN_POLL        seconds between two looks at the log (default 1)
-#   AGY_RUN_MAX_SWITCH  maximum number of account switches (default 6)
+#   AGY_RUN_MAX_SWITCH  maximum number of account switches (default 10: the pool has about 9 accounts)
 set -uo pipefail
 
 AGY_BIN="${AGY_BIN:-agy}"
 AGY_ACCT="${AGY_ACCT:-$(dirname "$(readlink -f "$0")")/agyr}"
 POLL="${AGY_RUN_POLL:-1}"
-MAX_SWITCH="${AGY_RUN_MAX_SWITCH:-6}"
+MAX_SWITCH="${AGY_RUN_MAX_SWITCH:-10}"
 MODEL="gemini-3.8-flash-high"
 # agy >= 1.2.14 reads its login from the OS keyring and ignores the token file that agyr swaps, unless the keyring is
 # unreachable (see NOKEYRING_BUS in agyr). Every agy started here gets an unreachable session bus.
@@ -57,7 +57,7 @@ the same conversation is resumed with --conversation <id>.
 
 Exit codes:   0 done | 1 agy failed otherwise | 2 bad arguments | 4 login error or no active account |
               5 whole pool out of quota | 6 switched accounts too many times
-Environment:  AGY_BIN | AGY_ACCT | AGY_RUN_POLL (seconds, default 1) | AGY_RUN_MAX_SWITCH (default 6)
+Environment:  AGY_BIN | AGY_ACCT | AGY_RUN_POLL (seconds, default 1) | AGY_RUN_MAX_SWITCH (default 10)
 See also:     agyr help
 EOF
 }

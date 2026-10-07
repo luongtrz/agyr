@@ -169,7 +169,7 @@ Mọi giờ hiển thị đều theo **UTC+7** và có dạng `dd/mm/yyyy hh:mm 
 
 **Chọn account khi đổi** (`agyr next`, cũng là cái `agyr rotate` dùng): trong các account sẵn sàng (không đang cooldown), lấy account có **giờ reset của giới hạn tuần sớm nhất**, theo số liệu `agyr list` đã lưu, tức đúng thứ tự các dòng của `agyr list`. Ý tưởng: dùng trước phần quota sắp được làm mới. Account chưa từng đo xếp cuối, bằng giờ thì theo tên; account đang dùng chỉ được chọn lại khi không còn account nào khác. Account hết giới hạn tuần đã có cooldown tới giờ reset tuần nên tự bị bỏ qua. Lưu ý: số liệu là của lần `agyr list` gần nhất (`agy-run` không đo lại), nên nếu một account đã cạn từ lúc đó thì nó vẫn được chọn, nhận 429, bị đặt cooldown rồi `agy-run` đổi tiếp (tốn một lần đổi); chạy `agyr list` thường xuyên để số liệu mới. Account chỉ còn ít (ví dụ 1% tuần) vẫn được tính là "còn quota" và có thể được chọn trước.
 
-Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nhập hoặc chưa có account active, `5` cả pool hết quota, `6` đổi account quá `AGY_RUN_MAX_SWITCH` (mặc định 6) lần.
+Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nhập hoặc chưa có account active, `5` cả pool hết quota, `6` đổi account quá `AGY_RUN_MAX_SWITCH` (mặc định 10) lần.
 
 ## agy-task (dành cho Claude)
 
@@ -270,7 +270,7 @@ Summary ghi vào `.agy-sessions/NAME.summary.txt` (và in ra stdout khi hoàn th
 | `AGY_NOW` | giờ hiện tại | chỉ để test: giả lập "bây giờ" |
 | `AGYR_COLOR` | `auto` | `auto` (có màu khi in ra terminal và không đặt `NO_COLOR`), `always`, `never` |
 | `AGYR_TEST_TIMEOUT` | `120` | số giây tối đa cho mỗi account trong `agyr test` |
-| `AGY_RUN_MAX_SWITCH` | `6` | số lần đổi account tối đa của `agy-run` |
+| `AGY_RUN_MAX_SWITCH` | `10` | số lần đổi account tối đa của `agy-run` |
 | `AGY_RUN_POLL` | `1` | giây giữa hai lần `agy-run` soi log |
 
 ## Skill `agy` (bản sao)
@@ -291,7 +291,7 @@ Khối HARD RULES cho task implement nằm ở `templates/hard-rules.txt` (`agy-
 bash test/run.sh
 ```
 
-743 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
+750 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
 
 ## Giới hạn đã biết
 

@@ -600,6 +600,38 @@ has "help forget: mentions -f" "-f / --force" "$out"
 has "help forget: says to log in with agyr, not a bare agy" "not a bare 'agy'" "$out"
 has "help forget: mentions the active mark" "\"active\" mark" "$out"
 
+echo "== agy-run: up to 10 account switches by default"
+mk12() { # 12 accounts a01..a12, a01 in use
+  T="$(mktemp -d)"; TMPS+=("$T")
+  export AGY_HOME="$T/home"; mkdir -p "$AGY_HOME"
+  export AGY_NOW=1000000
+  export FAKE_ARGS_LOG="$T/args.log"; : >"$FAKE_ARGS_LOG"
+  unset FAKE_QUOTA_TOKENS FAKE_AUTH FAKE_RESET AGY_RUN_MAX_SWITCH FAKE_REFRESH FAKE_WEEK_ORDER
+  local i a
+  for i in 01 02 03 04 05 06 07 08 09 10 11 12; do
+    a="a$i"; echo "tok-$a" >"$AGY_HOME/antigravity-oauth-token"; "$ACCT" save "$a" >/dev/null
+  done
+  "$ACCT" use a01 >/dev/null
+  echo "do the thing" >"$T/prompt.txt"; mkdir -p "$T/work"
+}
+mk12
+export FAKE_QUOTA_TOKENS="tok-a01 tok-a02 tok-a03 tok-a04 tok-a05 tok-a06 tok-a07 tok-a08 tok-a09 tok-a10"
+runit; rc=$?
+eq "10 exhausted accounts -> 10 switches are allowed by default, the 11th account answers (exit 0)" "0" "$rc"
+eq "that took 11 runs" "11" "$(lines)"
+has "the last run used a11" "tok-a11|" "$(tail -1 "$FAKE_ARGS_LOG")"
+mk12
+export FAKE_QUOTA_TOKENS="tok-a01 tok-a02 tok-a03 tok-a04 tok-a05 tok-a06 tok-a07 tok-a08 tok-a09 tok-a10 tok-a11"
+runit; rc=$?
+eq "11 exhausted accounts -> the 11th switch is refused (exit 6)" "6" "$rc"
+has "the message names the limit" "switched accounts 10 times" "$(cat "$T/run.err")"
+unset FAKE_QUOTA_TOKENS
+has "agy-run --help: documents the default of 10" "AGY_RUN_MAX_SWITCH (default 10)" "$("$RUN" --help 2>&1)"
+mk12; export FAKE_QUOTA_TOKENS="tok-a01 tok-a02 tok-a03" AGY_RUN_MAX_SWITCH=2
+runit; rc=$?
+eq "AGY_RUN_MAX_SWITCH still overrides the default (2 -> exit 6)" "6" "$rc"
+unset FAKE_QUOTA_TOKENS AGY_RUN_MAX_SWITCH
+
 echo "== next: the ready account whose weekly limit resets soonest (what agy-run and rotate switch to)"
 setup
 export FAKE_WEEK_ORDER=1 # weekly resets: acc3 first, then acc2, then acc1
