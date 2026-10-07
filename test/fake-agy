@@ -25,6 +25,7 @@ echo "$tok|$*" >>"${FAKE_ARGS_LOG:?}"
 #   FAKE_P5:          force the 5h percentage for every token
 #   FAKE_LOW_TOKENS:  tokens with 5% of the 5h quota left
 #   FAKE_TTY=1:       try to change the terminal mode (stty) like the real agy
+#   FAKE_WEEK_ORDER=1: the weekly reset time depends on the account digit (acc3 earliest), to test the row order
 #   FAKE_HI_SHIFT=1:  after a Hi call the 5h reset time is 10 minutes later (the window "started" by the call)
 #   FAKE_HI_ERROR_TOKENS: tokens whose non-/quota calls end in a quota error (status ERROR) at once
 #   FAKE_REFRESH=1:   rewrite the token file (simulates agy refreshing the access token itself)
@@ -55,7 +56,8 @@ for a in "$@"; do
     now="${AGY_NOW:-$(date +%s)}"
     shift5=0; if [ "${FAKE_HI_SHIFT:-0}" = 1 ] && [ "${used:-0}" -gt 0 ]; then shift5=600; fi # FAKE_HI_SHIFT=1: a Hi call moves the 5h reset time by +10 min
     r5="$(date -u -d "@$((now + 3600 + shift5))" +%Y-%m-%dT%H:%M:%SZ)"
-    rw="$(date -u -d "@$((now + 259200))" +%Y-%m-%dT%H:%M:%SZ)"
+    wk=259200; if [ "${FAKE_WEEK_ORDER:-0}" = 1 ]; then wk=$((259200 + (9 - n) * 3600)); fi # FAKE_WEEK_ORDER=1: a higher digit resets its week EARLIER (acc3 < acc2 < acc1)
+    rw="$(date -u -d "@$((now + wk))" +%Y-%m-%dT%H:%M:%SZ)"
     resp="$(printf 'Gemini Models\tWeekly Limit Remaining\t%s%%\t%s\nGemini Models\tFive Hour Limit Remaining\t%s%%\t%s\nClaude and GPT models\tWeekly Limit Remaining\t100%%\t%s\nClaude and GPT models\tFive Hour Limit Remaining\t100%%\t%s\n' "$pw" "$rw" "$p5" "$r5" "$rw" "$r5")"
     "${JQ[@]}" -nc --arg r "$resp" '{event:"result",result:{status:"SUCCESS",response:$r,num_turns:0}}'
     exit 0

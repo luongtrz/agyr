@@ -496,6 +496,17 @@ measure_all_swap() {
   MEASURE_FAILED="${failed[*]:-}"
 }
 
+# Slot names ordered by when the weekly limit resets (from the last measurement), soonest first. Accounts without usable data
+# (never measured, or just failed to measure) come last; ties are broken by name. $1 = " names that failed " (padded with spaces).
+rows_by_week_reset() {
+  local failed="$1" n gwr
+  while read -r n; do
+    gwr="$(jq -r --arg n "$n" '.quota[$n].gwr // empty' "$STATE")"
+    if [[ "$failed" == *" $n "* ]] || [ -z "$gwr" ]; then gwr=99999999999; fi
+    printf '%s %s\n' "$gwr" "$n"
+  done < <(slots) | sort -k1,1n -k2,2 | cut -d' ' -f2
+}
+
 # Print the table from state. $1 = names of accounts that failed to measure, $2 = 1 if measured just now.
 print_table() {
   local failed=" $1 " live="$2" t cur n snap g5 g5r gw gwr at until st sc oldest=0 mark
@@ -534,7 +545,7 @@ print_table() {
     else st="ready"; sc="$G"; fi
     mark=" "; if [ "$n" = "$cur" ]; then mark="*"; fi
     printf '%s %-14s %s   %s   %s%s%s\n' "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$sc" "$st" "$Z"
-  done < <(slots)
+  done < <(rows_by_week_reset "$failed")
   if [ -n "$LIVE" ] && [ -z "$cur" ]; then
     echo "${Y}! The login in use matches no slot (just logged in to another account?). Run 'agyr save <name>' to store it; 'agyr use' will not overwrite any slot.${Z}"
   fi
@@ -825,6 +836,9 @@ Usage: agyr list [-c|--cached]        (alias: ls)
 Measure the real quota of every saved account with 'agy -p /quota' (no model call, 0 tokens) and print one table row per
 account. The accounts are measured in parallel, each in a throwaway HOME holding a copy of its token, so the token in use
 is never touched and running agy / agy-run processes are not disturbed.
+
+Rows are ordered by when the weekly limit resets, soonest first (accounts without data, never measured or just failed, come
+last); this is the order in which the weekly limits free up.
 
   *            marks the account the real token file belongs to
   GEMINI 5H    % left of the 5-hour limit and when it resets

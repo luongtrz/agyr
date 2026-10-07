@@ -600,6 +600,44 @@ has "help forget: mentions -f" "-f / --force" "$out"
 has "help forget: says to log in with agyr, not a bare agy" "not a bare 'agy'" "$out"
 has "help forget: mentions the active mark" "\"active\" mark" "$out"
 
+echo "== list: rows ordered by the weekly reset time"
+order_of() { grep -oE '^[ *] +acc[0-9]' <<<"$1" | tr -d ' *' | tr '\n' ' '; }
+setup
+export FAKE_WEEK_ORDER=1
+out="$("$ACCT" list 2>/dev/null)"
+eq "list: soonest weekly reset first (acc3, acc2, acc1; not by name)" "acc3 acc2 acc1 " "$(order_of "$out")"
+eq "list -c: same order from the saved data" "acc3 acc2 acc1 " "$(order_of "$("$ACCT" list -c)")"
+has "list: the selected account keeps its * wherever it lands" "* acc1" "$out"
+# an account that was never measured goes last
+setup
+export FAKE_WEEK_ORDER=1
+"$ACCT" test acc2 >/dev/null 2>&1
+eq "list -c: the measured account first, never-measured ones after it by name" "acc2 acc1 acc3 " "$(order_of "$("$ACCT" list -c)")"
+# an account that fails to measure goes last, even if its week would reset first
+setup
+export FAKE_WEEK_ORDER=1 FAKE_DEAD_TOKENS="tok-acc3"
+eq "list: an account that failed to measure is listed last" "acc2 acc1 acc3 " "$(order_of "$("$ACCT" list 2>/dev/null)")"
+unset FAKE_DEAD_TOKENS
+# ... also when it has an older snapshot whose week would reset first (stale numbers must not decide the position)
+setup
+export FAKE_WEEK_ORDER=1
+"$ACCT" list >/dev/null 2>&1
+eq "list: with a snapshot, acc3 (earliest week) is first" "acc3 acc2 acc1 " "$(order_of "$("$ACCT" list -c)")"
+export FAKE_DEAD_TOKENS="tok-acc3"
+eq "list: a failed account with an old, earliest snapshot is still listed last" "acc2 acc1 acc3 " "$(order_of "$("$ACCT" list 2>/dev/null)")"
+unset FAKE_DEAD_TOKENS
+# without differences the order is by name
+setup
+unset FAKE_WEEK_ORDER
+eq "list: equal weekly resets are ordered by name" "acc1 acc2 acc3 " "$(order_of "$("$ACCT" list 2>/dev/null)")"
+# colours and the list header still line up with the rows
+setup
+export FAKE_WEEK_ORDER=1
+"$ACCT" list >/dev/null 2>&1
+eq "list: the table has one row per account plus the header" "4" "$("$ACCT" list -c | grep -cE '^[ *] +(ACCOUNT|acc[0-9])')"
+unset FAKE_WEEK_ORDER
+has "help list: says how the rows are ordered" "ordered by when the weekly limit resets" "$("$ACCT" help list)"
+
 echo "== test (Hi to every account)"
 hi_lines() { grep -F -- '|-p Hi ' "$FAKE_ARGS_LOG"; }
 hi_count() { hi_lines | wc -l | tr -d ' '; }

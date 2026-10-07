@@ -124,15 +124,16 @@ agyr -c            # mở lại bằng account mới, tiếp tục conversation 
 
 ```
   ACCOUNT        GEMINI 5H                   GEMINI WEEK                 STATUS
-  acct3          100%  01/10/2026 07:14 PM   100%  08/10/2026 02:02 PM   ready
-  acct2            1%  01/10/2026 03:03 PM    75%  07/10/2026 11:46 AM   low
   acct1            1%  01/10/2026 04:02 PM    67%  07/10/2026 09:24 AM   low
+  acct2            1%  01/10/2026 03:03 PM    75%  07/10/2026 11:46 AM   low
 * work            46%  01/10/2026 05:53 PM    74%  07/10/2026 02:02 PM   ready
+  acct3          100%  01/10/2026 07:14 PM   100%  08/10/2026 02:02 PM   ready
 Measured at 01/10/2026 02:58 PM   (* = selected account)
 ```
 
 `agyr list` chạy `agy -p /quota` (không gọi model, tốn 0 token) cho **từng account song song** (mất khoảng 10–20 giây) và lưu kết quả. Mỗi lần đo chạy trong một thư mục HOME tạm chứa bản sao token, nên **không đụng file token thật**: không ảnh hưởng `agy` đang mở hay `agy-run` đang chạy. Mỗi `agy` đo chạy tách khỏi terminal (`setsid`, stdin rỗng): nếu không, nhiều `agy` chạy song song cùng đổi và khôi phục chế độ terminal của bạn và để lại terminal bị vỡ (dòng thụt lệch, mất echo). Cột Gemini là nhóm model mà `agy-run` dùng; quota Claude/GPT không hiển thị (xem trong `agy` bằng `/quota`).
 
+- **Thứ tự dòng:** theo giờ reset của giới hạn tuần, sớm nhất lên đầu (nên account có tuần sắp reset luôn ở trên cùng). Account chưa đo hoặc vừa đo lỗi nằm cuối, bằng giờ thì xếp theo tên.
 - **Dấu `*`** đánh dấu account mà file token thật đang thuộc về (so `refresh_token` với từng slot), không phải tên đã ghi trong state. Nhờ đó nếu bạn tự login sang account khác bằng `agy`, bảng vẫn đánh dấu đúng, và `use` không ghi đè nhầm slot. Nếu token đang dùng không khớp slot nào (vừa login account chưa lưu) thì bảng cảnh báo và không đánh dấu `*`; chạy `agyr save <tên>`.
 - **Màu** (chỉ khi in ra terminal): phần trăm còn lại **xanh** khi trên 40%, **vàng** từ 11% đến 40%, **đỏ** từ 10% trở xuống. Cột trạng thái: `ready` xanh; `not measured` và `stale` vàng; `low`, `cooldown` và `measure failed` đỏ. Tắt màu bằng `NO_COLOR=1` hoặc `AGYR_COLOR=never`; ép bật khi chuyển hướng ra file/pipe bằng `AGYR_COLOR=always`.
 - **Đo thấy 0%** thì tự đặt cooldown tới đúng giờ reset; **đo thấy còn quota** thì xóa cooldown cũ (ví dụ cooldown mặc định 5 giờ). Nhờ vậy `next`, `rotate` và `agy-run` luôn dựa trên số liệu thật.
@@ -288,7 +289,7 @@ Khối HARD RULES cho task implement nằm ở `templates/hard-rules.txt` (`agy-
 bash test/run.sh
 ```
 
-689 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
+699 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
 
 ## Giới hạn đã biết
 
