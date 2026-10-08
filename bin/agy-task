@@ -17,6 +17,7 @@
 #   --allow-path PATH   repeatable; lets agy touch a normally forbidden path
 #   --no-setup          skip SETUP_CMDS and COPY_FILES
 #   --reuse-worktree    use an existing worktree instead of failing
+#   --resume            resume previous agy conversation (implies --reuse-worktree --no-setup)
 #   --model M           model passed through to agy-run
 #
 # Options of `rm`:
@@ -28,7 +29,7 @@
 # Exit codes:
 #   0 success (for run: agy-run succeeded, no scope violation; for rm: removed)
 #   1, 4, 5, 6 agy-run failure codes (propagated unchanged)
-#   2 bad arguments / config error / rm refused
+#   2 bad arguments / config error / rm refused / resume error
 #   7 setup failure
 #   8 scope violation
 #
@@ -64,6 +65,7 @@ Options of `run`:
   --allow-path PATH   repeatable; lets agy touch a normally forbidden path
   --no-setup          skip SETUP_CMDS and COPY_FILES
   --reuse-worktree    use an already existing worktree instead of failing
+  --resume            resume previous agy conversation (implies --reuse-worktree --no-setup)
   --model M           passed through to agy-run
 
 Options of `rm`:
@@ -73,7 +75,7 @@ Options of `rm`:
                       linked worktree to main checkout)
 
 Exit codes:
-  0 success | 1, 4, 5, 6 agy-run exit code | 2 bad arguments, config error, or rm refused |
+  0 success | 1, 4, 5, 6 agy-run exit code | 2 bad arguments, config error, rm refused, or resume error |
   7 setup failure | 8 scope violation
 EOF
 }
@@ -251,6 +253,7 @@ SCOPE_LIST=()
 ALLOW_PATHS=()
 NO_SETUP=false
 REUSE_WORKTREE=false
+RESUME=false
 MODEL=""
 
 while [ $# -gt 0 ]; do
@@ -277,6 +280,8 @@ while [ $# -gt 0 ]; do
       NO_SETUP=true; shift ;;
     --reuse-worktree)
       REUSE_WORKTREE=true; shift ;;
+    --resume)
+      RESUME=true; shift ;;
     --model)
       [ $# -ge 2 ] || die "missing argument for --model" 2
       MODEL="$2"; shift 2 ;;
@@ -286,6 +291,11 @@ while [ $# -gt 0 ]; do
       die "unknown argument: $1 (see --help)" 2 ;;
   esac
 done
+
+if [ "$RESUME" = true ]; then
+  REUSE_WORKTREE=true
+  NO_SETUP=true
+fi
 
 # Validate required arguments
 [ -n "$NAME" ] || die "missing required --name" 2
@@ -320,6 +330,19 @@ PROMPT_FILE="$SESSIONS_DIR/$NAME.prompt.txt"
 SETUP_LOG="$SESSIONS_DIR/$NAME.setup.log"
 LOG_FILE="$SESSIONS_DIR/$NAME.jsonl"
 SUMMARY_FILE="$SESSIONS_DIR/$NAME.summary.txt"
+
+RESUME_CONV_ID=""
+if [ "$RESUME" = true ]; then
+  [ -f "$LOG_FILE" ] || die "cannot resume: session log not found: $LOG_FILE" 2
+  last_init="$(grep '^{"event":"init"' "$LOG_FILE" 2>/dev/null | tail -1 || true)"
+  if [ -z "$last_init" ]; then
+    last_init="$(grep '^{' "$LOG_FILE" 2>/dev/null | jq -c 'select(.event=="init")' 2>/dev/null | tail -1 || true)"
+  fi
+  if [ -n "$last_init" ]; then
+    RESUME_CONV_ID="$(jq -r '.conversation_id // empty' <<<"$last_init" 2>/dev/null || true)"
+  fi
+  [ -n "$RESUME_CONV_ID" ] || die "cannot resume: no conversation id found in $LOG_FILE" 2
+fi
 
 # Step 1: Worktree / branch conflict validation
 if [ -e "$WORKTREE_DIR" ]; then
@@ -632,6 +655,9 @@ log "running agy-run..."
 agy_cmd=("$AGY_RUN" --prompt "$PROMPT_FILE" --add-dir "$WORKTREE_DIR" --log "$LOG_FILE")
 if [ -n "$MODEL" ]; then
   agy_cmd+=(--model "$MODEL")
+fi
+if [ -n "$RESUME_CONV_ID" ]; then
+  agy_cmd+=(--conversation "$RESUME_CONV_ID")
 fi
 
 agy_start=$SECONDS

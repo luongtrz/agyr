@@ -208,6 +208,29 @@ has "stale quota error: shows the result error" "result error: Individual quota 
 unset FAKE_STALE_ERROR
 
 setup
+"$RUN" --prompt "$T/prompt.txt" --add-dir "$T/work" --log "$T/run.jsonl" --conversation "conv-custom-123" 2>"$T/run.err"; rc=$?
+eq "agy-run --conversation: exit 0" "0" "$rc"
+eq "agy-run --conversation: runs once" "1" "$(lines)"
+first="$(sed -n 1p "$FAKE_ARGS_LOG")"
+has "agy-run --conversation: first call carries --conversation X" "--conversation conv-custom-123" "$first"
+has "agy-run --conversation: first call passes prompt" "-p do the thing" "$first"
+
+setup
+export FAKE_QUOTA_TOKENS="tok-acc1"
+"$RUN" --prompt "$T/prompt.txt" --add-dir "$T/work" --log "$T/run.jsonl" --conversation "conv-custom-123" 2>"$T/run.err"; rc=$?
+eq "agy-run --conversation with 429: exit 0" "0" "$rc"
+eq "agy-run --conversation with 429: runs twice" "2" "$(lines)"
+first="$(sed -n 1p "$FAKE_ARGS_LOG")"
+second="$(sed -n 2p "$FAKE_ARGS_LOG")"
+has "agy-run --conversation with 429: first call carries --conversation X" "--conversation conv-custom-123" "$first"
+has "agy-run --conversation with 429: second call keeps resuming same conversation" "--conversation conv-custom-123" "$second"
+unset FAKE_QUOTA_TOKENS
+
+setup
+"$RUN" --prompt "$T/prompt.txt" --add-dir "$T/work" --log "$T/run.jsonl" --conversation 2>/dev/null; rc=$?
+eq "agy-run --conversation without ID -> exit 2" "2" "$rc"
+
+setup
 runit >/dev/null; "$RUN" --bogus 2>/dev/null; eq "unknown argument -> exit 2" "2" "$?"
 
 echo "== rotate (using agy by hand)"
@@ -949,6 +972,7 @@ out="$("$RUN" --help 2>&1)"; rc=$?
 eq "agy-run --help: exit 0" "0" "$rc"
 has "agy-run --help: has the usage line" "Usage: agy-run --prompt FILE" "$out"
 has "agy-run --help: has exit codes" "Exit codes:" "$out"
+has "agy-run --help: documents --conversation" "--conversation ID" "$out"
 eq "agy-run --help does not run agy" "0" "$(lines)"
 "$RUN" -h >/dev/null 2>&1; eq "agy-run -h: exit 0" "0" "$?"
 out="$("$RUN" --bogus 2>&1)"
@@ -1226,6 +1250,7 @@ eq "agy-task --help: exit 0" "0" "$rc"
 has "agy-task --help: usage line" "agy-task run --name NAME --task FILE" "$out"
 has "agy-task --help: mentions rm" "agy-task rm NAME [-f] [--repo DIR]" "$out"
 has "agy-task --help: exit codes" "Exit codes:" "$out"
+has "agy-task --help: mentions --resume" "--resume" "$out"
 
 out="$("$TASK" 2>&1)"; rc=$?
 eq "agy-task no args: exit 0" "0" "$rc"
@@ -1424,6 +1449,73 @@ git -C "$R" worktree remove "$R/.worktrees/agy-reuse" >/dev/null 2>&1
 out="$("$TASK" run --name reuse --task "$R/task.txt" --repo "$R" 2>&1)"; rc=$?
 eq "branch exists while worktree does not -> exit 2" "2" "$rc"
 has "branch exists while worktree does not: clear message" "branch agy/reuse exists" "$out"
+
+# agy-task --resume
+R="$(task_repo)"
+mkdir -p "$R/.agy-sessions"
+cat <<'EOF' > "$R/.agy-sessions/agy-task.conf"
+SETUP_CMDS=( 'echo setup_done >> setup_marker.txt' )
+COPY_FILES=()
+EOF
+SCRATCH="$(mktemp -d)"
+TMPS+=("$SCRATCH")
+echo "first task" > "$SCRATCH/task1.txt"
+echo "correction task" > "$SCRATCH/task2.txt"
+
+# Recording wrapper for agy-run
+cat <<'EOF' > "$SCRATCH/record_run.sh"
+#!/usr/bin/env bash
+echo "$*" >> "$RECORD_LOG"
+exec "$RECORD_TARGET" "$@"
+EOF
+chmod +x "$SCRATCH/record_run.sh"
+export RECORD_LOG="$SCRATCH/agy_run_args.log"
+export RECORD_TARGET="$FAKE_TASK_RUN"
+export AGY_RUN="$SCRATCH/record_run.sh"
+
+# (d) Normal first run: unchanged (no --conversation passed to agy-run)
+export FAKE_TASK_EDIT="file.txt:first version"
+out="$("$TASK" run --name res --task "$SCRATCH/task1.txt" --repo "$R" --scope "file.txt" 2>"$SCRATCH/res1.err")"
+rc=$?
+eq "normal run: exit 0" "0" "$rc"
+eq "normal run: worktree created" "yes" "$([ -d "$R/.worktrees/agy-res" ] && echo yes || echo no)"
+eq "normal run: setup executed" "setup_done" "$(cat "$R/.worktrees/agy-res/setup_marker.txt" 2>/dev/null || echo missing)"
+run1_args="$(sed -n 1p "$RECORD_LOG")"
+hasnt "normal run: agy-run called without --conversation" "--conversation" "$run1_args"
+has "normal run: summary OK" "RESULT=OK" "$out"
+
+# (b) Follow-up run with --resume:
+# - reads conversation id of first run's init event in .agy-sessions/res.jsonl ("fake-conv-1")
+# - passes --conversation fake-conv-1 to agy-run
+# - implies --reuse-worktree and --no-setup
+# - works on existing worktree
+export FAKE_TASK_EDIT="file.txt:corrected version"
+out="$("$TASK" run --name res --resume --task "$SCRATCH/task2.txt" --repo "$R" --scope "file.txt" 2>"$SCRATCH/res2.err")"
+rc=$?
+eq "resume run: exit 0" "0" "$rc"
+run2_args="$(sed -n 2p "$RECORD_LOG")"
+has "resume run: passes conversation id to agy-run" "--conversation fake-conv-1" "$run2_args"
+eq "resume run: works on existing worktree" "corrected version" "$(cat "$R/.worktrees/agy-res/file.txt")"
+eq "resume run: setup skipped (implied --no-setup)" "1" "$(wc -l < "$R/.worktrees/agy-res/setup_marker.txt" | tr -d ' ')"
+res_prompt="$(cat "$R/.agy-sessions/res.prompt.txt")"
+has "resume run: prompt contains new task" "correction task" "$res_prompt"
+has "resume run: prompt contains HARD RULES" "HARD RULES" "$res_prompt"
+has "resume run: prompt contains closing test reminder" "Do NOT run any test" "$res_prompt"
+
+# (c) --resume with no previous log exits 2
+out="$("$TASK" run --name nolog --resume --task "$SCRATCH/task1.txt" --repo "$R" 2>&1)"
+rc=$?
+eq "--resume with no previous log exits 2" "2" "$rc"
+has "--resume with no previous log: clear message" "cannot resume: session log not found" "$out"
+
+# --resume with log lacking conversation_id exits 2
+echo '{"event":"other"}' > "$R/.agy-sessions/badlog.jsonl"
+out="$("$TASK" run --name badlog --resume --task "$SCRATCH/task1.txt" --repo "$R" 2>&1)"
+rc=$?
+eq "--resume with no conversation id in log exits 2" "2" "$rc"
+has "--resume with no conversation id: clear message" "cannot resume: no conversation id found" "$out"
+
+unset AGY_RUN RECORD_LOG RECORD_TARGET FAKE_TASK_EDIT
 
 # Invoked from inside a linked worktree
 R="$(task_repo)"

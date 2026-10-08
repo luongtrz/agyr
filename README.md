@@ -167,6 +167,8 @@ Mọi giờ hiển thị đều theo **UTC+7** và có dạng `dd/mm/yyyy hh:mm 
 
 `agy-run` không phải lệnh để gõ tay hằng ngày: Claude gọi nó thay cho `agy -p` khi giao việc cho agy (xem skill `agy`, mục "Account pool"). Nó chạy agy với `--dangerously-skip-permissions --output-format stream-json`; gặp `Individual quota reached` thì kill ngay (không chờ agy retry), ghi cooldown theo `Resets in …`, chuyển sang account kế tiếp (xem bên dưới) và resume đúng conversation bằng `--conversation <id>`.
 
+Khi cần tiếp tục một cuộc hội thoại đã có sẵn ngay từ lượt đầu tiên (thay vì mở mới), truyền tham số `--conversation ID`: lượt đầu sẽ chạy `agy --conversation ID -p ...`, và nếu gặp 429 phải đổi account thì các lượt sau vẫn tiếp tục resume đúng conversation này.
+
 **Chọn account khi đổi** (`agyr next`, cũng là cái `agyr rotate` dùng): trong các account sẵn sàng (không đang cooldown), lấy account có **giờ reset của giới hạn tuần sớm nhất**, theo số liệu `agyr list` đã lưu, tức đúng thứ tự các dòng của `agyr list`. Ý tưởng: dùng trước phần quota sắp được làm mới. Account chưa từng đo xếp cuối, bằng giờ thì theo tên; account đang dùng chỉ được chọn lại khi không còn account nào khác. Account hết giới hạn tuần đã có cooldown tới giờ reset tuần nên tự bị bỏ qua. Lưu ý: số liệu là của lần `agyr list` gần nhất (`agy-run` không đo lại), nên nếu một account đã cạn từ lúc đó thì nó vẫn được chọn, nhận 429, bị đặt cooldown rồi `agy-run` đổi tiếp (tốn một lần đổi); chạy `agyr list` thường xuyên để số liệu mới. Account chỉ còn ít (ví dụ 1% tuần) vẫn được tính là "còn quota" và có thể được chọn trước.
 
 Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nhập hoặc chưa có account active, `5` cả pool hết quota, `6` đổi account quá `AGY_RUN_MAX_SWITCH` (mặc định 10) lần.
@@ -180,8 +182,9 @@ Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nh
 1. Claude chuẩn bị nội dung task vào một file (ví dụ `task.txt`).
 2. Chạy `agy-task run --name x --task task.txt --scope 'paths'` ở background.
 3. Đọc kết quả trong `.agy-sessions/x.summary.txt` và xem `git diff` trong worktree `.worktrees/agy-x`.
-4. Nếu kết quả đạt, commit vào repo chính.
-5. Dọn dẹp bằng `agy-task rm x -f`.
+4. Nếu reviewer yêu cầu sửa đổi (vòng sửa lỗi / correction round): tạo file task mới (ví dụ `fix.txt`), chạy `agy-task run --name x --resume --task fix.txt --scope 'paths'`. Khi đó agy nhớ lại toàn bộ phiên làm việc trước đó và tiếp tục làm trên cùng worktree `.worktrees/agy-x` mà không setup lại (ngụ ý `--reuse-worktree` và `--no-setup`).
+5. Nếu kết quả đạt, commit vào repo chính.
+6. Dọn dẹp bằng `agy-task rm x -f`.
 
 ### File cấu hình
 
@@ -204,6 +207,7 @@ File mẫu: tham khảo `templates/agy-task.conf.example`.
 | `--allow-path PATH` | Cho phép agy chạm vào một đường dẫn thông thường bị cấm (lặp lại được). |
 | `--no-setup` | Bỏ qua chạy `SETUP_CMDS` và `COPY_FILES`. |
 | `--reuse-worktree` | Dùng lại worktree đã tồn tại thay vì báo lỗi. |
+| `--resume` | Tiếp tục conversation agy của lượt chạy trước (đọc id từ dòng `init` cuối của log `.jsonl`; ngụ ý `--reuse-worktree` và `--no-setup`). |
 | `--model M` | Model truyền tiếp sang `agy-run`. |
 
 ### Lệnh `rm`
