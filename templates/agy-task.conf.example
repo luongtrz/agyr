@@ -13,17 +13,3 @@ SETUP_CMDS=(
 COPY_FILES=(
   apps/web/src/routeTree.gen.ts
 )
-
-# Named verification presets selected via --verify <name>.
-# Note: 'go test ./...' is deliberately not part of the backend preset because that
-# repository's Go tests hit a shared dev database. For backend tasks, pass a targeted
-# ad-hoc check instead: --verify-cmd 'cd backend && go test ./internal/foo/...'
-declare -A VERIFY=(
-  [web]='pnpm turbo run type-check lint test --filter=web'
-  [web-user]='pnpm turbo run type-check lint test --filter=web-user'
-  [web-admin]='pnpm turbo run type-check lint test --filter=web-admin'
-  [backend]='cd backend && go vet ./... && go build ./...'
-)
-
-# Default verify presets used when neither --verify nor --verify-cmd is specified.
-DEFAULT_VERIFY=()

@@ -1290,9 +1290,9 @@ eq "missing config file: exit 0" "0" "$rc"
 has "missing config file: warning printed to stderr" "warning: no config file found" "$(cat "$R/noconf.err")"
 has "missing config file: summary OK" "RESULT=OK" "$out"
 
-# Unknown preset with missing config file
-"$TASK" run --name nopreset --task "$R/task.txt" --repo "$R" --verify preset1 >/dev/null 2>&1
-eq "unknown --verify preset -> exit 2" "2" "$?"
+# Rejected --verify flag
+"$TASK" run --name rejverify --task "$R/task.txt" --repo "$R" --verify x >/dev/null 2>&1
+eq "rejected --verify flag -> exit 2" "2" "$?"
 
 # Happy path
 R="$(task_repo)"
@@ -1300,11 +1300,6 @@ mkdir -p "$R/.agy-sessions"
 cat <<'EOF' > "$R/.agy-sessions/agy-task.conf"
 SETUP_CMDS=( 'echo setup_done > setup_marker.txt' )
 COPY_FILES=( generated.txt )
-declare -A VERIFY=(
-  [test1]='echo pass1'
-  [test2]='echo pass2'
-)
-DEFAULT_VERIFY=( test1 )
 EOF
 SCRATCH="$(mktemp -d)"
 TMPS+=("$SCRATCH")
@@ -1315,7 +1310,7 @@ export FAKE_PROMPT_COPY="$SCRATCH/copied_prompt.txt"
 unset FAKE_TASK_EXIT FAKE_TASK_RM
 
 base_sha="$(git -C "$R" rev-parse --short HEAD)"
-out="$("$TASK" run --name hp --task "$SCRATCH/task.txt" --repo "$R" --scope "file.txt" --verify test1 --verify test2 2>"$SCRATCH/hp.err")"
+out="$("$TASK" run --name hp --task "$SCRATCH/task.txt" --repo "$R" --scope "file.txt" 2>"$SCRATCH/hp.err")"
 rc=$?
 eq "happy path: exit 0" "0" "$rc"
 eq "happy path: worktree exists" "yes" "$([ -d "$R/.worktrees/agy-hp" ] && echo yes || echo no)"
@@ -1333,13 +1328,11 @@ has "happy path: prompt contains task text" "implement feature X" "$p_content"
 has "happy path: prompt contains scope" "file.txt" "$p_content"
 has "happy path: prompt contains HARD RULES" "HARD RULES (violating any = task failure):" "$p_content"
 hasnt "happy path: prompt has no literal <ABS_PATH>" "<ABS_PATH>" "$p_content"
-has "happy path: prompt contains verify command 1" "echo pass1" "$p_content"
-has "happy path: prompt contains verify command 2" "echo pass2" "$p_content"
+hasnt "happy path: prompt no longer contains Verification commands" "Verification commands" "$p_content"
+has "happy path: prompt contains reviewer runs verification instruction" "The reviewer runs all verification after you finish." "$p_content"
 
 summary_content="$(cat "$R/.agy-sessions/hp.summary.txt" 2>/dev/null || echo missing)"
 has "happy path: summary has RESULT=OK" "RESULT=OK" "$summary_content"
-has "happy path: summary has PASS line 1" "PASS     echo pass1" "$summary_content"
-has "happy path: summary has PASS line 2" "PASS     echo pass2" "$summary_content"
 has "happy path: summary has changed file" "file.txt" "$summary_content"
 eq "happy path: stdout equals summary file" "$summary_content" "$out"
 
@@ -1347,32 +1340,9 @@ eq "happy path: stdout equals summary file" "$summary_content" "$out"
 eq "prompt in .agy-sessions" "yes" "$([ -f "$R/.agy-sessions/hp.prompt.txt" ] && echo yes || echo no)"
 eq "jsonl in .agy-sessions" "yes" "$([ -f "$R/.agy-sessions/hp.jsonl" ] && echo yes || echo no)"
 eq "setup log in .agy-sessions" "yes" "$([ -f "$R/.agy-sessions/hp.setup.log" ] && echo yes || echo no)"
-eq "verify logs in .agy-sessions" "yes" "$([ -f "$R/.agy-sessions/hp.verify-1.log" ] && [ -f "$R/.agy-sessions/hp.verify-2.log" ] && echo yes || echo no)"
 eq "summary in .agy-sessions" "yes" "$([ -f "$R/.agy-sessions/hp.summary.txt" ] && echo yes || echo no)"
 eq "nothing agy-task wrote in worktree tracked tree" "" "$(git -C "$R/.worktrees/agy-hp" ls-files -o --exclude-standard)"
 eq "main checkout git status porcelain is empty" "" "$(git -C "$R" status --porcelain)"
-
-# Failing verify and timeout
-R="$(task_repo)"
-mkdir -p "$R/.agy-sessions"
-cat <<'EOF' > "$R/.agy-sessions/agy-task.conf"
-declare -A VERIFY=( [ok]='echo pass_ok' )
-DEFAULT_VERIFY=()
-EOF
-echo "task" > "$R/task.txt"
-export FAKE_TASK_EDIT="file.txt:mod"
-out="$("$TASK" run --name vfail --task "$R/task.txt" --repo "$R" --verify ok --verify-cmd 'echo err_tail_text && exit 1' 2>"$R/vfail.err")"
-rc=$?
-eq "failing verify command -> exit 8" "8" "$rc"
-has "failing verify: summary shows FAIL" "FAIL" "$out"
-has "failing verify: summary shows output tail" "err_tail_text" "$out"
-has "failing verify: other verify command still ran" "PASS     echo pass_ok" "$out"
-has "failing verify: summary RESULT=VERIFY_FAILED" "RESULT=VERIFY_FAILED" "$out"
-
-out="$("$TASK" run --name vtime --task "$R/task.txt" --repo "$R" --verify-cmd 'sleep 2' --verify-timeout 1 2>"$R/vtime.err")"
-rc=$?
-eq "command slower than --verify-timeout -> TIMEOUT, exit 8" "8" "$rc"
-has "verify timeout: summary shows TIMEOUT" "TIMEOUT  sleep 2" "$out"
 
 # Scope and forbidden files
 R="$(task_repo)"
@@ -1407,8 +1377,6 @@ mkdir -p "$R/.agy-sessions"
 cat <<'EOF' > "$R/.agy-sessions/agy-task.conf"
 SETUP_CMDS=( 'echo setup_failure_message >&2; exit 1' )
 COPY_FILES=()
-declare -A VERIFY=()
-DEFAULT_VERIFY=()
 EOF
 echo "task" > "$R/task.txt"
 export FAKE_TASK_EDIT="file.txt:should_not_run"
@@ -1422,8 +1390,6 @@ eq "setup failure: stub agy-run never called" "no" "$([ -f "$R/.agy-sessions/sfa
 cat <<'EOF' > "$R/.agy-sessions/agy-task.conf"
 SETUP_CMDS=()
 COPY_FILES=( nonexistent.txt )
-declare -A VERIFY=()
-DEFAULT_VERIFY=()
 EOF
 unset FAKE_TASK_EDIT
 out="$("$TASK" run --name copymiss --task "$R/task.txt" --repo "$R" 2>"$R/copymiss.err")"
@@ -1436,11 +1402,10 @@ R="$(task_repo)"
 echo "task" > "$R/task.txt"
 for code in 5 4 1; do
   export FAKE_TASK_EXIT="$code"
-  out="$("$TASK" run --name "agyfail-$code" --task "$R/task.txt" --repo "$R" --verify-cmd 'echo should_not_run' 2>"$R/agyfail-$code.err")"
+  out="$("$TASK" run --name "agyfail-$code" --task "$R/task.txt" --repo "$R" 2>"$R/agyfail-$code.err")"
   rc=$?
   eq "stub agy-run exit $code propagated" "$code" "$rc"
   has "stub agy-run exit $code: summary RESULT=AGY_FAILED" "RESULT=AGY_FAILED" "$out"
-  eq "stub agy-run exit $code: verify skipped" "no" "$([ -f "$R/.agy-sessions/agyfail-$code.verify-1.log" ] && echo yes || echo no)"
 done
 unset FAKE_TASK_EXIT
 
@@ -1480,8 +1445,6 @@ mkdir -p "$R/.agy-sessions"
 cat <<'EOF' > "$R/.agy-sessions/agy-task.conf"
 SETUP_CMDS=( 'echo setup_change >> file.txt' )
 COPY_FILES=()
-declare -A VERIFY=()
-DEFAULT_VERIFY=()
 EOF
 echo "task" > "$R/task.txt"
 export FAKE_TASK_EDIT="other.txt:created_by_agy"
@@ -1490,19 +1453,8 @@ rc=$?
 eq "baseline: setup modification not blamed on agy -> exit 0" "0" "$rc"
 has "baseline: summary RESULT=OK" "RESULT=OK" "$out"
 hasnt "baseline: file.txt not in violations" "violation: file.txt" "$out"
-# Regression tests for defects 1-6
 
-# Defect 1: Verify command containing pipe
-R="$(task_repo)"
-echo "task" > "$R/task.txt"
-export AGY_RUN="$FAKE_TASK_RUN"
-unset FAKE_TASK_EDIT FAKE_TASK_RM FAKE_TASK_COMMIT FAKE_STDOUT_NOISE FAKE_TASK_EXIT
-out="$("$TASK" run --name vpipe --task "$R/task.txt" --repo "$R" --verify-cmd 'echo x | cat; echo BOOM >&2; exit 3' 2>"$R/vpipe.err")"
-rc=$?
-eq "verify command with pipe fails -> exit 8" "8" "$rc"
-has "verify with pipe: full command in summary" "FAIL     echo x | cat; echo BOOM >&2; exit 3" "$out"
-has "verify with pipe: output tail shown" "    BOOM" "$out"
-has "verify with pipe: verify log listed" "verify: $R/.agy-sessions/vpipe.verify-1.log" "$out"
+# Regression tests for defects
 
 # Defect 2: agy commit bypasses scope check
 # 2a: agy commits an in-scope edit
@@ -1533,28 +1485,12 @@ has "committed out-of-scope: other.txt flagged" "violation: other.txt (outside s
 has "committed forbidden: pnpm-lock.yaml flagged" "violation: pnpm-lock.yaml" "$out"
 unset FAKE_TASK_COMMIT FAKE_TASK_EDIT
 
-# Defect 3: No verify commands warning and result line
-R="$(task_repo)"
-echo "task" > "$R/task.txt"
-export AGY_RUN="$FAKE_TASK_RUN"
-out="$("$TASK" run --name noverify --task "$R/task.txt" --repo "$R" 2>"$R/noverify.err")"
-rc=$?
-eq "no verify commands -> exit 0" "0" "$rc"
-has "no verify commands: warning printed to stderr" "warning: no verify commands" "$(cat "$R/noverify.err")"
-has "no verify commands: result line specifies no verify commands ran" "RESULT=OK (no verify commands ran)" "$out"
-
-out="$("$TASK" run --name withverify --task "$R/task.txt" --repo "$R" --verify-cmd 'true' 2>"$R/withverify.err")"
-rc=$?
-eq "with verify command -> exit 0" "0" "$rc"
-has "with verify command: plain RESULT=OK" "RESULT=OK" "$out"
-hasnt "with verify command: not no-verify result line" "RESULT=OK (no verify commands ran)" "$out"
-
 # Defect 4: agy-run stdout noise does not leak into agy-task stdout
 R="$(task_repo)"
 echo "task" > "$R/task.txt"
 export AGY_RUN="$FAKE_TASK_RUN"
 export FAKE_STDOUT_NOISE="noisy stdout from agy-run"
-out="$("$TASK" run --name noise --task "$R/task.txt" --repo "$R" --verify-cmd 'true' 2>"$R/noise.err")"
+out="$("$TASK" run --name noise --task "$R/task.txt" --repo "$R" 2>"$R/noise.err")"
 rc=$?
 eq "stdout noise: exit 0" "0" "$rc"
 summary_file="$(cat "$R/.agy-sessions/noise.summary.txt")"
@@ -1615,7 +1551,7 @@ eq "no set +e in agy-task" "0" "$(grep -c 'set +e' "$TASK" || true)"
 R="$(task_repo)"
 echo "task" > "$R/task.txt"
 export AGY_RUN="$FAKE_TASK_RUN"
-"$TASK" run --name rmclean --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+"$TASK" run --name rmclean --task "$R/task.txt" --repo "$R" >/dev/null 2>&1
 eq "rm clean: run exit 0" "0" "$?"
 eq "rm clean: worktree exists before rm" "yes" "$([ -d "$R/.worktrees/agy-rmclean" ] && echo yes || echo no)"
 eq "rm clean: prompt file exists before rm" "yes" "$([ -f "$R/.agy-sessions/rmclean.prompt.txt" ] && echo yes || echo no)"
@@ -1629,12 +1565,11 @@ eq "rm clean: prompt file gone" "no" "$([ -f "$R/.agy-sessions/rmclean.prompt.tx
 eq "rm clean: summary kept" "yes" "$([ -f "$R/.agy-sessions/rmclean.summary.txt" ] && echo yes || echo no)"
 eq "rm clean: jsonl kept" "yes" "$([ -f "$R/.agy-sessions/rmclean.jsonl" ] && echo yes || echo no)"
 eq "rm clean: setup log kept" "yes" "$([ -f "$R/.agy-sessions/rmclean.setup.log" ] && echo yes || echo no)"
-eq "rm clean: verify log kept" "yes" "$([ -f "$R/.agy-sessions/rmclean.verify-1.log" ] && echo yes || echo no)"
 
 # 2. dirty worktree -> refused (exit 2, worktree still there), with -f removed
 R="$(task_repo)"
 echo "task" > "$R/task.txt"
-"$TASK" run --name rmdirty --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+"$TASK" run --name rmdirty --task "$R/task.txt" --repo "$R" >/dev/null 2>&1
 echo "dirty edit" >> "$R/.worktrees/agy-rmdirty/file.txt"
 out="$("$TASK" rm rmdirty --repo "$R" 2>"$R/rmdirty.err")"; rc=$?
 eq "rm dirty without -f -> exit 2" "2" "$rc"
@@ -1649,7 +1584,7 @@ eq "rm dirty: branch gone with -f" "no" "$(git -C "$R" show-ref --verify --quiet
 # 3. untracked non-ignored file -> refused
 R="$(task_repo)"
 echo "task" > "$R/task.txt"
-"$TASK" run --name rmuntracked --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+"$TASK" run --name rmuntracked --task "$R/task.txt" --repo "$R" >/dev/null 2>&1
 echo "untracked" > "$R/.worktrees/agy-rmuntracked/untracked.txt"
 out="$("$TASK" rm rmuntracked --repo "$R" 2>"$R/rmuntracked.err")"; rc=$?
 eq "rm untracked file without -f -> exit 2" "2" "$rc"
@@ -1662,7 +1597,7 @@ eq "rm untracked with -f: worktree gone" "no" "$([ -e "$R/.worktrees/agy-rmuntra
 # 4. branch with an unmerged commit -> refused, with -f removed
 R="$(task_repo)"
 echo "task" > "$R/task.txt"
-"$TASK" run --name rmunmerged --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+"$TASK" run --name rmunmerged --task "$R/task.txt" --repo "$R" >/dev/null 2>&1
 echo "commit edit" >> "$R/.worktrees/agy-rmunmerged/file.txt"
 git -C "$R/.worktrees/agy-rmunmerged" -c user.name=t -c user.email=t@t commit -am "unique commit" >/dev/null
 out="$("$TASK" rm rmunmerged --repo "$R" 2>"$R/rmunmerged.err")"; rc=$?
@@ -1702,7 +1637,7 @@ eq "rm missing name -> exit 2" "2" "$?"
 # 8. called from inside a linked worktree -> resolves to the main checkout
 R="$(task_repo)"
 echo "task" > "$R/task.txt"
-"$TASK" run --name rmtarget --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+"$TASK" run --name rmtarget --task "$R/task.txt" --repo "$R" >/dev/null 2>&1
 mkdir -p "$R/.worktrees"
 git -C "$R" worktree add -b agy/caller "$R/.worktrees/agy-caller" HEAD >/dev/null 2>&1
 out="$( (cd "$R/.worktrees/agy-caller" && "$TASK" rm rmtarget 2>"$R/rmtarget.err") )"; rc=$?
@@ -1718,7 +1653,7 @@ R="$(task_repo)"
 echo "task" > "$R/task.txt"
 
 # First run: header + 1 line with tokens 12345
-"$TASK" run --name ulog1 --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+"$TASK" run --name ulog1 --task "$R/task.txt" --repo "$R" >/dev/null 2>&1
 eq "usage log: file exists" "yes" "$([ -f "$R/.agy-sessions/usage.tsv" ] && echo yes || echo no)"
 expected_hdr=$'timestamp\tname\tresult\tagy_status\tturns\ttokens\tagy_seconds\texit_code'
 actual_hdr="$(head -n 1 "$R/.agy-sessions/usage.tsv")"
@@ -1731,7 +1666,7 @@ eq "usage log run 1: tokens" "12345" "$(echo "$line1_data" | cut -f6)"
 eq "usage log run 1: exit code" "0" "$(echo "$line1_data" | cut -f8)"
 
 # Second run appends (header still once)
-"$TASK" run --name ulog2 --task "$R/task.txt" --repo "$R" --verify-cmd 'true' >/dev/null 2>&1
+"$TASK" run --name ulog2 --task "$R/task.txt" --repo "$R" >/dev/null 2>&1
 eq "usage log: line count after run 2" "3" "$(wc -l < "$R/.agy-sessions/usage.tsv" | tr -d ' ')"
 actual_hdr2="$(head -n 1 "$R/.agy-sessions/usage.tsv")"
 eq "usage log: header line still once" "$expected_hdr" "$actual_hdr2"

@@ -10,7 +10,7 @@ Gồm ba lệnh trong `bin/`:
 
 - `agyr`: quản lý slot, xem quota, đổi account. Đây là lệnh bạn tự gõ.
 - `agy-run`: chạy một task agy và tự đổi account khi hết quota. Chủ yếu do Claude gọi qua skill `agy`, xem phần [agy-run](#agy-run-dành-cho-claude).
-- `agy-task`: chạy trọn gói một task IMPLEMENT trong git worktree riêng, kiểm tra scope, chạy verify và dọn dẹp. Xem phần [agy-task](#agy-task-dành-cho-claude).
+- `agy-task`: chạy trọn gói một task IMPLEMENT trong git worktree riêng, kiểm tra scope và dọn dẹp. Xem phần [agy-task](#agy-task-dành-cho-claude).
 
 ## Cài
 
@@ -173,12 +173,12 @@ Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nh
 
 ## agy-task (dành cho Claude)
 
-`agy-task` là wrapper tất định (deterministic) để giao **trọn gói một task IMPLEMENT** cho `agy` từ đầu đến cuối mà **không dùng bất kỳ LLM nào trong wrapper**: tự tạo worktree tách biệt, chạy setup, gọi `agy-run`, kiểm tra scope, chạy các lệnh verify và xuất file summary. Đối với việc đọc code tìm hiểu (read-only exploration), Claude vẫn dùng `agy-run` trực tiếp trên repo chính.
+`agy-task` là wrapper tất định (deterministic) để giao **trọn gói một task IMPLEMENT** cho `agy` từ đầu đến cuối mà **không dùng bất kỳ LLM nào trong wrapper**: tự tạo worktree tách biệt, chạy setup, gọi `agy-run`, kiểm tra scope và xuất file summary. Script không chạy bất kỳ bài test hay lệnh kiểm tra nào; reviewer sẽ kiểm tra và verify sau khi chạy xong. Đối với việc đọc code tìm hiểu (read-only exploration), Claude vẫn dùng `agy-run` trực tiếp trên repo chính.
 
 ### Luồng sử dụng điển hình
 
 1. Claude chuẩn bị nội dung task vào một file (ví dụ `task.txt`).
-2. Chạy `agy-task run --name x --task task.txt --scope 'paths' --verify web` ở background.
+2. Chạy `agy-task run --name x --task task.txt --scope 'paths'` ở background.
 3. Đọc kết quả trong `.agy-sessions/x.summary.txt` và xem `git diff` trong worktree `.worktrees/agy-x`.
 4. Nếu kết quả đạt, commit vào repo chính.
 5. Dọn dẹp bằng `agy-task rm x -f`.
@@ -189,8 +189,6 @@ Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nh
 
 - `SETUP_CMDS`: mảng lệnh bash chạy trong worktree trước khi chạy agy (ví dụ cài dependency, build).
 - `COPY_FILES`: mảng đường dẫn file/thư mục tương đối copy từ repo chính sang worktree (ví dụ các file sinh tự động như `routeTree.gen.ts`; không nên copy file chứa credential vào worktree).
-- `VERIFY`: mảng liên kết (`declare -A VERIFY`) khai báo các preset lệnh verify đặt tên sẵn.
-- `DEFAULT_VERIFY`: mảng tên preset mặc định sẽ chạy nếu không chỉ định `--verify` hay `--verify-cmd`.
 
 File mẫu: tham khảo `templates/agy-task.conf.example`.
 
@@ -204,9 +202,6 @@ File mẫu: tham khảo `templates/agy-task.conf.example`.
 | `--base REF` | Commit-ish xuất phát cho nhánh (mặc định: `HEAD`). |
 | `--scope PATHSPEC` | Đường dẫn agy được phép thay đổi (tính từ gốc worktree, lặp lại được). |
 | `--allow-path PATH` | Cho phép agy chạm vào một đường dẫn thông thường bị cấm (lặp lại được). |
-| `--verify NAME` | Tên preset từ cấu hình `VERIFY` (lặp lại được). |
-| `--verify-cmd CMD` | Lệnh shell ad-hoc chạy bằng `bash -c` từ gốc worktree (lặp lại được). |
-| `--verify-timeout S` | Timeout cho từng lệnh verify tính bằng giây (mặc định: 900). |
 | `--no-setup` | Bỏ qua chạy `SETUP_CMDS` và `COPY_FILES`. |
 | `--reuse-worktree` | Dùng lại worktree đã tồn tại thay vì báo lỗi. |
 | `--model M` | Model truyền tiếp sang `agy-run`. |
@@ -217,27 +212,26 @@ File mẫu: tham khảo `templates/agy-task.conf.example`.
 agy-task rm NAME [-f] [--repo DIR]
 ```
 
-Xóa worktree `<repo>/.worktrees/agy-NAME` (`git worktree remove`), nhánh `agy/NAME` (`git branch -d`), và file prompt đã ghép `.agy-sessions/NAME.prompt.txt`. Giữ lại toàn bộ audit trail: `NAME.jsonl`, `NAME.summary.txt`, `NAME.setup.log`, `NAME.verify-*.log`.
+Xóa worktree `<repo>/.worktrees/agy-NAME` (`git worktree remove`), nhánh `agy/NAME` (`git branch -d`), và file prompt đã ghép `.agy-sessions/NAME.prompt.txt`. Giữ lại toàn bộ audit trail: `NAME.jsonl`, `NAME.summary.txt`, `NAME.setup.log`.
 
 Nếu không có `-f`, lệnh từ chối (exit 2) khi: worktree có thay đổi chưa commit hoặc file untracked chưa ignore, hoặc nhánh `agy/NAME` có commit chưa merge vào HEAD của repo chính. Dùng `-f` để ép xóa (`git worktree remove --force` và `git branch -D`).
 
 ### Exit codes
 
-- `0`: Thành công (`run`: agy-run thành công, không vi phạm scope, mọi verify đều pass; `rm`: xóa thành công).
+- `0`: Thành công (`run`: agy-run thành công, không vi phạm scope; `rm`: xóa thành công).
 - `1, 4, 5, 6`: Mã lỗi từ `agy-run` truyền nguyên vẹn ra ngoài.
 - `2`: Tham số sai, lỗi cấu hình, hoặc `rm` bị từ chối / không có gì để xóa.
 - `7`: Setup thất bại (lệnh trong `SETUP_CMDS` lỗi).
-- `8`: Verify thất bại hoặc vi phạm scope/file cấm.
+- `8`: Vi phạm scope hoặc file cấm.
 
 ### Bố cục file Summary
 
 Summary ghi vào `.agy-sessions/NAME.summary.txt` (và in ra stdout khi hoàn thành) gồm các khối:
-- Dòng kết quả đầu tiên: `RESULT=OK`, `RESULT=VERIFY_FAILED`, `RESULT=SCOPE_VIOLATION`, `RESULT=SETUP_FAILED`, hoặc `RESULT=AGY_FAILED`.
+- Dòng kết quả đầu tiên: `RESULT=OK`, `RESULT=SCOPE_VIOLATION`, `RESULT=SETUP_FAILED`, hoặc `RESULT=AGY_FAILED`.
 - Thông tin môi trường: `worktree`, `branch`, `base`.
 - Dòng `agy`: trạng thái status, số lượt (turns), token sử dụng, thời gian chạy.
 - `changed files`: thống kê thay đổi theo git (`diff --stat`) và file untracked (`??`).
 - `scope`: kết quả kiểm tra scope (`scope: OK` hoặc danh sách vi phạm).
-- `verify`: bảng kết quả từng lệnh (`PASS`, `FAIL`, `TIMEOUT`) kèm thời gian và 40 dòng log cuối nếu lỗi.
 - `agy report`: trích đoạn phản hồi từ agy (tối đa 25 dòng).
 - `logs`: danh sách đường dẫn tới các file log.
 
@@ -249,7 +243,7 @@ Summary ghi vào `.agy-sessions/NAME.summary.txt` (và in ra stdout khi hoàn th
 
 ### Nhật ký sử dụng (`usage.tsv`)
 
-Ở cuối mỗi lượt `run` đến được summary (ở mọi kết quả OK, VERIFY_FAILED, SCOPE_VIOLATION, SETUP_FAILED, AGY_FAILED), một dòng dạng TSV (tab-separated) được ghi nối vào `<repo>/.agy-sessions/usage.tsv`:
+Ở cuối mỗi lượt `run` đến được summary (ở mọi kết quả OK, SCOPE_VIOLATION, SETUP_FAILED, AGY_FAILED), một dòng dạng TSV (tab-separated) được ghi nối vào `<repo>/.agy-sessions/usage.tsv`:
 - Các cột: `timestamp`, `name`, `result`, `agy_status`, `turns`, `tokens`, `agy_seconds`, `exit_code`.
 - Dòng tiêu đề được tự động ghi khi file chưa tồn tại.
 - File không bao giờ bị ghi đè, và lỗi ghi file (nếu có) sẽ được bỏ qua mà không làm hỏng tiến trình run. Giá trị thiếu được ghi thành `-`.
@@ -258,7 +252,6 @@ Summary ghi vào `.agy-sessions/NAME.summary.txt` (và in ra stdout khi hoàn th
 
 - Worktree bắt đầu từ commit `--base`, **không kế thừa các thay đổi chưa commit** của repo chính.
 - Kiểm tra scope và file cấm chỉ nhìn thấy các file được git báo cáo (nếu agy tạo một file nằm trong `.gitignore`, ví dụ `.env`, git không báo nên bộ kiểm tra không thấy).
-- `RESULT=OK` khi không có lệnh verify nào đồng nghĩa là chưa có bài kiểm tra nào được chạy thực tế (`RESULT=OK (no verify commands ran)`).
 
 ## Biến môi trường
 

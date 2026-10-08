@@ -15,9 +15,6 @@
 #   --base REF          commit-ish the branch starts from (default: HEAD)
 #   --scope PATHSPEC    repeatable; paths agy may change (relative to worktree root)
 #   --allow-path PATH   repeatable; lets agy touch a normally forbidden path
-#   --verify NAME       repeatable; preset from config's VERIFY map
-#   --verify-cmd CMD    repeatable; ad-hoc shell command, run via bash -c from worktree root
-#   --verify-timeout S  timeout per verify command in seconds (default: 900)
 #   --no-setup          skip SETUP_CMDS and COPY_FILES
 #   --reuse-worktree    use an existing worktree instead of failing
 #   --model M           model passed through to agy-run
@@ -29,11 +26,11 @@
 #                       linked worktree to main checkout)
 #
 # Exit codes:
-#   0 success (for run: agy-run succeeded, no scope violation, verify passed; for rm: removed)
+#   0 success (for run: agy-run succeeded, no scope violation; for rm: removed)
 #   1, 4, 5, 6 agy-run failure codes (propagated unchanged)
 #   2 bad arguments / config error / rm refused
 #   7 setup failure
-#   8 verify failure or scope violation
+#   8 scope violation
 #
 # Environment variables:
 #   AGY_RUN        path of agy-run (default: sibling of this script)
@@ -65,9 +62,6 @@ Options of `run`:
   --base REF          commit-ish the branch starts from (default: HEAD)
   --scope PATHSPEC    repeatable; paths agy may change (relative to worktree root)
   --allow-path PATH   repeatable; lets agy touch a normally forbidden path
-  --verify NAME       repeatable; preset from config's VERIFY map
-  --verify-cmd CMD    repeatable; ad-hoc shell command, run with bash -c
-  --verify-timeout S  timeout per verify command in seconds (default: 900)
   --no-setup          skip SETUP_CMDS and COPY_FILES
   --reuse-worktree    use an already existing worktree instead of failing
   --model M           passed through to agy-run
@@ -80,7 +74,7 @@ Options of `rm`:
 
 Exit codes:
   0 success | 1, 4, 5, 6 agy-run exit code | 2 bad arguments, config error, or rm refused |
-  7 setup failure | 8 verify failure or scope violation
+  7 setup failure | 8 scope violation
 EOF
 }
 
@@ -225,8 +219,6 @@ cmd_rm() {
 # Config variables (sourceable at top level)
 SETUP_CMDS=()
 COPY_FILES=()
-declare -A VERIFY=()
-DEFAULT_VERIFY=()
 
 # Bare command or help
 if [ $# -eq 0 ]; then
@@ -257,9 +249,6 @@ REPO_ARG="."
 BASE_REF="HEAD"
 SCOPE_LIST=()
 ALLOW_PATHS=()
-RAW_VERIFY_NAMES=()
-RAW_VERIFY_CMDS=()
-VERIFY_TIMEOUT=900
 NO_SETUP=false
 REUSE_WORKTREE=false
 MODEL=""
@@ -284,15 +273,6 @@ while [ $# -gt 0 ]; do
     --allow-path)
       [ $# -ge 2 ] || die "missing argument for --allow-path" 2
       ALLOW_PATHS+=("$2"); shift 2 ;;
-    --verify)
-      [ $# -ge 2 ] || die "missing argument for --verify" 2
-      RAW_VERIFY_NAMES+=("$2"); shift 2 ;;
-    --verify-cmd)
-      [ $# -ge 2 ] || die "missing argument for --verify-cmd" 2
-      RAW_VERIFY_CMDS+=("$2"); shift 2 ;;
-    --verify-timeout)
-      [ $# -ge 2 ] || die "missing argument for --verify-timeout" 2
-      VERIFY_TIMEOUT="$2"; shift 2 ;;
     --no-setup)
       NO_SETUP=true; shift ;;
     --reuse-worktree)
@@ -326,30 +306,11 @@ else
 fi
 
 if [ -f "$CONF_FILE" ]; then
-  # Sourced at top level so declare -A VERIFY is global
+  # Sourced at top level
   # shellcheck source=/dev/null
   source "$CONF_FILE"
 else
-  log "warning: no config file found at $CONF_FILE (no setup, no copy, no presets)"
-fi
-
-# Resolve effective verify commands
-EFFECTIVE_VERIFY_CMDS=()
-for vname in "${RAW_VERIFY_NAMES[@]}"; do
-  [ -n "${VERIFY[$vname]+_}" ] || die "unknown verify preset: '$vname'" 2
-  EFFECTIVE_VERIFY_CMDS+=("${VERIFY[$vname]}")
-done
-for vcmd in "${RAW_VERIFY_CMDS[@]}"; do
-  EFFECTIVE_VERIFY_CMDS+=("$vcmd")
-done
-if [ ${#RAW_VERIFY_NAMES[@]} -eq 0 ] && [ ${#RAW_VERIFY_CMDS[@]} -eq 0 ]; then
-  for vname in "${DEFAULT_VERIFY[@]}"; do
-    [ -n "${VERIFY[$vname]+_}" ] || die "unknown default verify preset: '$vname'" 2
-    EFFECTIVE_VERIFY_CMDS+=("${VERIFY[$vname]}")
-  done
-fi
-if [ ${#EFFECTIVE_VERIFY_CMDS[@]} -eq 0 ]; then
-  log "warning: no verify commands configured or specified"
+  log "warning: no config file found at $CONF_FILE (no setup, no copy)"
 fi
 
 WORKTREE_DIR="$MAIN_REPO/.worktrees/agy-$NAME"
@@ -456,8 +417,8 @@ write_usage_log() {
 # Helper to write summary and print to stdout
 # Globals used: RESULT_LINE, WORKTREE_DIR, BRANCH_NAME, BASE_REF, BASE_SHA,
 # AGY_STATUS, NUM_TURNS, TOTAL_TOKENS, AGY_ELAPSED, AGY_RC, AGY_RESPONSE,
-# CHANGED_DIFF_STAT, UNTRACKED_CHANGED, SCOPE_SUMMARY_LINES, VERIFY_RESULTS,
-# SKIPPED_VERIFY, SUMMARY_FILE, LOG_FILE, SETUP_LOG
+# CHANGED_DIFF_STAT, UNTRACKED_CHANGED, SCOPE_SUMMARY_LINES,
+# SUMMARY_FILE, LOG_FILE, SETUP_LOG
 write_and_print_summary() {
   local exit_code="${1:-0}"
   {
@@ -499,27 +460,6 @@ write_and_print_summary() {
       echo "$sl"
     done
 
-    # verify
-    echo "verify:"
-    if [ ${#VERIFY_STATUS[@]} -gt 0 ]; then
-      for i in "${!VERIFY_STATUS[@]}"; do
-        v_st="${VERIFY_STATUS[$i]}"
-        v_cmd="${VERIFY_RUN_CMDS[$i]}"
-        v_secs="${VERIFY_SECS[$i]}"
-        v_log="${VERIFY_LOGS[$i]}"
-        printf '%-8s %s  (%ss)\n' "$v_st" "$v_cmd" "$v_secs"
-        if [ "$v_st" = "FAIL" ] || [ "$v_st" = "TIMEOUT" ]; then
-          if [ -f "$v_log" ]; then
-            sed -E 's/\x1B\[[0-9;]*[a-zA-Z]//g' "$v_log" | tail -n 40 | sed 's/^/    /'
-          fi
-        fi
-      done
-    elif [ "$SKIPPED_VERIFY" = true ]; then
-      echo "skipped"
-    else
-      echo "none"
-    fi
-
     # agy report
     echo "agy report:"
     if [ -n "$AGY_RESPONSE" ]; then
@@ -540,9 +480,6 @@ write_and_print_summary() {
     echo "logs:"
     [ -f "$LOG_FILE" ] && echo "  jsonl:  $LOG_FILE"
     [ -f "$SETUP_LOG" ] && echo "  setup:  $SETUP_LOG"
-    for v_log in "${VERIFY_LOGS[@]}"; do
-      [ -f "$v_log" ] && echo "  verify: $v_log"
-    done
   } > "$SUMMARY_FILE"
   cat "$SUMMARY_FILE"
   write_usage_log "$exit_code"
@@ -559,11 +496,6 @@ CHANGED_DIFF_STAT=""
 CHANGED_PATHS=()
 UNTRACKED_CHANGED=()
 SCOPE_SUMMARY_LINES=()
-VERIFY_STATUS=()
-VERIFY_RUN_CMDS=()
-VERIFY_SECS=()
-VERIFY_LOGS=()
-SKIPPED_VERIFY=false
 declare -A CURRENT_STATUS=()
 declare -A ALL_CURRENT_PATHS=()
 
@@ -581,7 +513,6 @@ if [ "$NO_SETUP" = false ]; then
       tail -n 30 "$tmp_out" >&2
       rm -f "$tmp_out"
       RESULT_LINE="RESULT=SETUP_FAILED (command exited $sc_rc)"
-      SKIPPED_VERIFY=true
       SCOPE_SUMMARY_LINES=("scope: not checked (setup failed)")
       write_and_print_summary 7
       exit 7
@@ -645,16 +576,7 @@ fi
   echo
   sed "s|<ABS_PATH>|$WORKTREE_DIR|g" "$HR_FILE"
   echo
-  echo "Verification commands (run by the harness after you finish; do NOT run them yourself):"
-  if [ ${#EFFECTIVE_VERIFY_CMDS[@]} -gt 0 ]; then
-    for vc in "${EFFECTIVE_VERIFY_CMDS[@]}"; do
-      echo "- $vc"
-    done
-  else
-    echo "none"
-  fi
-  echo
-  echo "The harness runs these itself after you finish, independently of your report. Do NOT run any test, build, type-check or lint command yourself, not even a single test file: it lags the machine. Only read and edit code, then report."
+  echo "Do NOT run any test, build, type-check or lint command yourself, not even a single test file: it lags the machine. Only read and edit code, then report. The reviewer runs all verification after you finish."
 } > "$PROMPT_FILE"
 
 # Helper to compute changed files and diff stat against START_HEAD
@@ -731,7 +653,6 @@ fi
 if [ $AGY_RC -ne 0 ]; then
   RESULT_LINE="RESULT=AGY_FAILED (exit code $AGY_RC)"
   compute_changed_files
-  SKIPPED_VERIFY=true
   SCOPE_SUMMARY_LINES=("scope: not checked (agy-run failed)")
   write_and_print_summary "$AGY_RC"
   exit "$AGY_RC"
@@ -820,46 +741,12 @@ else
   fi
 fi
 
-# Step 8: Verify
-HAS_VERIFY_FAILURE=false
-idx=1
-for vcmd in "${EFFECTIVE_VERIFY_CMDS[@]}"; do
-  v_log="$SESSIONS_DIR/$NAME.verify-$idx.log"
-  log "verify [$idx/${#EFFECTIVE_VERIFY_CMDS[@]}]: $vcmd"
-  v_start=$SECONDS
-  (cd "$WORKTREE_DIR" && timeout "$VERIFY_TIMEOUT" bash -c "$vcmd") >"$v_log" 2>&1
-  v_rc=$?
-  v_secs=$((SECONDS - v_start))
-
-  if [ $v_rc -eq 0 ]; then
-    v_st="PASS"
-  elif [ $v_rc -eq 124 ]; then
-    v_st="TIMEOUT"
-    HAS_VERIFY_FAILURE=true
-  else
-    v_st="FAIL"
-    HAS_VERIFY_FAILURE=true
-  fi
-  VERIFY_STATUS+=("$v_st")
-  VERIFY_RUN_CMDS+=("$vcmd")
-  VERIFY_SECS+=("$v_secs")
-  VERIFY_LOGS+=("$v_log")
-  idx=$((idx + 1))
-done
-
-# Step 9: Summary & Step 10: Exit code
+# Step 8: Summary & Exit code
 if [ "$HAS_SCOPE_VIOLATION" = true ]; then
   RESULT_LINE="RESULT=SCOPE_VIOLATION"
   EXIT_CODE=8
-elif [ "$HAS_VERIFY_FAILURE" = true ]; then
-  RESULT_LINE="RESULT=VERIFY_FAILED"
-  EXIT_CODE=8
 else
-  if [ ${#EFFECTIVE_VERIFY_CMDS[@]} -eq 0 ]; then
-    RESULT_LINE="RESULT=OK (no verify commands ran)"
-  else
-    RESULT_LINE="RESULT=OK"
-  fi
+  RESULT_LINE="RESULT=OK"
   EXIT_CODE=0
 fi
 
