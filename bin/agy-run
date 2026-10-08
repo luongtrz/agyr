@@ -84,7 +84,7 @@ CUR="$("$AGY_ACCT" active)" || die "agyr failed" 1
 [ -n "$CUR" ] || die "no active account; log in, then run: agyr save <name>" 4
 
 ORIG_PROMPT="$(cat "$PROMPT_FILE")"
-RESUME_NOTE="Continue the task from where you stopped. The previous account ran out of quota mid-run, so partial uncommitted edits may already exist in the working directory: check git status/diff first, finish and verify them, do not revert them."
+RESUME_NOTE="Continue the task from where you stopped. The previous account ran out of quota mid-run, so partial uncommitted edits may already exist in the working directory: check git status/diff first, finish them (do not run tests, builds or linters: the harness verifies afterwards), do not revert them."
 
 PID=""
 OFF=0

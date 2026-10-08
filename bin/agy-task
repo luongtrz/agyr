@@ -645,7 +645,7 @@ fi
   echo
   sed "s|<ABS_PATH>|$WORKTREE_DIR|g" "$HR_FILE"
   echo
-  echo "Verification commands:"
+  echo "Verification commands (run by the harness after you finish; do NOT run them yourself):"
   if [ ${#EFFECTIVE_VERIFY_CMDS[@]} -gt 0 ]; then
     for vc in "${EFFECTIVE_VERIFY_CMDS[@]}"; do
       echo "- $vc"
@@ -654,7 +654,7 @@ fi
     echo "none"
   fi
   echo
-  echo "The harness runs these itself after you finish, independently of your report. While working run only the cheapest targeted checks you need (one test file, a type-check); do not repeat the whole suite, and keep any output you quote short."
+  echo "The harness runs these itself after you finish, independently of your report. Do NOT run any test, build, type-check or lint command yourself, not even a single test file: it lags the machine. Only read and edit code, then report."
 } > "$PROMPT_FILE"
 
 # Helper to compute changed files and diff stat against START_HEAD
