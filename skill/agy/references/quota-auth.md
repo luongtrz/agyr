@@ -53,7 +53,7 @@ The user does NOT want to type "continue" after re-logging in; detect it and res
 1. Run multi-step work as a sequential loop that breaks on failure, one log per session, so a dead account never lets later sessions start:
    ```bash
    for t in task-a task-b task-c; do
-     agy-task run --name $t --task .agy-sessions/$t.task.txt --scope '<paths>' --verify <preset>   # or: agy-run --prompt … --add-dir … --log … for read-only tasks
+     agy-task run --name $t --task .agy-sessions/$t.task.txt --scope '<paths>'   # or: agy-run --prompt … --add-dir … --log … for read-only tasks
      rc=$?; echo "$t: exit $rc"; [ "$rc" -eq 0 ] || break
    done
    ```

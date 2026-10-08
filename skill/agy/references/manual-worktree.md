@@ -21,4 +21,4 @@ Read this only if `agy-task` cannot be used. It is what `agy-task run` automates
    ```
 5. **Verify yourself** in `$WT` (status, diff, build/lint/tests); then clean up: `rm -f .agy-sessions/<task>*.txt`, keep the log, `git worktree remove` + delete the branch.
 
-`agy-task run` adds, beyond this: a scope check that also catches an agy commit (moved HEAD), independent verify commands with a timeout, baseline hashing, a compact summary and a usage log.
+`agy-task run` adds, beyond this: a scope check that also catches an agy commit (moved HEAD), baseline hashing, a compact summary and a usage log.

@@ -1,6 +1,6 @@
 ---
 name: agy
-description: Delegate a well-scoped coding or read-only investigation task to the local `agy` CLI (a separate agent) to save Claude tokens. Implement tasks go through `agy-task run` (worktree, setup, scope check, independent verify, compact summary); read-only exploration through `agy-run`. Use only for self-contained tasks with a mechanical way to verify the result; never for architecture decisions or ambiguous requirements. agy runs with --dangerously-skip-permissions, so implement tasks run only in a dedicated git worktree and every prompt carries the HARD RULES block (agy-task adds it).
+description: Delegate a well-scoped coding or read-only investigation task to the local `agy` CLI (a separate agent) to save Claude tokens. Implement tasks go through `agy-task run` (worktree, setup, scope check, compact summary; it runs no tests); read-only exploration through `agy-run`. Use only for self-contained tasks with a mechanical way to verify the result; never for architecture decisions or ambiguous requirements. agy runs with --dangerously-skip-permissions, so implement tasks run only in a dedicated git worktree and every prompt carries the HARD RULES block (agy-task adds it).
 ---
 
 # Delegate work to agy
@@ -11,11 +11,12 @@ description: Delegate a well-scoped coding or read-only investigation task to th
 
 1. **Model:** `gemini-3.8-flash-high`, explicit (the default of `agy-run`/`agy-task`). No other backend, not even for cross-checks, and never omit `--model` on a raw agy call. Only exception: sustained 503 → `gemini-3.7-flash-high` (`--model` flag), see `references/503-fallback.md`.
 2. **Never a bare `agy -p`.** agy >= 1.2.14 reads its login from the OS keyring and ignores the token file that `agyr` swaps; `agy-run` neutralizes that and rotates accounts on 429. The user starts their own interactive agy with plain `agyr`, not `agy`.
-3. **Never trust agy's exit code or report.** `agy-task` re-runs the verify commands itself and checks scope; you still read the diff. agy has reported green while tsc was broken, and a resumed run can echo an old 429.
+3. **Never trust agy's exit code or report.** `agy-task` only checks scope and runs no tests (verify step removed 2026-10-08); you read the diff and run the tests yourself. agy has reported green while tsc was broken, and a resumed run can echo an old 429.
 4. **Implement tasks only via `agy-task`** (it creates the worktree; never ask agy to `git worktree add`). Explore / bug-finding tasks target the main repo read-only via `agy-run --add-dir "$REPO"` (always pass `--add-dir`: without it agy silently writes into `~/.gemini/antigravity-cli/scratch/` and still reports success).
-5. **One small task per session**, exact files/lines in the task file (quota burns with context size; `references/logs-and-costs.md`). At most **3 runs in parallel** (6 only if the user says so; `references/parallel.md`).
+5. **One small task per session**, exact files/lines in the task file (quota burns with context size; `references/logs-and-costs.md`). At most **6 runs in parallel** (user rule 2026-10-08, raised from 3; `references/parallel.md`). Check `pgrep -fc '^bash .*agy-task run --name'` before launching more.
 6. **Task files and logs live in `<repo>/.agy-sessions/`** (gitignored), never `/tmp` or agy's scratch dir. Keep the logs, delete prompt files when done. Never read the `.jsonl` unless debugging: the summary is the report.
 7. **Report reset times to the user in UTC+7.** Never read the contents of the oauth token file (only `stat -c %Y`).
+8. **agy never runs tests** (user rule 2026-10-08: test runs lag the machine). No prompt may ask agy to run tests, builds, type-checks or linters, not even "one test file": the HARD RULES blocks and the `agy-task` prompt tail forbid it, so the task file must not contradict that (write acceptance criteria as observable code behavior, never "make `pnpm test` pass"). `agy-task` has no verify step either: Claude is the only one who runs tests, after agy has answered and the diff is read, one targeted command at a time (never several suites in parallel).
 
 `--dangerously-skip-permissions` (passed by `agy-run`) is the user's choice (2026-09-25); safety comes from the worktree isolation, the HARD RULES block and the scope check. If Claude Code's classifier ever blocks that flag, tell the user instead of working around it.
 
@@ -27,19 +28,19 @@ description: Delegate a well-scoped coding or read-only investigation task to th
 ## Workflow: implement task (`agy-task`)
 
 1. **Plan, don't over-specify** (user rule 2026-09-25): goal, root cause / suspected area, relevant files, the pattern to mirror, acceptance criteria. Don't pre-trace every line or paste full code — Claude traces the code afterwards during review.
-2. **Write ONLY the task part** to `<repo>/.agy-sessions/<task>.task.txt`: Repo/stack, Task, Plan, Acceptance criteria, an ENVIRONMENT NOTE ("the env is prepared; on an env failure STOP: no pnpm install, no symlinks, no copying from outside"). Do not write the working directory, scope, HARD RULES or verify list: the script adds them.
+2. **Write ONLY the task part** to `<repo>/.agy-sessions/<task>.task.txt`: Repo/stack, Task, Plan, Acceptance criteria, an ENVIRONMENT NOTE ("the env is prepared; on an env failure STOP: no pnpm install, no symlinks, no copying from outside"). Do not write the working directory, scope, HARD RULES or verify list: the script adds them. Never tell agy to run or "make pass" any test/build/lint (invariant 8).
 3. **Run in the background** (`run_in_background: true`) and wait for the completion notification — don't poll:
    ```bash
    agy-task run --name <task> --task <repo>/.agy-sessions/<task>.task.txt \
-     --scope '<pathspec>' [--scope …] --verify <preset> [--verify-cmd '<cmd>'] [--base <ref>] [--model <m>]
+     --scope '<pathspec>' [--scope …] [--base <ref>] [--model <m>]
    ```
-   Always give `--scope` (paths agy may change; a moved HEAD, i.e. an agy commit, is a violation too). Verify presets and setup come from `<repo>/.agy-sessions/agy-task.conf` (for example `web`, `backend`; when Go tests hit a shared dev DB, pass a targeted `--verify-cmd 'cd backend && go test ./internal/foo/...'`). stdout = a compact summary, also saved as `.agy-sessions/<task>.summary.txt`; progress goes to stderr. The user can watch with the live command in `references/logs-and-costs.md`.
+   Always give `--scope` (paths agy may change; a moved HEAD, i.e. an agy commit, is a violation too). Setup and file copies come from `<repo>/.agy-sessions/agy-task.conf` (any leftover `VERIFY`/`DEFAULT_VERIFY` there is ignored; `--verify*` flags no longer exist and fail with exit 2). `agy-task` runs NO tests: you run them afterwards (step 5); when Go tests hit a shared dev DB, use a targeted `cd backend && go test ./internal/foo/...`. stdout = a compact summary, also saved as `.agy-sessions/<task>.summary.txt`; progress goes to stderr. The user can watch with the live command in `references/logs-and-costs.md`.
 4. **Read the exit code and the summary:**
 
    | exit | Meaning | Do |
    |---|---|---|
-   | 0 | agy finished, scope ok, all verify passed | review (step 5). `RESULT=OK (no verify commands ran)` = nothing was verified |
-   | 8 | `RESULT=VERIFY_FAILED` or `SCOPE_VIOLATION` | read the failing tail / violation lines; send agy a corrected follow-up (`--reuse-worktree --no-setup`, new task file saying what to fix), don't hand-fix |
+   | 0 | agy finished and scope is ok (`RESULT=OK`); NOTHING was tested | review (step 5), then run the tests yourself |
+   | 8 | `RESULT=SCOPE_VIOLATION` | read the violation lines; send agy a corrected follow-up (`--reuse-worktree --no-setup`, new task file saying what to fix), don't hand-fix |
    | 7 | setup failed (worktree kept) | fix the environment, rerun with `--reuse-worktree` (setup reruns) |
    | 2 | bad arguments, config, or worktree/branch conflict | fix the command |
    | 4 | login error / no active account | **STOP**, tell the user; `references/quota-auth.md` |
@@ -47,7 +48,7 @@ description: Delegate a well-scoped coding or read-only investigation task to th
    | 1, 6 | other agy failure / too many account switches | read `references/quota-auth.md`; a 503 → `references/503-fallback.md`; status ERROR with a quota or "stream interrupted" echo → check the worktree before believing it |
 
    429s are already rotated by `agy-run`; never retry in a loop or fall back to doing the task yourself on 4/5.
-5. **Review** (tiered): mechanical change → summary + skim the diff; risky (auth, payment, migrations, concurrency) → read the full `git -C <repo>/.worktrees/agy-<task> diff` and re-run the key checks yourself. agy reads code accurately but misjudges cross-file consequences and over-rates severity. Mutation-checking agy's tests: never undo the mutation with `git checkout -- <file>` while agy's changes are uncommitted (it wipes them; happened 2026-09-29): copy the file to the scratchpad or commit first. Run `gofmt -l` on Go files agy touched.
+5. **Review** (tiered): mechanical change → summary + skim the diff + one targeted check; risky (auth, payment, migrations, concurrency) → read the full `git -C <repo>/.worktrees/agy-<task> diff` and run the key checks yourself. Nothing has been tested before this point (neither agy nor `agy-task` runs tests), so this is the only test run: targeted, run in the worktree, one command at a time. agy reads code accurately but misjudges cross-file consequences and over-rates severity. Mutation-checking agy's tests: never undo the mutation with `git checkout -- <file>` while agy's changes are uncommitted (it wipes them; happened 2026-09-29): copy the file to the scratchpad or commit first. Run `gofmt -l` on Go files agy touched.
 6. **Integrate and clean up:** stage only in-scope files explicitly (never `git add -A`), commit on the worktree branch `agy/<task>` (only when the user asks), cherry-pick/ff to the target branch, then `agy-task rm <task> -f` (without `-f` it refuses after a cherry-pick: the commits are not reachable from HEAD). It keeps the logs/summary and appends nothing else; `.agy-sessions/usage.tsv` accumulates tokens and seconds per task.
 
 If `agy-task` is unavailable or too rigid: `references/manual-worktree.md`.
