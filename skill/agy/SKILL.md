@@ -40,7 +40,7 @@ description: Delegate a well-scoped coding or read-only investigation task to th
    | exit | Meaning | Do |
    |---|---|---|
    | 0 | agy finished and scope is ok (`RESULT=OK`); NOTHING was tested | review (step 5), then run the tests yourself |
-   | 8 | `RESULT=SCOPE_VIOLATION` | read the violation lines; send agy a corrected follow-up (`--reuse-worktree --no-setup`, new task file saying what to fix), don't hand-fix |
+   | 8 | `RESULT=SCOPE_VIOLATION` | read the violation lines; send agy a corrected follow-up (see "Correction round" below), don't hand-fix |
    | 7 | setup failed (worktree kept) | fix the environment, rerun with `--reuse-worktree` (setup reruns) |
    | 2 | bad arguments, config, or worktree/branch conflict | fix the command |
    | 4 | login error / no active account | **STOP**, tell the user; `references/quota-auth.md` |
@@ -48,6 +48,8 @@ description: Delegate a well-scoped coding or read-only investigation task to th
    | 1, 6 | other agy failure / too many account switches | read `references/quota-auth.md`; a 503 → `references/503-fallback.md`; status ERROR with a quota or "stream interrupted" echo → check the worktree before believing it |
 
    429s are already rotated by `agy-run`; never retry in a loop or fall back to doing the task yourself on 4/5.
+
+   **Correction round** (review or your tests found a problem in what agy wrote): continue the SAME agy conversation, since agy wrote that code and its tests and remembers why. Write a short new task file (what is wrong, file/line, what it should do; the code already in the worktree is agy's earlier work, fix it, don't redo it) and run `agy-task run --name <task> --resume --task <new-task-file> --scope '<pathspec>'`. `--resume` takes the conversation id from the last `init` event of `.agy-sessions/<task>.jsonl` and implies `--reuse-worktree --no-setup`; it exits 2 if there is no log or id. Use `--reuse-worktree --no-setup` WITHOUT `--resume` (fresh conversation) only when the old conversation went the wrong way or has grown huge (quota burns with context size). Same rules as any run: agy runs no tests, you review the diff and test again afterwards.
 5. **Review** (tiered): mechanical change → summary + skim the diff + one targeted check; risky (auth, payment, migrations, concurrency) → read the full `git -C <repo>/.worktrees/agy-<task> diff` and run the key checks yourself. Nothing has been tested before this point (neither agy nor `agy-task` runs tests), so this is the only test run: targeted, run in the worktree, one command at a time. agy reads code accurately but misjudges cross-file consequences and over-rates severity. Mutation-checking agy's tests: never undo the mutation with `git checkout -- <file>` while agy's changes are uncommitted (it wipes them; happened 2026-09-29): copy the file to the scratchpad or commit first. Run `gofmt -l` on Go files agy touched.
 6. **Integrate and clean up:** stage only in-scope files explicitly (never `git add -A`), commit on the worktree branch `agy/<task>` (only when the user asks), cherry-pick/ff to the target branch, then `agy-task rm <task> -f` (without `-f` it refuses after a cherry-pick: the commits are not reachable from HEAD). It keeps the logs/summary and appends nothing else; `.agy-sessions/usage.tsv` accumulates tokens and seconds per task.
 
