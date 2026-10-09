@@ -40,7 +40,7 @@ Trên Windows `agy` lưu đăng nhập trong **một mục Windows Credential Ma
 - `agyr use <tên>`: backup login đang dùng vào `accounts/.last-token.bak`, rồi ghi slot đè lên mục đó. Sau đó `agy` trần và `agyr` hoạt động giống hệt nhau (không cần mẹo D-Bus như trên Linux).
 - `agyr list`: **đo lần lượt**, không song song (mỗi account một lần: ghi login vào, chạy `agy -p /quota`, lấy lại token mà agy đã refresh). Xong thì đặt lại login đang dùng, kể cả khi bị Ctrl+C hoặc lỗi giữa chừng. Trong lúc đo đừng mở agy hay đăng nhập tay.
 - `agyr forget`: xóa login hiện tại **chỉ ở máy này** (không thu hồi gì phía Google), để `agy` hỏi đăng nhập account khác. Thay cho `rm ~/.gemini/antigravity-cli/antigravity-oauth-token` của Linux. Từ chối nếu login chưa nằm trong slot nào (trừ khi `--force`).
-- Mọi thao tác ghi vào Credential Manager đều dùng khóa `accounts/.swap.lock`, để `agy-run` và `agyr list` chạy cùng lúc không giẫm lên nhau.
+- Mọi thao tác ghi vào Credential Manager đều dùng khóa `accounts/.swap.lock`, để `agy-run` và `agyr list` chạy cùng lúc không giẫm lên nhau. Từ 09/10/2026 khóa này cũng bảo vệ backend file trên Linux (xem mục "Chạy song song" bên dưới); khóa là một file tạo độc quyền (`set -o noclobber`), **không dùng `mkdir`**, vì `mkdir` của uutils coreutils (mặc định trên Ubuntu mới) không nguyên tử.
 
 Setup một lần trên Windows:
 
@@ -173,6 +173,18 @@ Khi cần tiếp tục một cuộc hội thoại đã có sẵn ngay từ lư�
 
 Exit code: `0` xong, `1` agy lỗi khác, `2` sai tham số, `4` lỗi đăng nhập hoặc chưa có account active, `5` cả pool hết quota, `6` đổi account quá `AGY_RUN_MAX_SWITCH` (mặc định 10) lần.
 
+### Chạy song song và an toàn của slot
+
+Nhiều `agy-run` có thể chạy cùng lúc (cả chục tiến trình), và tất cả dùng chung **một** file token đang dùng. Ngày 09/10/2026 slot `acct4` bị ghi đè bằng login của `acct3` (hai slot cùng một login, `acct4` mất login của mình): `acct4` đang ở 1% tuần nên nhiều `agy-run` cùng dính 429 và cùng gọi `agyr use` trong tích tắc. Nguyên nhân và cách khắc phục:
+
+- **`use` đọc file token hai lần:** lần đầu để biết file đó thuộc slot nào, lần sau để ghi nó vào slot. Nếu một `agyr use` khác chen vào giữa, token của account này bị ghi vào slot của account kia. Giờ mọi quyết định và việc ghi lại đều dựa trên **một bản chụp duy nhất** của token đang dùng, nên token chỉ có thể được ghi vào slot cùng account với nó.
+- **Khóa:** `accounts/.swap.lock` giờ bảo vệ mọi thao tác đổi login, ghi slot và ghi `state.json` (trước đây chỉ có trên Windows). `state.json` trước đó cũng bị mất cập nhật khi nhiều `agyr` ghi cùng lúc (12 lệnh `cooldown` song song chỉ ghi được 10–11).
+- **Khóa không dùng `mkdir`:** trên máy này `mkdir` là bản uutils coreutils (mặc định trên Ubuntu mới) và **không nguyên tử**: 12 tiến trình cùng `mkdir` một đường dẫn thì có 2–7 tiến trình cùng thành công (64/300 vòng thử). Khóa là một file tạo độc quyền (`set -o noclobber`), thử 300 vòng không sai lần nào.
+- **Ghi file nguyên tử:** token và slot được ghi qua file tạm rồi đổi tên, để agy đang khởi động hoặc phép đo không đọc phải file ghi dở.
+- **Đo quota chỉ ghi lại slot khi vẫn là cùng account:** nếu file token trong thư mục tạm của một phép đo bỗng chứa login khác thì slot được giữ nguyên.
+
+Hạn chế còn lại (chưa giải quyết): các `agy-run` chạy song song vẫn dùng chung một file token, nên giữa lúc `agyr use X` và lúc agy đọc token, một `agy-run` khác có thể đổi sang account Y; khi đó `agy-run` đầu tưởng đang chạy trên X. Hậu quả chỉ là cooldown có thể đặt nhầm account (`agyr list` sửa lại ở lần đo kế tiếp), không còn làm hỏng slot.
+
 ## agy-task (dành cho Claude)
 
 `agy-task` là wrapper tất định (deterministic) để giao **trọn gói một task IMPLEMENT** cho `agy` từ đầu đến cuối mà **không dùng bất kỳ LLM nào trong wrapper**: tự tạo worktree tách biệt, chạy setup, gọi `agy-run`, kiểm tra scope và xuất file summary. Script không chạy bất kỳ bài test hay lệnh kiểm tra nào; reviewer sẽ kiểm tra và verify sau khi chạy xong. Đối với việc đọc code tìm hiểu (read-only exploration), Claude vẫn dùng `agy-run` trực tiếp trên repo chính.
@@ -288,7 +300,7 @@ Khối HARD RULES cho task implement nằm ở `templates/hard-rules.txt` (`agy-
 bash test/run.sh
 ```
 
-750 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
+785 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
 
 ## Giới hạn đã biết
 

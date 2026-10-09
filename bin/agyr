@@ -63,16 +63,20 @@ init_state() {
 # atomic state write: $1 = jq expression, remaining args are passed to jq
 state_update() {
   local expr="$1"; shift
-  local tmp
+  local tmp own=0
+  # read-modify-write of state.json: take the lock (unless this process already holds it), or two agyr running at the same
+  # time (parallel agy-run switching accounts) overwrite each other's change
+  if [ "$LOCK_HELD" = 0 ]; then lock_acquire; own=1; fi
   tmp="$(mktemp "$ACCTS/.state.XXXXXX")"
   if jq "$@" "$expr" "$STATE" >"$tmp"; then mv "$tmp" "$STATE"; else rm -f "$tmp"; die "failed to write state"; fi
+  if [ "$own" = 1 ]; then lock_release; fi
 }
 
 # --- the login in use ("live") ---------------------------------------------------------------------------------------
 # LIVE = path of a readable copy of the login agy is using now, empty if there is none. Set by live_load, which must run
 # in the main shell (not in $(...)), and again after anything that changes the login. With the file backend LIVE is the
 # token file itself; with wincred it is an export of the Credential Manager entry into a private temp dir.
-LIVE="" LIVE_TMP="" LOCK_HELD=0 RESTORE_KIND="" RESTORE_FILE=""
+LIVE="" LIVE_TMP="" LIVE_SNAP="" LOCK_HELD=0 RESTORE_KIND="" RESTORE_FILE=""
 LOCKDIR="$ACCTS/.swap.lock"
 
 live_load() {
@@ -97,7 +101,7 @@ live_load() {
 # install file $1 as the login in use
 live_put() {
   case "$BACKEND" in
-    file) cp "$1" "$TOKEN"; chmod 600 "$TOKEN"; LIVE="$TOKEN" ;;
+    file) atomic_cp "$1" "$TOKEN" || die "cannot write the login ($TOKEN)"; LIVE="$TOKEN" ;;
     wincred)
       "$CRED_HELPER" write "$1" || die "cannot write the login to Credential Manager"
       # LIVE now mirrors what was just written
@@ -117,24 +121,40 @@ live_clear() {
 }
 
 # wincred only: whoever swaps the one shared login must hold this lock (mkdir is atomic); a lock whose owner is gone is stolen
+# One agyr at a time may change the login in use, the slots or state.json. It used to cover only the Windows backend; on Linux
+# several parallel agy-run switching accounts at once corrupted slots (a slot ended up with another account's login).
+# The lock is a file created exclusively (bash noclobber = open with O_EXCL) holding the owner's pid. NOT mkdir: on this
+# machine mkdir is uutils coreutils, whose mkdir let 2 to 7 of 12 parallel callers all "create" the same directory.
 lock_acquire() {
-  [ "$BACKEND" = wincred ] || return 0
   [ "$LOCK_HELD" = 0 ] || return 0
   mkdir -p "$ACCTS"
   local waited=0 owner
-  until mkdir "$LOCKDIR" 2>/dev/null; do
+  # a lock left by an older agyr was a directory holding a pid file
+  if [ -d "$LOCKDIR" ]; then
     owner="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
-    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then rm -rf "$LOCKDIR"; continue; fi
+    if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then rm -rf "$LOCKDIR"; fi
+  fi
+  until ( set -o noclobber; echo "$$" >"$LOCKDIR" ) 2>/dev/null; do
+    owner="$(cat "$LOCKDIR" 2>/dev/null || true)"
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+      # looks abandoned (its owner is gone). But that owner may simply have released it and exited, and somebody else taken
+      # the lock since: remove it only if it still names that same dead owner (else two agyr would both hold the lock)
+      if [ "$(cat "$LOCKDIR" 2>/dev/null || true)" = "$owner" ]; then rm -f "$LOCKDIR"; fi
+      continue
+    fi
     waited=$((waited + 1))
-    [ "$waited" -le "${AGYR_LOCK_WAIT:-120}" ] || die "another agyr is switching accounts (lock: $LOCKDIR); try again in a moment"
-    sleep 1
+    [ "$waited" -le $((${AGYR_LOCK_WAIT:-120} * 20)) ] || die "another agyr is switching accounts (lock: $LOCKDIR); try again in a moment"
+    sleep 0.05
   done
-  echo $$ >"$LOCKDIR/pid"
   LOCK_HELD=1
 }
 
 lock_release() {
-  if [ "$LOCK_HELD" = 1 ]; then rm -rf "$LOCKDIR"; LOCK_HELD=0; fi
+  # only remove the lock if it is still ours
+  if [ "$LOCK_HELD" = 1 ]; then
+    if [ "$(cat "$LOCKDIR" 2>/dev/null || true)" = "$$" ]; then rm -f "$LOCKDIR"; fi
+    LOCK_HELD=0
+  fi
   return 0
 }
 
@@ -147,6 +167,8 @@ on_exit() {
     none) "$CRED_HELPER" delete || true ;;
   esac
   [ -z "$LIVE_TMP" ] || rm -rf "$LIVE_TMP"
+  [ -z "$LIVE_SNAP" ] || rm -f "$LIVE_SNAP"
+  rm -f "$ACCTS"/.snap.$$.* 2>/dev/null || true
   lock_release
   exit "$rc"
 }
@@ -162,14 +184,38 @@ ident_of() {
 }
 
 # The slot the real token file belongs to (by identity); empty if it matches no slot (e.g. just logged in to an unsaved account).
-real_owner() {
-  [ -n "$LIVE" ] || return 0
+# The slot whose login is the one in FILE (matched by identity); empty when it matches no slot.
+owner_of() {
+  [ -s "$1" ] || return 0
   local id n
-  id="$(ident_of "$LIVE")"
+  id="$(ident_of "$1")"
   while read -r n; do
     if [ "$(ident_of "$ACCTS/$n.token")" = "$id" ]; then echo "$n"; return 0; fi
   done < <(slots)
   return 0
+}
+real_owner() {
+  [ -n "$LIVE" ] || return 0
+  owner_of "$LIVE"
+}
+
+# Write DEST by renaming a private temp file from the same directory: nobody (agy starting, a measurement copying a slot)
+# ever reads a half-written login.
+atomic_cp() {
+  local tmp
+  tmp="$(mktemp "$2.XXXXXX")" || return 1
+  if cp "$1" "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$2"; then return 0; fi
+  rm -f "$tmp"; return 1
+}
+
+# A private copy of the login in use; prints its path (nothing when nobody is logged in). Decisions and write-backs are made
+# from this one copy, so they always agree even if the live file changes in the meantime (it is shared with agy and with
+# every other agyr / agy-run). Removed by the caller, or at exit.
+live_snapshot() {
+  [ -n "$LIVE" ] || return 0
+  local f
+  f="$(mktemp "$ACCTS/.snap.$$.XXXXXX")" || return 1
+  if cp "$LIVE" "$f"; then echo "$f"; else rm -f "$f"; return 1; fi
 }
 
 # The account actually in use = the slot matching the real token file. Only when no slot matches do we fall back to the name
@@ -217,9 +263,11 @@ cooldown_until() { jq -r --arg n "$1" '.cooldown[$n] // 0' "$STATE"; }
 cmd_save() {
   [ $# -eq 1 ] || die "usage: agyr save <name>"
   valid_name "$1"; need_jq
-  [ -n "$LIVE" ] || die "no login yet (${TOKEN_WHERE}). Log in with 'agy' first"
   init_state
-  cp "$LIVE" "$ACCTS/$1.token"; chmod 600 "$ACCTS/$1.token"
+  lock_acquire
+  live_load # again: the login may have changed while waiting for the lock
+  [ -n "$LIVE" ] || die "no login yet (${TOKEN_WHERE}). Log in with 'agyr' first"
+  atomic_cp "$LIVE" "$ACCTS/$1.token" || die "cannot write slot '$1'"
   state_update '.active=$n | del(.cooldown[$n])' --arg n "$1"
   echo "saved account '$1' (now active)"
 }
@@ -230,15 +278,19 @@ cmd_use() {
   [ -f "$ACCTS/$1.token" ] || die "no slot '$1' (see: agyr list)"
   lock_acquire
   live_load # again: the login may have changed while waiting for the lock
-  local cur; cur="$(real_owner)"
-  if [ -n "$LIVE" ]; then
+  local snap cur=""
+  snap="$(live_snapshot)"
+  if [ -n "$snap" ]; then
+    # Which slot the login in use belongs to is decided from the SAME copy that is written back: it can only ever go to the
+    # slot with the same account (a write-back that re-read the live file once lost to another switch and put one account's
+    # login into another's slot)
+    cur="$(owner_of "$snap")"
     # backup first, before anything is overwritten
-    cp "$LIVE" "$ACCTS/.last-token.bak"; chmod 600 "$ACCTS/.last-token.bak"
+    atomic_cp "$snap" "$ACCTS/.last-token.bak"
     # keep the access token agy refreshed, but only write it back to the slot it belongs to; if it matches no slot,
     # no slot is overwritten (the unsaved token is still in .last-token.bak)
-    if [ -n "$cur" ] && [ "$cur" != "$1" ]; then
-      cp "$LIVE" "$ACCTS/$cur.token"; chmod 600 "$ACCTS/$cur.token"
-    fi
+    if [ -n "$cur" ] && [ "$cur" != "$1" ]; then atomic_cp "$snap" "$ACCTS/$cur.token"; fi
+    rm -f "$snap"
   fi
   live_put "$ACCTS/$1.token"
   lock_release
@@ -267,6 +319,7 @@ cmd_rename() {
   [ $# -eq 2 ] || die "usage: agyr rename <old> <new>"
   local old="$1" new="$2"
   valid_name "$old"; valid_name "$new"; need_jq; init_state
+  lock_acquire # a concurrent use must not write a slot under the old name while it is being renamed
   [ "$old" != "$new" ] || die "old and new names are the same: '$old'"
   [ -f "$ACCTS/$old.token" ] || die "no slot '$old' (see: agyr list)"
   [ ! -e "$ACCTS/$new.token" ] || die "slot '$new' already exists; nothing was changed (remove it first if you really want to replace it)"
@@ -402,14 +455,17 @@ measure_one() {
   trap 'rm -rf "$home"' EXIT INT TERM
   d="$home/.gemini/antigravity-cli"
   mkdir -p "$d"
-  if [ "$name" = "$act" ] && [ -n "$LIVE" ]; then src="$LIVE"; else src="$ACCTS/$name.token"; fi
+  # the account in use is measured from the private copy taken once in measure_all_parallel, never from the live file
+  if [ "$name" = "$act" ] && [ -n "$LIVE_SNAP" ]; then src="$LIVE_SNAP"; else src="$ACCTS/$name.token"; fi
   cp "$src" "$d/antigravity-oauth-token"; chmod 600 "$d/antigravity-oauth-token"
   # keep the same installation_id so Google sees the same agy installation
   if [ -f "$AGY_HOME/installation_id" ]; then cp "$AGY_HOME/installation_id" "$d/installation_id"; fi
   "$PROBE_FN" "$home" "$d" "$name" >"$out" 2>/dev/null || rc=$?
-  # agy may have refreshed the token itself: write it back to the slot (for the active account the real token file is the source of truth)
-  if [ "$name" != "$act" ] && [ -s "$d/antigravity-oauth-token" ] && ! cmp -s "$d/antigravity-oauth-token" "$ACCTS/$name.token"; then
-    cp "$d/antigravity-oauth-token" "$ACCTS/$name.token"; chmod 600 "$ACCTS/$name.token"
+  # agy may have refreshed the token itself: write it back to the slot (for the active account the real token file is the source of truth),
+  # but only if it is still the same account: whatever else is in that file must never replace a slot
+  if [ "$name" != "$act" ] && [ -s "$d/antigravity-oauth-token" ] && ! cmp -s "$d/antigravity-oauth-token" "$ACCTS/$name.token" \
+    && [ "$(ident_of "$d/antigravity-oauth-token")" = "$(ident_of "$ACCTS/$name.token")" ]; then
+    atomic_cp "$d/antigravity-oauth-token" "$ACCTS/$name.token"
   fi
   return "$rc"
 }
@@ -466,7 +522,12 @@ measure_all_parallel() {
   local -a names=("$@") pids=() failed=()
   local d act i n
   d="$(mktemp -d)"
-  act="$(real_owner)"
+  # one consistent look at the login in use: which account it is, and a private copy to measure it with, so that a switch made
+  # meanwhile by another agyr / agy-run cannot change what is measured under this account's name
+  lock_acquire; live_load
+  LIVE_SNAP="$(live_snapshot)"; act=""
+  if [ -n "$LIVE_SNAP" ]; then act="$(owner_of "$LIVE_SNAP")"; fi
+  lock_release
   for n in "${names[@]}"; do
     measure_one "$n" "$d/$n.out" "$act" &
     pids+=($!)
@@ -476,6 +537,7 @@ measure_all_parallel() {
     if wait "${pids[$i]}" && "$INGEST_FN" "$n" "$(cat "$d/$n.out")"; then :; else failed+=("$n"); fi
   done
   rm -rf "$d"
+  if [ -n "$LIVE_SNAP" ]; then rm -f "$LIVE_SNAP"; LIVE_SNAP=""; fi
   MEASURE_FAILED="${failed[*]:-}"
 }
 
@@ -492,9 +554,9 @@ measure_all_swap() {
   act="$(real_owner)"
   if [ -n "$LIVE" ]; then
     cp "$LIVE" "$d/orig"
-    cp "$LIVE" "$ACCTS/.last-token.bak"; chmod 600 "$ACCTS/.last-token.bak"
+    atomic_cp "$LIVE" "$ACCTS/.last-token.bak"
     # the freshest copy of the login in use goes back into its slot first (as 'use' does)
-    if [ -n "$act" ]; then cp "$LIVE" "$ACCTS/$act.token"; chmod 600 "$ACCTS/$act.token"; fi
+    if [ -n "$act" ]; then atomic_cp "$LIVE" "$ACCTS/$act.token"; fi
     RESTORE_KIND=file; RESTORE_FILE="$d/orig"
   else
     RESTORE_KIND=none
@@ -505,7 +567,7 @@ measure_all_swap() {
     # agy may have refreshed the login itself: take it back into the slot, but only if it is still the same account
     live_load
     if [ -n "$LIVE" ] && [ "$(ident_of "$LIVE")" = "$(ident_of "$ACCTS/$n.token")" ] && ! cmp -s "$LIVE" "$ACCTS/$n.token"; then
-      cp "$LIVE" "$ACCTS/$n.token"; chmod 600 "$ACCTS/$n.token"
+      atomic_cp "$LIVE" "$ACCTS/$n.token"
     fi
   done
   # put the login that was in use back: its slot (freshest), else the unsaved original, else no login at all
@@ -766,12 +828,15 @@ cmd_forget() {
   lock_acquire
   live_load # again: the login may have changed while waiting for the lock
   if [ -z "$LIVE" ]; then echo "no login in use; nothing to forget"; lock_release; return 0; fi
-  local cur; cur="$(real_owner)"
+  local snap cur
+  snap="$(live_snapshot)"; cur="$(owner_of "$snap")"
   if [ -z "$cur" ] && [ "$force" = 0 ]; then
+    rm -f "$snap"
     die "the login in use matches no slot, so forgetting it would lose it: run 'agyr save <name>' first (or 'agyr forget --force'; it is kept in $ACCTS/.last-token.bak either way)"
   fi
-  cp "$LIVE" "$ACCTS/.last-token.bak"; chmod 600 "$ACCTS/.last-token.bak"
-  if [ -n "$cur" ]; then cp "$LIVE" "$ACCTS/$cur.token"; chmod 600 "$ACCTS/$cur.token"; fi # keep the freshest copy
+  atomic_cp "$snap" "$ACCTS/.last-token.bak"
+  if [ -n "$cur" ]; then atomic_cp "$snap" "$ACCTS/$cur.token"; fi # keep the freshest copy
+  rm -f "$snap"
   live_clear
   state_update '.active=""' # nobody is logged in now: 'agyr active' prints nothing and agy-run stops with "no active account"
   lock_release

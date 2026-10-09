@@ -29,6 +29,7 @@ echo "$tok|$*" >>"${FAKE_ARGS_LOG:?}"
 #   FAKE_WEEK_ORDER=1: the weekly reset time depends on the account digit (acc3 earliest), to test the row order
 #   FAKE_HI_SHIFT=1:  after a Hi call the 5h reset time is 10 minutes later (the window "started" by the call)
 #   FAKE_HI_ERROR_TOKENS: tokens whose non-/quota calls end in a quota error (status ERROR) at once
+#   FAKE_CROSSTALK_TOKENS: tokens whose measurement leaves ANOTHER account's login in agy's HOME token file
 #   FAKE_REFRESH=1:   rewrite the token file (simulates agy refreshing the access token itself)
 prev=""
 for a in "$@"; do
@@ -54,6 +55,11 @@ for a in "$@"; do
       dest="${FAKE_CRED_FILE:-$AGY_HOME/antigravity-oauth-token}"
       if [[ "$tok" == "{"* ]]; then "${JQ[@]}" -c '.token.access_token += "-refreshed"' <<<"$tok" >"$dest"; else echo "$tok-refreshed" >"$dest"; fi
     fi
+    # FAKE_CROSSTALK_TOKENS: during this measurement the login file in agy's HOME ends up holding ANOTHER account's login
+    # (whatever the cause); agyr must never write that into the slot
+    for z in ${FAKE_CROSSTALK_TOKENS:-}; do
+      if [ "$z" = "$tok" ]; then echo '{"token":{"access_token":"at-intruder","refresh_token":"rt-intruder"}}' >"${FAKE_CRED_FILE:-$AGY_HOME/antigravity-oauth-token}"; fi
+    done
     now="${AGY_NOW:-$(date +%s)}"
     shift5=0; if [ "${FAKE_HI_SHIFT:-0}" = 1 ] && [ "${used:-0}" -gt 0 ]; then shift5=600; fi # FAKE_HI_SHIFT=1: a Hi call moves the 5h reset time by +10 min
     r5="$(date -u -d "@$((now + 3600 + shift5))" +%Y-%m-%dT%H:%M:%SZ)"
