@@ -1,8 +1,8 @@
-# Parallel agy runs (max 6 at a time)
+# Parallel agy runs (max 20 at a time)
 
 Read this when the user wants several independent tasks done at once.
 
-**Limit:** up to **6** concurrent agy runs. Count live runs before launching more: `pgrep -fc '^bash .*agy-task run --name'`. agy and `agy-task` run no tests, so parallel runs stay light; the load comes from YOUR verification afterwards, so run those one at a time (a worktree at a time), never several suites at once.
+**Limit:** up to **20** concurrent agy runs (user rule 2026-10-12, raised from 12 and earlier from 6). The reason is that agy and `agy-task` run no tests, so parallel agy runs do not load the machine; the load comes from YOUR verification afterwards, so run those one at a time (a worktree at a time), never several suites at once. Count live runs before launching more, both implement (`agy-task`) and read-only (`agy-run`): `pgrep -fc '^bash .*agy-(task run --name|run --prompt)'`. Other sessions' runs on the host count too.
 
 **Never resume the same Claude session in a second terminal while the first is alive.** (2026-09-25: a `claude --resume` terminal committed/pushed a fix, removed a worktree and relaunched an audit while the other terminal drove the same task; the host also lagged with 3 agy runs + tsc/vitest/vite.) Before launching check `pgrep -af "agy -p"`; if `ps` shows another `claude --resume <this-session-id>`, stop and tell the user first.
 
