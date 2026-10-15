@@ -9,7 +9,7 @@ description: Delegate a well-scoped coding or read-only investigation task to th
 
 ## Invariants
 
-1. **Model:** `gemini-3.8-flash-high`, explicit (the default of `agy-run`/`agy-task`). No other backend, not even for cross-checks, and never omit `--model` on a raw agy call. Only exception: sustained 503 → `gemini-3.7-flash-high` (`--model` flag), see `references/503-fallback.md`.
+1. **Model:** `gemini-3.8-flash-high`, explicit (the default of `agy-run`/`agy-task`). No other backend, not even for cross-checks, and never omit `--model` on a raw agy call. Only exception: sustained 503 → `gemini-3.8-flash-medium`, then `gemini-3.8-flash-low` only if medium also fails (`--model` flag), see `references/503-fallback.md`.
 2. **Never a bare `agy -p`.** agy >= 1.2.14 reads its login from the OS keyring and ignores the token file that `agyr` swaps; `agy-run` neutralizes that and rotates accounts on 429. The user starts their own interactive agy with plain `agyr`, not `agy`.
 3. **Never trust agy's exit code or report.** `agy-task` only checks scope and runs no tests (verify step removed 2026-10-08); you read the diff and run the tests yourself. agy has reported green while tsc was broken, and a resumed run can echo an old 429.
 4. **Implement tasks only via `agy-task`** (it creates the worktree; never ask agy to `git worktree add`). Explore / bug-finding tasks target the main repo read-only via `agy-run --add-dir "$REPO"` (always pass `--add-dir`: without it agy silently writes into `~/.gemini/antigravity-cli/scratch/` and still reports success).
@@ -70,7 +70,7 @@ git -C "$REPO" status --short                                        # must stil
 ## References (read on demand)
 
 - `references/quota-auth.md` — exit 4/5/6, 429, login, account pool (`agyr`), keyring trap, stale-429, auto-continue after a re-login
-- `references/503-fallback.md` — `gemini-3.7-flash-high` fallback rules
+- `references/503-fallback.md` — `gemini-3.8-flash-medium`, then `gemini-3.8-flash-low`, fallback rules
 - `references/parallel.md` — running several tasks at once, integration, queueing many tasks
 - `references/logs-and-costs.md` — stream-json events, jq commands, the `--add-dir` trap, why quota burns, smoke test
 - `references/manual-worktree.md` — the manual implement workflow `agy-task` automates
