@@ -1148,8 +1148,10 @@ export AGYR_BACKEND=wincred
 eq "wincred: tests only ever use the fake credential helper" "$HERE/fake-cred" "$AGYR_CRED_HELPER"
 # regression (seen on a real Windows machine: every account 'measure failed'): Git Bash rewrote the argument /quota into
 # C:/Program Files/Git/quota. The fake agy is a bash script, so it cannot show this; check that the protection is there.
-has "wincred: quota_fetch shields /quota from msys path conversion" 'MSYS2_ARG_CONV_EXCL="/quota"' "$(grep -n 'MSYS2_ARG_CONV_EXCL' "$ACCT")"
-has "wincred: agy-run shields the prompt from msys path conversion" "MSYS2_ARG_CONV_EXCL='*'" "$(grep -n 'MSYS2_ARG_CONV_EXCL' "$RUN")"
+has "wincred: agyr hands the /quota exclusion to quota_fetch" 'PLATFORM_ENV_NOCONV_QUOTA' "$(grep -n 'PLATFORM_ENV_NOCONV_QUOTA' "$ACCT")"
+has "wincred: windows platform shields /quota from msys path conversion" 'MSYS2_ARG_CONV_EXCL=/quota' "$(grep -n 'MSYS2_ARG_CONV_EXCL' "$HERE/../windows/platform.sh")"
+has "wincred: agy-run hands the prompt over unchanged (PLATFORM_ENV_NOCONV_ALL)" 'PLATFORM_ENV_NOCONV_ALL' "$(grep -n 'PLATFORM_ENV_NOCONV_ALL' "$RUN")"
+has "wincred: windows platform shields the prompt from msys path conversion" "MSYS2_ARG_CONV_EXCL='*'" "$(grep -n 'MSYS2_ARG_CONV_EXCL' "$HERE/../windows/platform.sh")"
 
 # like setup, but the login lives in the fake credential entry $T/cred (there is no token file at all)
 setupw() {

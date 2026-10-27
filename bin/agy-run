@@ -21,16 +21,12 @@ AGY_ACCT="${AGY_ACCT:-$(dirname "$(readlink -f "$0")")/agyr}"
 POLL="${AGY_RUN_POLL:-1}"
 MAX_SWITCH="${AGY_RUN_MAX_SWITCH:-10}"
 MODEL="gemini-3.8-flash-high"
-# agy >= 1.2.14 reads its login from the OS keyring and ignores the token file that agyr swaps, unless the keyring is
-# unreachable (see NOKEYRING_BUS in agyr). Every agy started here gets an unreachable session bus.
-NOKEYRING_BUS="unix:path=/nonexistent"
-# Windows: agy's login is one Credential Manager entry that agyr overwrites on 'use', so agy needs no keyring trick, there
-# is no setsid, and the process tree is stopped with taskkill. Ask agyr which backend is in use (file | wincred).
+# The platform layer (linux/ or windows/) holds the keyring bypass, the process-group helpers and the Git Bash quirks.
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLATFORM=windows ;; *) PLATFORM=linux ;; esac
+. "$(dirname "$(readlink -f "$0")")/../$PLATFORM/platform.sh"
+platform_init
+# Ask agyr which login backend is in use (file | wincred)
 BACKEND="$("$AGY_ACCT" backend 2>/dev/null)" || BACKEND=file
-# a native Windows jq.exe prints CRLF; -b / --binary prevents that
-case "$(uname -s)" in
-  MINGW*|MSYS*|CYGWIN*) if command jq -b -n . >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi ;;
-esac
 
 # A real 429 shows up as plain-text lines at the start of a line ("error: Individual quota reached ..." and
 # "AGY_ERROR: {... RESOURCE_EXHAUSTED (code 429) ...}"). When a conversation is resumed, agy can ALSO echo the old quota
@@ -99,17 +95,15 @@ OFF=0
 run_attempt() {
   OFF="$(stat -c %s "$LOG_FILE" 2>/dev/null || echo 0)"
   if [ "$BACKEND" = wincred ]; then
-    # Git Bash rewrites arguments that look like POSIX paths (a prompt such as "/quota ..." or "/tmp/x ...") before they reach
-    # the native agy.exe: switch that off and hand over the one real path argument in Windows form
-    local add_dir="$ADD_DIR"
-    if command -v cygpath >/dev/null; then add_dir="$(cygpath -m "$ADD_DIR")"; fi
-    MSYS2_ARG_CONV_EXCL='*' "$AGY_BIN" "$@" --add-dir "$add_dir" --model "$MODEL" \
+    # the platform layer switches off Git Bash's rewriting of POSIX-looking arguments and gives the path in Windows form
+    local add_dir
+    add_dir="$(platform_arg_path "$ADD_DIR")"
+    env "${PLATFORM_ENV_NOCONV_ALL[@]}" "$AGY_BIN" "$@" --add-dir "$add_dir" --model "$MODEL" \
       --dangerously-skip-permissions --output-format stream-json >>"$LOG_FILE" 2>&1 </dev/null &
   else
-    # setsid gives agy its own process group (killed as one in stop_agy); not every system has it (macOS, Git Bash)
-    local -a detach=()
-    if command -v setsid >/dev/null; then detach=(setsid); fi
-    "${detach[@]}" env DBUS_SESSION_BUS_ADDRESS="$NOKEYRING_BUS" "$AGY_BIN" "$@" --add-dir "$ADD_DIR" --model "$MODEL" \
+    # PLATFORM_DETACH: setsid gives agy its own process group (killed as one in stop_agy) where it exists;
+    # PLATFORM_ENV_KEYRING: the unreachable session bus on Linux
+    "${PLATFORM_DETACH[@]}" env "${PLATFORM_ENV_KEYRING[@]}" "$AGY_BIN" "$@" --add-dir "$ADD_DIR" --model "$MODEL" \
       --dangerously-skip-permissions --output-format stream-json >>"$LOG_FILE" 2>&1 &
   fi
   PID=$!
@@ -132,13 +126,8 @@ run_attempt() {
   return 1
 }
 
-stop_agy() { # kill the whole process group (Windows: the whole process tree), then reap it
-  if [ "$BACKEND" = wincred ] && [ -r "/proc/$PID/winpid" ] && command -v taskkill >/dev/null; then
-    taskkill //T //F //PID "$(cat "/proc/$PID/winpid")" >/dev/null 2>&1 || true
-    kill -KILL "$PID" 2>/dev/null || true
-    wait "$PID" 2>/dev/null
-    return 0
-  fi
+stop_agy() { # kill the whole process group (Windows: the whole process tree, see platform_kill_tree), then reap it
+  if [ "$BACKEND" = wincred ] && platform_kill_tree "$PID"; then return 0; fi
   kill -TERM -- "-$PID" 2>/dev/null || kill -TERM "$PID" 2>/dev/null
   sleep 0.2
   kill -KILL -- "-$PID" 2>/dev/null

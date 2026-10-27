@@ -18,11 +18,6 @@ export LC_TIME=C # so %p is always AM/PM, regardless of the machine's language
 
 AGY_HOME="${AGY_HOME:-$HOME/.gemini/antigravity-cli}"
 AGY_BIN="${AGY_BIN:-agy}"
-# Since agy 1.2.14 the login lives in the OS keyring (GNOME keyring / libsecret, reached over D-Bus) and the token file
-# is ignored whenever the keyring is reachable: swapping the token file then changes nothing (observed 2026-10-02: the
-# banner kept showing the old account, and every account measured the same quota). Without a reachable session bus agy
-# falls back to the token file in its HOME, so every agy that agyr starts gets this unreachable bus address.
-NOKEYRING_BUS="unix:path=/nonexistent"
 TOKEN="$AGY_HOME/antigravity-oauth-token"
 ACCTS="$AGY_HOME/accounts"
 STATE="$ACCTS/state.json"
@@ -36,7 +31,7 @@ need_jq() { command -v jq >/dev/null || die "jq is required"; }
 valid_name() { [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "account name may only contain letters, digits, '-' and '_': '$1'"; }
 
 # --- where the login lives -------------------------------------------------------------------------------------------
-# file     (Linux)   agy's token file; agy is pointed at it by hiding the keyring (NOKEYRING_BUS).
+# file     (Linux)   agy's token file; agy is pointed at it by hiding the keyring (PLATFORM_ENV_KEYRING in linux/platform.sh).
 # wincred  (Windows) ONE Windows Credential Manager entry (target gemini:antigravity) shared by every agy of this user.
 #                    agy cannot be redirected there, so 'use' overwrites that entry with the slot's copy and 'list'
 #                    measures the accounts one after another (not in parallel), then puts the original login back.
@@ -44,6 +39,10 @@ valid_name() { [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "account name may only cont
 # it is called as 'helper read FILE' | 'helper write FILE' | 'helper delete' and exits 3 when there is no entry.
 SELF_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) ON_WINDOWS=1 ;; *) ON_WINDOWS=0 ;; esac
+# the platform layer: linux/ or windows/ (keyring bypass, process groups, argument paths, Git Bash quirks)
+if [ "$ON_WINDOWS" = 1 ]; then PLATFORM=windows; else PLATFORM=linux; fi
+. "$SELF_DIR/../$PLATFORM/platform.sh"
+platform_init
 case "${AGYR_BACKEND:-auto}" in
   file|wincred) BACKEND="$AGYR_BACKEND" ;;
   auto) if [ "$ON_WINDOWS" = 1 ]; then BACKEND=wincred; else BACKEND=file; fi ;;
@@ -51,8 +50,6 @@ case "${AGYR_BACKEND:-auto}" in
 esac
 CRED_HELPER="${AGYR_CRED_HELPER:-$SELF_DIR/../windows/cred.sh}"
 if [ "$BACKEND" = wincred ]; then TOKEN_WHERE="Credential Manager entry ${AGY_CRED_TARGET:-gemini:antigravity}"; else TOKEN_WHERE="$TOKEN"; fi
-# a native Windows jq.exe prints CRLF; the \r would end up inside names and numbers (-b / --binary prevents that)
-if [ "$ON_WINDOWS" = 1 ] && command jq -b -n . >/dev/null 2>&1; then jq() { command jq -b "$@"; }; fi
 
 init_state() {
   mkdir -p "$ACCTS"
@@ -431,15 +428,12 @@ cmd_rotate() {
 quota_fetch() {
   local home="$1" agyhome="$2" tmp out
   tmp="$(mktemp -d)"
-  # setsid + empty stdin: agy runs without a controlling terminal. Otherwise several agy processes running in parallel
-  # all change/restore your terminal mode (raw mode, terminal capability queries) and leave the terminal garbled
-  # (staircase newlines, no echo).
-  local -a detach=()
-  if command -v setsid >/dev/null; then detach=(setsid -w); fi
-  # MSYS2_ARG_CONV_EXCL: Git Bash would turn the argument /quota into C:/Program Files/Git/quota before handing it to the
-  # native agy.exe, which then treats it as an ordinary prompt instead of the /quota command (every account "failed").
-  out="$(HOME="$home" AGY_HOME="$agyhome" DBUS_SESSION_BUS_ADDRESS="$NOKEYRING_BUS" MSYS2_ARG_CONV_EXCL="/quota" \
-    "${detach[@]}" "$AGY_BIN" -p /quota --add-dir "$tmp" \
+  # PLATFORM_DETACH_WAIT (setsid -w, empty stdin): agy runs without a controlling terminal. Otherwise several agy processes
+  # running in parallel all change/restore your terminal mode (raw mode, terminal capability queries) and leave the
+  # terminal garbled (staircase newlines, no echo). The keyring bypass and the /quota argument exclusion come from the
+  # platform layer (linux/platform.sh, windows/platform.sh).
+  out="$(env HOME="$home" AGY_HOME="$agyhome" "${PLATFORM_ENV_KEYRING[@]}" "${PLATFORM_ENV_NOCONV_QUOTA[@]}" \
+    "${PLATFORM_DETACH_WAIT[@]}" "$AGY_BIN" -p /quota --add-dir "$tmp" \
     --model gemini-3.8-flash-high --output-format stream-json </dev/null 2>/dev/null |
     grep '^{' | jq -r 'select(.event=="result") | select(.result.status=="SUCCESS") | .result.response' 2>/dev/null)" || true
   rm -rf "$tmp"
@@ -682,7 +676,7 @@ cmd_run() {
   command -v "$AGY_BIN" >/dev/null || die "agy not found ($AGY_BIN)"
   # wincred: the selected account already IS the login in Credential Manager, nothing to hide
   if [ "$BACKEND" = wincred ]; then exec "$AGY_BIN" "$@"; fi
-  DBUS_SESSION_BUS_ADDRESS="$NOKEYRING_BUS" exec "$AGY_BIN" "$@"
+  exec env "${PLATFORM_ENV_KEYRING[@]}" "$AGY_BIN" "$@"
 }
 
 # ---- agyr test: send "Hi" to every account -------------------------------------------------------------------------------
@@ -695,12 +689,11 @@ cmd_run() {
 hi_call() {
   local home="$1" agyhome="$2" tmp res
   tmp="$(mktemp -d)"
-  local -a detach=() cap=()
-  if command -v setsid >/dev/null; then detach=(setsid -w); fi
-  # timeout runs INSIDE setsid: it then leads its own process group and kills agy and whatever agy started
+  local -a cap=()
+  # timeout runs INSIDE setsid (PLATFORM_DETACH_WAIT): it then leads its own process group and kills agy and whatever agy started
   if command -v timeout >/dev/null; then cap=(timeout "${AGYR_TEST_TIMEOUT:-120}"); fi
-  res="$(cd "$tmp" && HOME="$home" AGY_HOME="$agyhome" DBUS_SESSION_BUS_ADDRESS="$NOKEYRING_BUS" \
-    "${detach[@]}" "${cap[@]}" "$AGY_BIN" -p Hi --add-dir "$tmp" --model gemini-3.8-flash-high --print-timeout 90s \
+  res="$(cd "$tmp" && env HOME="$home" AGY_HOME="$agyhome" "${PLATFORM_ENV_KEYRING[@]}" \
+    "${PLATFORM_DETACH_WAIT[@]}" "${cap[@]}" "$AGY_BIN" -p Hi --add-dir "$tmp" --model gemini-3.8-flash-high --print-timeout 90s \
     --output-format stream-json </dev/null 2>/dev/null |
     grep '^{' | jq -r 'select(.event=="result") | .result
       | "\(.status)\u001f\((.response // "") | gsub("[\\t\\r\\n]+"; " ") | .[0:200])\u001f\((.error // "") | gsub("[\\t\\r\\n]+"; " ") | .[0:200])"' 2>/dev/null |
