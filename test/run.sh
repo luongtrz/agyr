@@ -1881,6 +1881,19 @@ unset FAKE_TASK_EXIT
 
 unset AGY_RUN
 
+echo "== install scripts (into temp bin dirs, never the real ~/.local/bin)"
+INST="$(mktemp -d)"; TMPS+=("$INST")
+REPO_ABS="$(cd "$HERE/.." && pwd)"
+if bash "$HERE/../linux/install.sh" "$INST/lin" >/dev/null 2>&1; then pass "linux/install.sh runs"; else fail "linux/install.sh runs"; fi
+eq "linux/install.sh links agyr to bin/agyr" "$REPO_ABS/bin/agyr" "$(readlink -f "$INST/lin/agyr")"
+has "linked agyr answers help" "agyr" "$("$INST/lin/agyr" help 2>&1 | head -1)"
+mkdir -p "$INST/guard" && echo mine >"$INST/guard/agyr"
+if bash "$HERE/../linux/install.sh" "$INST/guard" >/dev/null 2>&1; then fail "linux/install.sh refuses to replace a regular file"; else pass "linux/install.sh refuses to replace a regular file"; fi
+eq "the regular file is left as it was" "mine" "$(cat "$INST/guard/agyr")"
+if bash "$HERE/../windows/install.sh" "$INST/win" >/dev/null 2>&1; then pass "windows/install.sh writes the wrappers"; else fail "windows/install.sh writes the wrappers"; fi
+has "windows wrapper points at this clone's bin/agyr" "exec \"$REPO_ABS/bin/agyr\"" "$(cat "$INST/win/agyr")"
+has "windows wrapper answers help" "agyr" "$("$INST/win/agyr" help 2>&1 | head -1)"
+
 echo "== safety"
 real_agy_busy && REAL_BUSY=1
 if [ "$REAL_BUSY" = 1 ]; then
