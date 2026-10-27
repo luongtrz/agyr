@@ -31,21 +31,16 @@ If the repo is not on the machine, ask the user to clone it to `~/tools/agy-acct
 Linux:
 
 ```bash
-mkdir -p ~/.local/bin
-for n in agyr agy-run agy-task; do ln -sf "$REPO/bin/$n" ~/.local/bin/$n; done
+bash "$REPO/linux/install.sh"        # symlinks in ~/.local/bin (or pass another directory as the argument)
 ```
 
-Windows (Git Bash cannot make working symlinks): write small wrappers that call the repo copy:
+Windows (Git Bash, no working symlinks):
 
 ```bash
-mkdir -p ~/.local/bin
-for n in agyr agy-run agy-task; do
-  printf '#!/usr/bin/env bash\nexec "%s/bin/%s" "$@"\n' "$REPO" "$n" > ~/.local/bin/$n
-  chmod +x ~/.local/bin/$n
-done
+bash "$REPO/windows/install.sh"      # small wrappers in ~/.local/bin that run this clone
 ```
 
-The scripts find `templates/` relative to their real path, so the clone can live anywhere. Check that `~/.local/bin` is on `PATH`; if it is not, tell the user.
+Both scripts refuse to overwrite a regular file they did not write, and both stop with a message when `jq` or `git` is missing. If `~/.local/bin` is not on `PATH`, tell the user.
 
 ## 3. Skill and global instructions (only if this machine runs Claude Code)
 
@@ -61,7 +56,7 @@ LOG=$(mktemp)
 bash "$REPO/test/run.sh" > "$LOG" 2>&1; grep '^result:' "$LOG"
 ```
 
-On Linux, expect `result: 784 pass, 0 fail`. The suite takes several minutes. It uses a fake agy and fake tokens and never touches a real login. On Windows two checks are skipped on purpose. If the result differs, report it with the failing lines.
+On Linux, expect `result: 794 pass, 0 fail`. The suite takes several minutes. It uses a fake agy and fake tokens and never touches a real login. On Windows two checks are skipped on purpose. If the result differs, report it with the failing lines.
 
 Do not run `agyr list` yet. It needs the logins that the user has not saved.
 

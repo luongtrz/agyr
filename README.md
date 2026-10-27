@@ -16,26 +16,30 @@ Gồm ba lệnh trong `bin/`:
 
 Nếu bạn là agent AI được nhờ cài repo này lên máy, đọc [agent.mcp.md](agent.mcp.md): các bước cài và những việc agent không được làm (login, save, đọc file token).
 
-Cần `bash`, `git` và `jq`. Trên Linux thêm `timeout` (coreutils) và `setsid` (util-linux). Đã thử trên Linux với agy 1.4.7.
+Cần `bash`, `git` và `jq`. Trên Linux thêm `timeout` (coreutils) và `setsid` (util-linux), không bắt buộc. Đã thử trên Linux với agy 1.4.7.
 
 ```bash
-mkdir -p ~/.local/bin
-for n in agyr agy-run agy-task; do ln -sf ~/tools/agy-acct/bin/$n ~/.local/bin/$n; done
+bash linux/install.sh        # tạo symlink agyr, agy-run, agy-task trong ~/.local/bin
 ```
 
-Trên Windows dùng wrapper (mục bên dưới). Sau khi cài, `agyr help` phải chạy được và `bash test/run.sh` phải báo `784 pass, 0 fail`. Việc này không cần login. Skill `agy` và `CLAUDE.md` là bản sao riêng, xem mục [Skill `agy` (bản sao)](#skill-agy-bản-sao).
+Trên Windows dùng `bash windows/install.sh` (xem mục bên dưới). Script chỉ tạo symlink hoặc wrapper, không login và không đọc file token. Sau khi cài, `agyr help` phải chạy được và `bash test/run.sh` phải báo `794 pass, 0 fail`. Việc này không cần login. Skill `agy` và `CLAUDE.md` là bản sao riêng, xem mục [Skill `agy` (bản sao)](#skill-agy-bản-sao).
+
+### Cấu trúc repo
+
+- `bin/`: ba lệnh `agyr`, `agy-run`, `agy-task`. Đây là điểm vào, không chứa code riêng của từng nền tảng.
+- `linux/`: `platform.sh` (cách gọi agy trên Linux: chặn keyring, setsid) và `install.sh`.
+- `windows/`: `platform.sh` (Git Bash: đường dẫn, taskkill, chống chuyển đổi đối số), `cred.sh` và `cred.ps1` (đọc/ghi mục Credential Manager), `inspect-cred.ps1` (chỉ in metadata) và `install.sh`.
+- `skill/agy/`, `claude/`, `templates/`, `test/`: bản sao skill, bản sao CLAUDE.md, khối HARD RULES, bộ test.
 
 ## Windows (Git Bash)
 
-Chạy trong **Git Bash**, cần `jq` (ví dụ `winget install jqlang.jq`). Trong Git Bash `ln -sf` chỉ tạo bản copy, nên cài bằng wrapper nhỏ trỏ thẳng vào repo (`git pull` là cập nhật):
+Chạy trong **Git Bash**, cần `jq` (ví dụ `winget install jqlang.jq`). Lệnh cài:
 
 ```bash
-mkdir -p ~/.local/bin
-for n in agyr agy-run agy-task; do
-  printf '#!/usr/bin/env bash\nexec "$HOME/tools/agy-acct/bin/%s" "$@"\n' "$n" > ~/.local/bin/$n
-  chmod +x ~/.local/bin/$n
-done
+bash windows/install.sh
 ```
+
+Git Bash không tạo symlink dùng được, nên script ghi ba wrapper nhỏ, mỗi cái gọi `bin/<tên>` trong repo (`git pull` là cập nhật). Đường dẫn repo được ghi cứng vào wrapper, nên nếu chuyển thư mục repo thì chạy lại script.
 
 Trên Windows `agy` lưu đăng nhập trong **một mục Windows Credential Manager** (target `gemini:antigravity`, loại generic, nội dung là JSON giống file token trên Linux). Không có file token, và không có cách chuyển hướng cho từng tiến trình, nên `agyr` tự chọn backend `wincred` (xem `agyr backend`) và đổi account bằng cách **ghi đè chính mục đó**:
 
@@ -305,7 +309,7 @@ Khối HARD RULES cho task implement nằm ở `templates/hard-rules.txt` (`agy-
 bash test/run.sh
 ```
 
-784 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
+794 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
 
 ## Giới hạn đã biết
 
