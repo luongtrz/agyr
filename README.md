@@ -14,13 +14,16 @@ Gồm ba lệnh trong `bin/`:
 
 ## Cài
 
+Nếu bạn là agent AI được nhờ cài repo này lên máy, đọc [agent.mcp.md](agent.mcp.md): các bước cài và những việc agent không được làm (login, save, đọc file token).
+
+Cần `bash`, `git` và `jq`. Trên Linux thêm `timeout` (coreutils) và `setsid` (util-linux). Đã thử trên Linux với agy 1.4.7.
+
 ```bash
-ln -sf ~/tools/agy-acct/bin/agyr ~/.local/bin/agyr
-ln -sf ~/tools/agy-acct/bin/agy-run  ~/.local/bin/agy-run
-ln -sf ~/tools/agy-acct/bin/agy-task ~/.local/bin/agy-task
+mkdir -p ~/.local/bin
+for n in agyr agy-run agy-task; do ln -sf ~/tools/agy-acct/bin/$n ~/.local/bin/$n; done
 ```
 
-Cần `bash` và `jq`.
+Trên Windows dùng wrapper (mục bên dưới). Sau khi cài, `agyr help` phải chạy được và `bash test/run.sh` phải báo `784 pass, 0 fail`. Việc này không cần login. Skill `agy` và `CLAUDE.md` là bản sao riêng, xem mục [Skill `agy` (bản sao)](#skill-agy-bản-sao).
 
 ## Windows (Git Bash)
 
@@ -284,12 +287,14 @@ Summary ghi vào `.agy-sessions/NAME.summary.txt` (và in ra stdout khi hoàn th
 
 ## Skill `agy` (bản sao)
 
-`skill/agy/` là **bản sao** của skill Claude Code `agy` (`~/.claude/skills/agy/`), chụp ngày 06/10/2026: `SKILL.md` (quy trình giao việc, quy tắc an toàn, cách dùng `agy-task`/`agy-run`) và `references/` (chi tiết chỉ đọc khi gặp đúng tình huống: quota/đăng nhập, fallback 503, chạy song song, log và chi phí, quy trình thủ công). Bản đang dùng thật nằm ở `~/.claude/skills/agy/`, thư mục trong repo không tự cập nhật theo.
+`skill/agy/` là **bản sao** của skill Claude Code `agy` (`~/.claude/skills/agy/`), được đồng bộ với bản đang dùng tại commit gần nhất (cập nhật bằng lệnh bên dưới): `SKILL.md` (quy trình giao việc, quy tắc an toàn, cách dùng `agy-task`/`agy-run`) và `references/` (chi tiết chỉ đọc khi gặp đúng tình huống: quota/đăng nhập, fallback 503, chạy song song, log và chi phí, quy trình thủ công). Bản đang dùng thật nằm ở `~/.claude/skills/agy/`, thư mục trong repo không tự cập nhật theo.
 
 ```bash
 rm -rf skill/agy && cp -r ~/.claude/skills/agy skill/agy                   # cập nhật bản sao trong repo
 mkdir -p ~/.claude/skills && cp -r skill/agy ~/.claude/skills/              # cài lên máy khác
 ```
+
+`claude/CLAUDE.md` là bản sao `~/.claude/CLAUDE.md` (quy tắc chung của Claude Code, phần agy chỉ trỏ tới skill). Cập nhật bằng `cp ~/.claude/CLAUDE.md claude/CLAUDE.md`. Không copy ngược từ repo vào máy khi chưa xem diff.
 
 Khối HARD RULES cho task implement nằm ở `templates/hard-rules.txt` (`agy-task` tự ghép vào prompt); bản cho task chỉ-đọc nằm ở `skill/agy/references/hard-rules-explore.txt`.
 
@@ -300,7 +305,7 @@ Khối HARD RULES cho task implement nằm ở `templates/hard-rules.txt` (`agy-
 bash test/run.sh
 ```
 
-785 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
+784 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
 
 ## Giới hạn đã biết
 
