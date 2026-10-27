@@ -60,7 +60,7 @@ agyr use acct1 # chọn account dùng hằng ngày
 agyr list                 # kiểm tra từng slot còn sống
 ```
 
-Slot là file thường, được bảo vệ bằng quyền của thư mục profile Windows (không có `chmod 600` trên NTFS). Các file riêng của Windows nằm trong `win/`: `cred.sh` + `cred.ps1` (đọc/ghi/xóa mục Credential Manager, không bao giờ in nội dung) và `inspect-cred.ps1` (chỉ in metadata của mục, không in giá trị, để chẩn đoán). Đổi target bằng `AGY_CRED_TARGET`, ép backend bằng `AGYR_BACKEND=file|wincred`.
+Slot là file thường, được bảo vệ bằng quyền của thư mục profile Windows (không có `chmod 600` trên NTFS). Các file riêng của Windows nằm trong `windows/`: `cred.sh` + `cred.ps1` (đọc/ghi/xóa mục Credential Manager, không bao giờ in nội dung) và `inspect-cred.ps1` (chỉ in metadata của mục, không in giá trị, để chẩn đoán). Đổi target bằng `AGY_CRED_TARGET`, ép backend bằng `AGYR_BACKEND=file|wincred`.
 
 ## Quan trọng (Linux): agy từ bản 1.2.14 dùng kho mật khẩu của hệ điều hành
 
@@ -316,5 +316,5 @@ bash test/run.sh
 - Chạy nhiều `agy-run` song song dùng chung một pool theo kiểu best-effort: mỗi lần một lệnh đổi account thì file token thật đổi theo, nên dấu `*` trong `agyr list` nhảy qua lại trong lúc chúng đang chạy. Các process đang chạy vẫn giữ token riêng của mình.
 - `agyr list` đo bằng bản sao token trong HOME tạm. Token đã bị thu hồi thì báo `measure failed` thay vì đoán.
 - State (cooldown, active, snapshot quota) nằm ở `~/.gemini/antigravity-cli/accounts/state.json`; token backup trước mỗi lần `use` ở `accounts/.last-token.bak`.
-- **Windows:** backend `wincred` chỉ được test bằng helper giả (`test/fake-cred`); `win/cred.ps1` chạy thật lần đầu nên đi từng bước: `agyr save` (chỉ đọc) trước, rồi `agyr use`, rồi `agyr list`. Mỗi lần đọc/ghi Credential Manager gọi một tiến trình PowerShell (khoảng 1 giây), nên `agyr list` chậm hơn Linux: các account được đo tuần tự, không song song.
+- **Windows:** backend `wincred` chỉ được test bằng helper giả (`test/fake-cred`); `windows/cred.ps1` chạy thật lần đầu nên đi từng bước: `agyr save` (chỉ đọc) trước, rồi `agyr use`, rồi `agyr list`. Mỗi lần đọc/ghi Credential Manager gọi một tiến trình PowerShell (khoảng 1 giây), nên `agyr list` chậm hơn Linux: các account được đo tuần tự, không song song.
 - **Windows:** vì chỉ có một mục Credential Manager chung cho cả máy, trong lúc `agyr list` hoặc `agyr use` chạy mà bạn mở/đăng nhập agy tay thì login có thể bị ghi đè lẫn nhau. Login gốc luôn còn trong `accounts/.last-token.bak` và trong slot tương ứng.
