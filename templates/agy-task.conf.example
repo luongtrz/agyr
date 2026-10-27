@@ -1,0 +1,17 @@
+# agy-task.conf — configuration for agy-task runs
+# Copy to .agy-sessions/agy-task.conf in your repository root, or point to it via AGY_TASK_CONF.
+
+# Commands to run in order inside the newly created worktree before agy starts.
+# Runs via `bash -c` from the worktree root. Execution stops on the first failure.
+SETUP_CMDS=(
+  'pnpm install --frozen-lockfile --prefer-offline'
+  'pnpm api:gen'
+)
+
+# Files to copy from the main checkout to the worktree AFTER SETUP_CMDS finishes.
+# Parent directories are created automatically. Missing source files trigger a warning, not an error.
+COPY_FILES=(
+  apps/web-user/src/routeTree.gen.ts
+  apps/web-vendor/src/routeTree.gen.ts
+  apps/web-admin/src/routeTree.gen.ts
+)

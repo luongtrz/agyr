@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Fake of windows/cred.sh for tests: the "Credential Manager entry" is just the file $FAKE_CRED_FILE.
+# Same interface: read FILE | write FILE | delete; exit 3 = no such entry.
+#   FAKE_CRED_FAIL_AT=N   the N-th 'write' fails (exit 1) without writing — to test restoring after a failed write
+# FAKE_CRED_FILE is required, so a test that forgot to set it fails loudly instead of touching anything real.
+set -u
+f="${FAKE_CRED_FILE:?FAKE_CRED_FILE not set}"
+case "${1:-}" in
+  read) [ -f "$f" ] || exit 3; cp "$f" "$2" ;;
+  write)
+    n=$(($(cat "$f.writes" 2>/dev/null || echo 0) + 1)); echo "$n" >"$f.writes"
+    [ "${FAKE_CRED_FAIL_AT:-0}" = "$n" ] && { echo "fake-cred: write #$n failed on purpose" >&2; exit 1; }
+    cp "$2" "$f"
+    ;;
+  delete) [ -f "$f" ] || exit 3; rm -f "$f" ;;
+  *) echo "usage: fake-cred read FILE | write FILE | delete" >&2; exit 2 ;;
+esac

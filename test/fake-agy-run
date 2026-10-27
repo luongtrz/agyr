@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Fake agy-run stub for testing agy-task without calling real agy.
+set -uo pipefail
+
+PROMPT="" ADD_DIR="" LOG_FILE="" MODEL=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --prompt) PROMPT="${2:-}"; shift 2 ;;
+    --add-dir) ADD_DIR="${2:-}"; shift 2 ;;
+    --log) LOG_FILE="${2:-}"; shift 2 ;;
+    --model) MODEL="${2:-}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+if [ -n "${FAKE_STDOUT_NOISE:-}" ]; then
+  printf '%s\n' "$FAKE_STDOUT_NOISE"
+fi
+
+if [ -n "${FAKE_PROMPT_COPY:-}" ] && [ -n "$PROMPT" ] && [ -f "$PROMPT" ]; then
+  mkdir -p "$(dirname "$FAKE_PROMPT_COPY")"
+  cp "$PROMPT" "$FAKE_PROMPT_COPY"
+fi
+
+if [ -n "${FAKE_TASK_EDIT:-}" ] && [ -n "$ADD_DIR" ]; then
+  while IFS= read -r item || [ -n "$item" ]; do
+    [ -z "$item" ] && continue
+    if [[ "$item" == *:* ]]; then
+      rel="${item%%:*}"
+      content="${item#*:}"
+    else
+      rel="$item"
+      content=""
+    fi
+    mkdir -p "$ADD_DIR/$(dirname "$rel")"
+    printf '%s\n' "$content" > "$ADD_DIR/$rel"
+  done <<< "$FAKE_TASK_EDIT"
+fi
+
+if [ -n "${FAKE_TASK_RM:-}" ] && [ -n "$ADD_DIR" ]; then
+  while IFS= read -r rel || [ -n "$rel" ]; do
+    [ -z "$rel" ] && continue
+    rm -f "$ADD_DIR/$rel"
+  done <<< "$FAKE_TASK_RM"
+fi
+
+if [ "${FAKE_TASK_COMMIT:-0}" = "1" ] && [ -n "$ADD_DIR" ]; then
+  git -C "$ADD_DIR" add -A
+  git -C "$ADD_DIR" -c user.name=t -c user.email=t@t commit -qm fake
+fi
+
+status="${FAKE_STATUS:-SUCCESS}"
+response="${FAKE_RESPONSE:-Task completed successfully.}"
+turns="${FAKE_NUM_TURNS:-2}"
+tokens="${FAKE_TOTAL_TOKENS:-12345}"
+
+if [ -n "$LOG_FILE" ]; then
+  mkdir -p "$(dirname "$LOG_FILE")"
+  printf '{"event":"init","conversation_id":"fake-conv-1","tools":["bash"]}\n' >> "$LOG_FILE"
+  jq -c -n \
+    --arg status "$status" \
+    --arg response "$response" \
+    --argjson turns "$turns" \
+    --argjson tokens "$tokens" \
+    '{event: "result", result: {status: $status, response: $response, num_turns: $turns, usage: {total_tokens: $tokens}}}' >> "$LOG_FILE"
+fi
+
+exit "${FAKE_TASK_EXIT:-0}"

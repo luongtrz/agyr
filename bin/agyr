@@ -1,0 +1,1090 @@
+#!/usr/bin/env bash
+# agyr — save / switch / rotate multiple accounts for agy (Antigravity CLI).
+#
+# It only copies token files around; it never prints token contents.
+# Environment variables:
+#   AGY_HOME  agy data directory (default ~/.gemini/antigravity-cli)
+#   AGY_BIN   agy binary used to measure quota (default agy)
+#   AGY_TZ    timezone for displayed times and for times read from agy logs
+#             (default UTC-7, which is UTC+7 in POSIX notation)
+#   AGY_NOW   fake epoch for "now" (tests only; default date +%s)
+#   AGYR_COLOR  auto (default) | always | never — colours in the list table
+set -euo pipefail
+umask 077
+
+# All displayed times (and times read from agy logs) are UTC+7. POSIX quirk: 'UTC-7' means UTC+7.
+export TZ="${AGY_TZ:-UTC-7}"
+export LC_TIME=C # so %p is always AM/PM, regardless of the machine's language
+
+AGY_HOME="${AGY_HOME:-$HOME/.gemini/antigravity-cli}"
+AGY_BIN="${AGY_BIN:-agy}"
+TOKEN="$AGY_HOME/antigravity-oauth-token"
+ACCTS="$AGY_HOME/accounts"
+STATE="$ACCTS/state.json"
+DEFAULT_COOLDOWN=18000 # 5h, used when "Resets in" cannot be parsed
+
+die() { echo "agyr: $*" >&2; exit "${2:-1}"; }
+now() { echo "${AGY_NOW:-$(date +%s)}"; }
+
+need_jq() { command -v jq >/dev/null || die "jq is required"; }
+
+valid_name() { [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "account name may only contain letters, digits, '-' and '_': '$1'"; }
+
+# --- where the login lives -------------------------------------------------------------------------------------------
+# file     (Linux)   agy's token file; agy is pointed at it by hiding the keyring (PLATFORM_ENV_KEYRING in linux/platform.sh).
+# wincred  (Windows) ONE Windows Credential Manager entry (target gemini:antigravity) shared by every agy of this user.
+#                    agy cannot be redirected there, so 'use' overwrites that entry with the slot's copy and 'list'
+#                    measures the accounts one after another (not in parallel), then puts the original login back.
+# Chosen by the OS; override with AGYR_BACKEND=file|wincred. AGYR_CRED_HELPER replaces windows/cred.sh (used by the tests):
+# it is called as 'helper read FILE' | 'helper write FILE' | 'helper delete' and exits 3 when there is no entry.
+SELF_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) ON_WINDOWS=1 ;; *) ON_WINDOWS=0 ;; esac
+# the platform layer: linux/ or windows/ (keyring bypass, process groups, argument paths, Git Bash quirks)
+if [ "$ON_WINDOWS" = 1 ]; then PLATFORM=windows; else PLATFORM=linux; fi
+. "$SELF_DIR/../$PLATFORM/platform.sh"
+platform_init
+case "${AGYR_BACKEND:-auto}" in
+  file|wincred) BACKEND="$AGYR_BACKEND" ;;
+  auto) if [ "$ON_WINDOWS" = 1 ]; then BACKEND=wincred; else BACKEND=file; fi ;;
+  *) die "AGYR_BACKEND must be file or wincred (got '$AGYR_BACKEND')" 2 ;;
+esac
+CRED_HELPER="${AGYR_CRED_HELPER:-$SELF_DIR/../windows/cred.sh}"
+if [ "$BACKEND" = wincred ]; then TOKEN_WHERE="Credential Manager entry ${AGY_CRED_TARGET:-gemini:antigravity}"; else TOKEN_WHERE="$TOKEN"; fi
+
+init_state() {
+  mkdir -p "$ACCTS"
+  chmod 700 "$ACCTS"
+  [ -f "$STATE" ] || echo '{"active":"","cooldown":{}}' >"$STATE"
+}
+
+# atomic state write: $1 = jq expression, remaining args are passed to jq
+state_update() {
+  local expr="$1"; shift
+  local tmp own=0
+  # read-modify-write of state.json: take the lock (unless this process already holds it), or two agyr running at the same
+  # time (parallel agy-run switching accounts) overwrite each other's change
+  if [ "$LOCK_HELD" = 0 ]; then lock_acquire; own=1; fi
+  tmp="$(mktemp "$ACCTS/.state.XXXXXX")"
+  if jq "$@" "$expr" "$STATE" >"$tmp"; then mv "$tmp" "$STATE"; else rm -f "$tmp"; die "failed to write state"; fi
+  if [ "$own" = 1 ]; then lock_release; fi
+}
+
+# --- the login in use ("live") ---------------------------------------------------------------------------------------
+# LIVE = path of a readable copy of the login agy is using now, empty if there is none. Set by live_load, which must run
+# in the main shell (not in $(...)), and again after anything that changes the login. With the file backend LIVE is the
+# token file itself; with wincred it is an export of the Credential Manager entry into a private temp dir.
+LIVE="" LIVE_TMP="" LIVE_SNAP="" LOCK_HELD=0 RESTORE_KIND="" RESTORE_FILE=""
+LOCKDIR="$ACCTS/.swap.lock"
+
+live_load() {
+  LIVE=""
+  case "$BACKEND" in
+    file) if [ -f "$TOKEN" ]; then LIVE="$TOKEN"; fi ;;
+    wincred)
+      [ -n "$LIVE_TMP" ] || LIVE_TMP="$(mktemp -d)"
+      rm -f "$LIVE_TMP/live"
+      local rc=0
+      "$CRED_HELPER" read "$LIVE_TMP/live" || rc=$?
+      case "$rc" in
+        0) LIVE="$LIVE_TMP/live" ;;
+        3) ;;
+        *) die "cannot read the login from Credential Manager (helper exit $rc)" ;;
+      esac
+      ;;
+  esac
+  return 0
+}
+
+# install file $1 as the login in use
+live_put() {
+  case "$BACKEND" in
+    file) atomic_cp "$1" "$TOKEN" || die "cannot write the login ($TOKEN)"; LIVE="$TOKEN" ;;
+    wincred)
+      "$CRED_HELPER" write "$1" || die "cannot write the login to Credential Manager"
+      # LIVE now mirrors what was just written
+      [ -n "$LIVE_TMP" ] || LIVE_TMP="$(mktemp -d)"
+      cp "$1" "$LIVE_TMP/live.new" && mv -f "$LIVE_TMP/live.new" "$LIVE_TMP/live"; LIVE="$LIVE_TMP/live"
+      ;;
+  esac
+}
+
+# remove the login in use (only to undo a measurement that started with no login at all)
+live_clear() {
+  case "$BACKEND" in
+    file) rm -f "$TOKEN" ;;
+    wincred) "$CRED_HELPER" delete || [ $? -eq 3 ] ;;
+  esac
+  LIVE=""
+}
+
+# wincred only: whoever swaps the one shared login must hold this lock (mkdir is atomic); a lock whose owner is gone is stolen
+# One agyr at a time may change the login in use, the slots or state.json. It used to cover only the Windows backend; on Linux
+# several parallel agy-run switching accounts at once corrupted slots (a slot ended up with another account's login).
+# The lock is a file created exclusively (bash noclobber = open with O_EXCL) holding the owner's pid. NOT mkdir: on this
+# machine mkdir is uutils coreutils, whose mkdir let 2 to 7 of 12 parallel callers all "create" the same directory.
+lock_acquire() {
+  [ "$LOCK_HELD" = 0 ] || return 0
+  mkdir -p "$ACCTS"
+  local waited=0 owner
+  # a lock left by an older agyr was a directory holding a pid file
+  if [ -d "$LOCKDIR" ]; then
+    owner="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
+    if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then rm -rf "$LOCKDIR"; fi
+  fi
+  until ( set -o noclobber; echo "$$" >"$LOCKDIR" ) 2>/dev/null; do
+    owner="$(cat "$LOCKDIR" 2>/dev/null || true)"
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+      # looks abandoned (its owner is gone). But that owner may simply have released it and exited, and somebody else taken
+      # the lock since: remove it only if it still names that same dead owner (else two agyr would both hold the lock)
+      if [ "$(cat "$LOCKDIR" 2>/dev/null || true)" = "$owner" ]; then rm -f "$LOCKDIR"; fi
+      continue
+    fi
+    waited=$((waited + 1))
+    [ "$waited" -le $((${AGYR_LOCK_WAIT:-120} * 20)) ] || die "another agyr is switching accounts (lock: $LOCKDIR); try again in a moment"
+    sleep 0.05
+  done
+  LOCK_HELD=1
+}
+
+lock_release() {
+  # only remove the lock if it is still ours
+  if [ "$LOCK_HELD" = 1 ]; then
+    if [ "$(cat "$LOCKDIR" 2>/dev/null || true)" = "$$" ]; then rm -f "$LOCKDIR"; fi
+    LOCK_HELD=0
+  fi
+  return 0
+}
+
+on_exit() {
+  local rc=$?
+  trap - EXIT
+  # interrupted while a measurement had another account's login installed: put the original back
+  case "$RESTORE_KIND" in
+    file) "$CRED_HELPER" write "$RESTORE_FILE" || echo "agyr: COULD NOT RESTORE your login; the original is in $RESTORE_FILE" >&2 ;;
+    none) "$CRED_HELPER" delete || true ;;
+  esac
+  [ -z "$LIVE_TMP" ] || rm -rf "$LIVE_TMP"
+  [ -z "$LIVE_SNAP" ] || rm -f "$LIVE_SNAP"
+  rm -f "$ACCTS"/.snap.$$.* 2>/dev/null || true
+  lock_release
+  exit "$rc"
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Internal identity of a token file, for comparison only — NEVER printed: the refresh_token if it is JSON, else the whole content.
+ident_of() {
+  local r
+  r="$(jq -r '.token.refresh_token // empty' "$1" 2>/dev/null)" || r=""
+  if [ -n "$r" ]; then printf 'rt:%s' "$r"; else printf 'raw:%s' "$(cat "$1")"; fi
+}
+
+# The slot the real token file belongs to (by identity); empty if it matches no slot (e.g. just logged in to an unsaved account).
+# The slot whose login is the one in FILE (matched by identity); empty when it matches no slot.
+owner_of() {
+  [ -s "$1" ] || return 0
+  local id n
+  id="$(ident_of "$1")"
+  while read -r n; do
+    if [ "$(ident_of "$ACCTS/$n.token")" = "$id" ]; then echo "$n"; return 0; fi
+  done < <(slots)
+  return 0
+}
+real_owner() {
+  [ -n "$LIVE" ] || return 0
+  owner_of "$LIVE"
+}
+
+# Write DEST by renaming a private temp file from the same directory: nobody (agy starting, a measurement copying a slot)
+# ever reads a half-written login.
+atomic_cp() {
+  local tmp
+  tmp="$(mktemp "$2.XXXXXX")" || return 1
+  if cp "$1" "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$2"; then return 0; fi
+  rm -f "$tmp"; return 1
+}
+
+# A private copy of the login in use; prints its path (nothing when nobody is logged in). Decisions and write-backs are made
+# from this one copy, so they always agree even if the live file changes in the meantime (it is shared with agy and with
+# every other agyr / agy-run). Removed by the caller, or at exit.
+live_snapshot() {
+  [ -n "$LIVE" ] || return 0
+  local f
+  f="$(mktemp "$ACCTS/.snap.$$.XXXXXX")" || return 1
+  if cp "$LIVE" "$f"; then echo "$f"; else rm -f "$f"; return 1; fi
+}
+
+# The account actually in use = the slot matching the real token file. Only when no slot matches do we fall back to the name
+# stored in state (state can be stale when you log in with agy by hand without saving).
+active_name() {
+  local o
+  o="$(real_owner)"
+  if [ -n "$o" ]; then echo "$o"; else jq -r '.active // ""' "$STATE"; fi
+}
+
+# "4h13m27s" / "43m29s" / "1d2h" / "90" (seconds) -> seconds. Also accepts a sentence containing "Resets in X".
+parse_duration() {
+  local s="$1"
+  if [[ "$s" =~ Resets\ in\ ([0-9dhms]+) ]]; then s="${BASH_REMATCH[1]}"; fi
+  if [[ "$s" =~ ^[0-9]+$ ]]; then echo "$s"; return 0; fi
+  [[ "$s" =~ ^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$ && -n "$s" ]] || return 1
+  local total=0 d=${BASH_REMATCH[1]:-} h=${BASH_REMATCH[2]:-} m=${BASH_REMATCH[3]:-} sec=${BASH_REMATCH[4]:-}
+  [ -n "$d" ] && total=$((total + ${d%d} * 86400))
+  [ -n "$h" ] && total=$((total + ${h%h} * 3600))
+  [ -n "$m" ] && total=$((total + ${m%m} * 60))
+  [ -n "$sec" ] && total=$((total + ${sec%s}))
+  echo "$total"
+}
+
+# epoch -> "dd/mm/yyyy hh:mm AM|PM" (in AGY_TZ)
+fmt_time() { date -d "@$1" '+%d/%m/%Y %I:%M %p'; }
+
+fmt_dur() { # seconds -> "4h13m"
+  local s=$1
+  if [ "$s" -ge 3600 ]; then printf '%dh%02dm' $((s / 3600)) $((s % 3600 / 60))
+  elif [ "$s" -ge 60 ]; then printf '%dm%02ds' $((s / 60)) $((s % 60))
+  else printf '%ds' "$s"; fi
+}
+
+slots() { # sorted slot names
+  local f
+  for f in "$ACCTS"/*.token; do
+    [ -e "$f" ] || continue
+    basename "$f" .token
+  done | sort
+}
+
+cooldown_until() { jq -r --arg n "$1" '.cooldown[$n] // 0' "$STATE"; }
+
+cmd_save() {
+  [ $# -eq 1 ] || die "usage: agyr save <name>"
+  valid_name "$1"; need_jq
+  init_state
+  lock_acquire
+  live_load # again: the login may have changed while waiting for the lock
+  [ -n "$LIVE" ] || die "no login yet (${TOKEN_WHERE}). Log in with 'agyr' first"
+  atomic_cp "$LIVE" "$ACCTS/$1.token" || die "cannot write slot '$1'"
+  state_update '.active=$n | del(.cooldown[$n])' --arg n "$1"
+  echo "saved account '$1' (now active)"
+}
+
+cmd_use() {
+  [ $# -eq 1 ] || die "usage: agyr use <name>"
+  valid_name "$1"; need_jq; init_state
+  [ -f "$ACCTS/$1.token" ] || die "no slot '$1' (see: agyr list)"
+  lock_acquire
+  live_load # again: the login may have changed while waiting for the lock
+  local snap cur=""
+  snap="$(live_snapshot)"
+  if [ -n "$snap" ]; then
+    # Which slot the login in use belongs to is decided from the SAME copy that is written back: it can only ever go to the
+    # slot with the same account (a write-back that re-read the live file once lost to another switch and put one account's
+    # login into another's slot)
+    cur="$(owner_of "$snap")"
+    # backup first, before anything is overwritten
+    atomic_cp "$snap" "$ACCTS/.last-token.bak"
+    # keep the access token agy refreshed, but only write it back to the slot it belongs to; if it matches no slot,
+    # no slot is overwritten (the unsaved token is still in .last-token.bak)
+    if [ -n "$cur" ] && [ "$cur" != "$1" ]; then atomic_cp "$snap" "$ACCTS/$cur.token"; fi
+    rm -f "$snap"
+  fi
+  live_put "$ACCTS/$1.token"
+  lock_release
+  state_update '.active=$n' --arg n "$1"
+  echo "switched to account '$1'"
+}
+
+cmd_cooldown() {
+  [ $# -ge 2 ] || die "usage: agyr cooldown <name> <duration|'... Resets in 4h13m27s'>"
+  local name="$1"; shift
+  valid_name "$name"; need_jq; init_state
+  [ -f "$ACCTS/$name.token" ] || die "no slot '$name'"
+  local secs
+  if ! secs="$(parse_duration "$*")"; then
+    echo "agyr: cannot parse duration '$*', using default 5h" >&2
+    secs=$DEFAULT_COOLDOWN
+  fi
+  local until=$(($(now) + secs))
+  state_update '.cooldown[$n]=$u' --arg n "$name" --argjson u "$until"
+  echo "account '$name' cooldown $(fmt_dur "$secs") (reset $(fmt_time "$until"))"
+}
+
+# rename <old> <new>: rename a slot. The login, the cooldown and the saved quota data move with it; nothing else changes
+# (the real token file is not touched, no agy is started).
+cmd_rename() {
+  [ $# -eq 2 ] || die "usage: agyr rename <old> <new>"
+  local old="$1" new="$2"
+  valid_name "$old"; valid_name "$new"; need_jq; init_state
+  lock_acquire # a concurrent use must not write a slot under the old name while it is being renamed
+  [ "$old" != "$new" ] || die "old and new names are the same: '$old'"
+  [ -f "$ACCTS/$old.token" ] || die "no slot '$old' (see: agyr list)"
+  [ ! -e "$ACCTS/$new.token" ] || die "slot '$new' already exists; nothing was changed (remove it first if you really want to replace it)"
+  mv "$ACCTS/$old.token" "$ACCTS/$new.token"
+  state_update '(if .active == $o then .active = $n else . end)
+    | (if ((.cooldown // {}) | has($o)) then .cooldown[$n] = .cooldown[$o] | del(.cooldown[$o]) else . end)
+    | (if ((.quota // {}) | has($o)) then .quota[$n] = .quota[$o] | del(.quota[$o]) else . end)' --arg o "$old" --arg n "$new"
+  echo "renamed slot '$old' to '$new'"
+}
+
+cmd_clear() {
+  [ $# -eq 1 ] || die "usage: agyr clear <name>"
+  valid_name "$1"; need_jq; init_state
+  state_update 'del(.cooldown[$n])' --arg n "$1"
+  echo "cleared cooldown of '$1'"
+}
+
+# Print the account to switch to: among the READY accounts (no cooldown) the one whose weekly limit resets soonest, from the last
+# measurement (the same order 'agyr list' shows); accounts never measured come last, ties by name. The account in use is only
+# returned when nothing else is ready. If none is ready: exit 3 and report the earliest end of a cooldown.
+# -v / --why also prints, on stderr, which account was chosen and why.
+cmd_next() {
+  local why=0
+  case "${1:-}" in -v|--why) why=1 ;; esac
+  need_jq; init_state
+  local cur t n until gwr earliest=0 earliest_n="" fallback="" total=0 nother=0 pick=""
+  cur="$(active_name)"; t="$(now)"
+  while read -r n; do
+    total=$((total + 1))
+    until="$(cooldown_until "$n")"
+    if [ "$until" -gt "$t" ]; then
+      if [ "$earliest" -eq 0 ] || [ "$until" -lt "$earliest" ]; then earliest=$until; earliest_n=$n; fi
+    else
+      if [ "$n" = "$cur" ]; then fallback="$n"
+      else nother=$((nother + 1)); if [ -z "$pick" ]; then pick="$n"; fi; fi
+    fi
+  done < <(rows_by_week_reset " ")
+  [ "$total" -gt 0 ] || die "no accounts yet" 2
+  if [ -z "$pick" ] && [ -n "$fallback" ]; then pick="$fallback"; fi
+  if [ -n "$pick" ]; then
+    if [ "$why" = 1 ]; then
+      gwr="$(jq -r --arg n "$pick" '.quota[$n].gwr // empty' "$STATE")"
+      if [ "$nother" -eq 0 ]; then echo "agyr: next account '$pick': no other account is ready, so the one in use stays" >&2
+      elif [ -n "$gwr" ]; then echo "agyr: next account '$pick': weekly limit resets $(fmt_time "$gwr"), the soonest of the $nother other ready account(s)" >&2
+      else echo "agyr: next account '$pick': no quota data yet (run 'agyr list'); first of the $nother other ready account(s) by name" >&2; fi
+    fi
+    echo "$pick"
+    return 0
+  fi
+  echo "agyr: all $total accounts are on cooldown; earliest: '$earliest_n' resets at $(fmt_time "$earliest") ($(fmt_dur $((earliest - t))) left)" >&2
+  return 3
+}
+
+# Find the most recent quota hit in agy's logs; print the seconds left until reset (counted from "now").
+# Log line format: E1001 12:49:02.672827 ... Individual quota reached ... Resets in 3h13m51s.
+# Lines older than 1 hour are ignored (most likely from another account / an earlier hit).
+detect_reset_secs() {
+  local logdir="$AGY_HOME/log" f line best_ts=0 best_reset=0 ts reset d t y t0
+  [ -d "$logdir" ] || return 1
+  t0="$(now)"
+  y="$(date -d "@$t0" +%Y)"
+  while read -r f; do
+    line="$(grep -E 'Individual quota reached.*Resets in [0-9dhms]+' "$f" | tail -n 1)" || true
+    [ -n "$line" ] || continue
+    if [[ "$line" =~ ^[A-Z]([0-9]{2})([0-9]{2})\ ([0-9:]{8}) ]]; then
+      d="$y-${BASH_REMATCH[1]}-${BASH_REMATCH[2]}"; t="${BASH_REMATCH[3]}"
+      ts="$(date -d "$d $t" +%s 2>/dev/null)" || continue
+      [ "$ts" -gt $((t0 + 86400)) ] && ts="$(date -d "$((y - 1))-${BASH_REMATCH[1]}-${BASH_REMATCH[2]} $t" +%s)"
+    else
+      continue
+    fi
+    reset="$(parse_duration "$(grep -oE 'Resets in [0-9dhms]+' <<<"$line" | tail -n 1)")" || continue
+    if [ "$ts" -gt "$best_ts" ]; then best_ts=$ts; best_reset=$reset; fi
+  done < <(find "$logdir" -maxdepth 1 -name 'cli-*.log' -mmin -61 2>/dev/null)
+  [ "$best_ts" -gt 0 ] || return 1
+  [ $((t0 - best_ts)) -le 3600 ] || return 1
+  local remain=$((best_ts + best_reset - t0))
+  [ "$remain" -gt 0 ] || return 1
+  echo "$remain"
+}
+
+# Out of quota while using agy by hand: put the active account on cooldown, then switch to the next account.
+cmd_rotate() {
+  need_jq; init_state
+  local cur secs src
+  cur="$(active_name)"
+  [ -n "$cur" ] || die "no active account (see: agyr list)"
+  if [ $# -ge 1 ]; then
+    secs="$(parse_duration "$*")" || die "cannot parse duration '$*' (example: 4h13m)"
+    src="as you entered"
+  elif secs="$(detect_reset_secs)"; then
+    src="read from the agy log"
+  else
+    secs=$DEFAULT_COOLDOWN
+    src="no recent quota error in the log, using default 5h"
+  fi
+  local until=$(($(now) + secs))
+  state_update '.cooldown[$n]=$u' --arg n "$cur" --argjson u "$until"
+  echo "account '$cur' cooldown $(fmt_dur "$secs") ($src; reset $(fmt_time "$until"))"
+  local nxt
+  if ! nxt="$(cmd_next -v)"; then return 3; fi
+  cmd_use "$nxt"
+  echo "reopen agy (it must be a new process) with: agyr -c"
+}
+
+# Run `agy -p /quota` (no model call, 0 tokens) with HOME = $1 (a temp dir holding a copy of the token);
+# print lines "<group>\t<metric>\t<percent>\t<reset time UTC>". Returns 1 on failure.
+# AGY_HOME is also pointed there so the fake agy in tests reads the right token; real agy ignores it.
+quota_fetch() {
+  local home="$1" agyhome="$2" tmp out
+  tmp="$(mktemp -d)"
+  # PLATFORM_DETACH_WAIT (setsid -w, empty stdin): agy runs without a controlling terminal. Otherwise several agy processes
+  # running in parallel all change/restore your terminal mode (raw mode, terminal capability queries) and leave the
+  # terminal garbled (staircase newlines, no echo). The keyring bypass and the /quota argument exclusion come from the
+  # platform layer (linux/platform.sh, windows/platform.sh).
+  out="$(env HOME="$home" AGY_HOME="$agyhome" "${PLATFORM_ENV_KEYRING[@]}" "${PLATFORM_ENV_NOCONV_QUOTA[@]}" \
+    "${PLATFORM_DETACH_WAIT[@]}" "$AGY_BIN" -p /quota --add-dir "$tmp" \
+    --model gemini-3.8-flash-high --output-format stream-json </dev/null 2>/dev/null |
+    grep '^{' | jq -r 'select(.event=="result") | select(.result.status=="SUCCESS") | .result.response' 2>/dev/null)" || true
+  rm -rf "$tmp"
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
+}
+
+# Measure one slot's quota in a temp HOME: does NOT touch the real token file, so it cannot break a running agy/agy-run
+# and can run in parallel. $1 = slot name, $2 = file for the raw result, $3 = name of the active account.
+measure_one() {
+  local name="$1" out="$2" act="$3" home d src rc=0
+  home="$(mktemp -d)"
+  trap 'rm -rf "$home"' EXIT INT TERM
+  d="$home/.gemini/antigravity-cli"
+  mkdir -p "$d"
+  # the account in use is measured from the private copy taken once in measure_all_parallel, never from the live file
+  if [ "$name" = "$act" ] && [ -n "$LIVE_SNAP" ]; then src="$LIVE_SNAP"; else src="$ACCTS/$name.token"; fi
+  cp "$src" "$d/antigravity-oauth-token"; chmod 600 "$d/antigravity-oauth-token"
+  # keep the same installation_id so Google sees the same agy installation
+  if [ -f "$AGY_HOME/installation_id" ]; then cp "$AGY_HOME/installation_id" "$d/installation_id"; fi
+  "$PROBE_FN" "$home" "$d" "$name" >"$out" 2>/dev/null || rc=$?
+  # agy may have refreshed the token itself: write it back to the slot (for the active account the real token file is the source of truth),
+  # but only if it is still the same account: whatever else is in that file must never replace a slot
+  if [ "$name" != "$act" ] && [ -s "$d/antigravity-oauth-token" ] && ! cmp -s "$d/antigravity-oauth-token" "$ACCTS/$name.token" \
+    && [ "$(ident_of "$d/antigravity-oauth-token")" = "$(ident_of "$ACCTS/$name.token")" ]; then
+    atomic_cp "$d/antigravity-oauth-token" "$ACCTS/$name.token"
+  fi
+  return "$rc"
+}
+
+# Parse the raw /quota output ($2) and store a Gemini snapshot in state. What was just measured is the truth, so:
+# at 0% set a cooldown until the reset time; with quota left, clear any cooldown (e.g. the default 5h one set before the reset time was known).
+# Fails if the Gemini numbers are missing.
+quota_ingest() {
+  local name="$1" raw="$2" grp metric pct reset epoch g5="" g5r=0 gw="" gwr=0 g5off=0
+  while IFS=$'\t' read -r grp metric pct reset; do
+    case "$grp|$metric" in
+      "Gemini Models|Five Hour"*)
+        if [ -n "$reset" ]; then
+          epoch="$(date -d "$reset" +%s 2>/dev/null)" || continue
+          g5="${pct%\%}"; g5r="$epoch"
+        elif [[ "$pct" =~ ^[A-Za-z]+$ ]]; then
+          g5off=1 # "disabled", no reset time: the weekly limit is used up, so the 5-hour limit does not apply
+        fi ;;
+      "Gemini Models|Weekly"*)
+        [ -n "$reset" ] || continue
+        epoch="$(date -d "$reset" +%s 2>/dev/null)" || continue
+        gw="${pct%\%}"; gwr="$epoch" ;;
+    esac
+  done <<<"$raw"
+  # g5 = -1 stands for "5-hour limit disabled" (state keeps numbers only, so -1 is the marker)
+  if [ "$g5off" = 1 ] && [ -z "$g5" ]; then g5=-1; g5r=0; fi
+  [[ "$g5" =~ ^-?[0-9]+$ && "$gw" =~ ^[0-9]+$ ]] || return 1
+  state_update '.quota[$n]={at:$t,g5:$a,g5r:$ar,gw:$b,gwr:$br}' --arg n "$name" --argjson t "$(now)" \
+    --argjson a "$g5" --argjson ar "$g5r" --argjson b "$gw" --argjson br "$gwr"
+  local until=0
+  if [ "$g5" -eq 0 ]; then until=$g5r; fi
+  if [ "$gw" -eq 0 ] && [ "$gwr" -gt "$until" ]; then until=$gwr; fi
+  if [ "$until" -gt "$(now)" ]; then
+    state_update '.cooldown[$n]=$u' --arg n "$name" --argjson u "$until"
+  else
+    state_update 'del(.cooldown[$n])' --arg n "$name"
+  fi
+  return 0
+}
+
+# Measure all slots ($@) and store snapshots; MEASURE_FAILED = names of the accounts that failed (space-separated).
+# Runs in the main shell (never in $(...)): the wincred variant must keep its restore/lock state and traps.
+MEASURE_FAILED=""
+# what measure_all runs per account: PROBE_FN <home> <agy home> <name> prints raw output, INGEST_FN <name> <raw> stores it
+# (default: the quota measurement; 'agyr test' swaps in a probe that also sends "Hi")
+PROBE_FN=quota_fetch INGEST_FN=quota_ingest TEST_DIR=""
+declare -A TEST_TRY=() TEST_SKIP=()
+measure_all() {
+  if [ "$BACKEND" = wincred ]; then measure_all_swap "$@"; else measure_all_parallel "$@"; fi
+}
+
+# file backend: every account is measured in parallel, in its own throwaway HOME
+measure_all_parallel() {
+  local -a names=("$@") pids=() failed=()
+  local d act i n
+  d="$(mktemp -d)"
+  # one consistent look at the login in use: which account it is, and a private copy to measure it with, so that a switch made
+  # meanwhile by another agyr / agy-run cannot change what is measured under this account's name
+  lock_acquire; live_load
+  LIVE_SNAP="$(live_snapshot)"; act=""
+  if [ -n "$LIVE_SNAP" ]; then act="$(owner_of "$LIVE_SNAP")"; fi
+  lock_release
+  for n in "${names[@]}"; do
+    measure_one "$n" "$d/$n.out" "$act" &
+    pids+=($!)
+  done
+  for i in "${!names[@]}"; do
+    n="${names[$i]}"
+    if wait "${pids[$i]}" && "$INGEST_FN" "$n" "$(cat "$d/$n.out")"; then :; else failed+=("$n"); fi
+  done
+  rm -rf "$d"
+  if [ -n "$LIVE_SNAP" ]; then rm -f "$LIVE_SNAP"; LIVE_SNAP=""; fi
+  MEASURE_FAILED="${failed[*]:-}"
+}
+
+# wincred backend: the login is ONE shared entry, so the accounts are measured one after another: install a slot's login,
+# run agy -p /quota, take back whatever agy refreshed, go on to the next. At the end the login that was in use is put
+# back (also when interrupted: RESTORE_* + on_exit). A running agy keeps its own copy of the old login, but do not log in
+# or refresh agy by hand while this runs.
+measure_all_swap() {
+  local -a names=("$@") failed=()
+  local d act n
+  d="$(mktemp -d)"
+  lock_acquire
+  live_load
+  act="$(real_owner)"
+  if [ -n "$LIVE" ]; then
+    cp "$LIVE" "$d/orig"
+    atomic_cp "$LIVE" "$ACCTS/.last-token.bak"
+    # the freshest copy of the login in use goes back into its slot first (as 'use' does)
+    if [ -n "$act" ]; then atomic_cp "$LIVE" "$ACCTS/$act.token"; fi
+    RESTORE_KIND=file; RESTORE_FILE="$d/orig"
+  else
+    RESTORE_KIND=none
+  fi
+  for n in "${names[@]}"; do
+    live_put "$ACCTS/$n.token"
+    if "$PROBE_FN" "$HOME" "$AGY_HOME" "$n" >"$d/$n.out" 2>/dev/null && "$INGEST_FN" "$n" "$(cat "$d/$n.out")"; then :; else failed+=("$n"); fi
+    # agy may have refreshed the login itself: take it back into the slot, but only if it is still the same account
+    live_load
+    if [ -n "$LIVE" ] && [ "$(ident_of "$LIVE")" = "$(ident_of "$ACCTS/$n.token")" ] && ! cmp -s "$LIVE" "$ACCTS/$n.token"; then
+      atomic_cp "$LIVE" "$ACCTS/$n.token"
+    fi
+  done
+  # put the login that was in use back: its slot (freshest), else the unsaved original, else no login at all
+  if [ -n "$act" ]; then live_put "$ACCTS/$act.token"
+  elif [ -f "$d/orig" ]; then live_put "$d/orig"
+  else live_clear
+  fi
+  RESTORE_KIND=""; RESTORE_FILE=""
+  lock_release
+  rm -rf "$d"
+  MEASURE_FAILED="${failed[*]:-}"
+}
+
+# Slot names ordered by when the weekly limit resets (from the last measurement), soonest first. Accounts without usable data
+# (never measured, or just failed to measure) come last; ties are broken by name. $1 = " names that failed " (padded with spaces).
+rows_by_week_reset() {
+  local failed="$1" n gwr
+  while read -r n; do
+    gwr="$(jq -r --arg n "$n" '.quota[$n].gwr // empty' "$STATE")"
+    if [[ "$failed" == *" $n "* ]] || [ -z "$gwr" ]; then gwr=99999999999; fi
+    printf '%s %s\n' "$gwr" "$n"
+  done < <(slots) | sort -k1,1n -k2,2 | cut -d' ' -f2
+}
+
+# Print the table from state. $1 = names of accounts that failed to measure, $2 = 1 if measured just now.
+print_table() {
+  local failed=" $1 " live="$2" t cur n snap g5 g5r gw gwr at until st sc oldest=0 mark
+  t="$(now)"; cur="$(real_owner)"
+  # Colours: green = fine, yellow = needs attention, red = nearly out / unusable. Only used on a terminal (or with
+  # AGYR_COLOR=always); NO_COLOR or AGYR_COLOR=never turns them off. Colour codes sit outside the padded fields so the table stays aligned.
+  local G="" Y="" R="" Z="" usecolor=0
+  case "${AGYR_COLOR:-auto}" in
+    always) usecolor=1 ;;
+    never) usecolor=0 ;;
+    *) if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then usecolor=1; fi ;;
+  esac
+  if [ "$usecolor" = 1 ]; then G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; Z=$'\033[0m'; fi
+  pct() { # $1 = % left: <=10 red, <=40 yellow, otherwise green
+    local c="$G"
+    if [ "$1" -le 10 ]; then c="$R"; elif [ "$1" -le 40 ]; then c="$Y"; fi
+    printf '%s%3s%%%s' "$c" "$1" "$Z"
+  }
+  cell() { # $1 = % left (-1 = limit disabled), $2 = reset time (epoch)
+    if [ "$1" = -1 ]; then printf '%4s  %-19s' 'off' ''
+    elif [ -z "$1" ] || [ "$2" -le "$t" ]; then printf '%4s  %-19s' '-' ''
+    else printf '%s  %-19s' "$(pct "$1")" "$(fmt_time "$2")"; fi
+  }
+  printf '  %-14s %-25s   %-25s   %s\n' "ACCOUNT" "GEMINI 5H" "GEMINI WEEK" "STATUS"
+  while read -r n; do
+    g5=""; g5r=0; gw=""; gwr=0; at=0
+    snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [.g5,.g5r,.gw,.gwr,.at] | @tsv' "$STATE")"
+    if [ -n "$snap" ]; then IFS=$'\t' read -r g5 g5r gw gwr at <<<"$snap"; fi
+    if [[ "$failed" == *" $n "* ]]; then g5=""; fi
+    if [ -n "$g5" ] && { [ "$oldest" -eq 0 ] || [ "$at" -lt "$oldest" ]; }; then oldest=$at; fi
+    until="$(cooldown_until "$n")"
+    if [[ "$failed" == *" $n "* ]]; then st="measure failed (token expired or agy error)"; sc="$R"
+    elif [ -n "$g5" ] && [ "$gw" -eq 0 ] && [ "$gwr" -gt "$t" ]; then st="weekly limit reached, $(fmt_dur $((gwr - t))) left"; sc="$R"
+    elif [ "$until" -gt "$t" ]; then st="cooldown, $(fmt_dur $((until - t))) left"; sc="$R"
+    elif [ -z "$g5" ]; then st="not measured"; sc="$Y"
+    elif { [ "$g5" != -1 ] && [ "$g5r" -le "$t" ]; } || [ "$gwr" -le "$t" ]; then st="stale, past reset time"; sc="$Y"
+    elif { [ "$g5" != -1 ] && [ "$g5" -le 10 ]; } || [ "$gw" -le 10 ]; then st="low"; sc="$R"
+    else st="ready"; sc="$G"; fi
+    mark=" "; if [ "$n" = "$cur" ]; then mark="*"; fi
+    printf '%s %-14s %s   %s   %s%s%s\n' "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$sc" "$st" "$Z"
+  done < <(rows_by_week_reset "$failed")
+  if [ -n "$LIVE" ] && [ -z "$cur" ]; then
+    echo "${Y}! The login in use matches no slot (just logged in to another account?). Run 'agyr save <name>' to store it; 'agyr use' will not overwrite any slot.${Z}"
+  fi
+  if [ "$live" = 1 ]; then
+    echo "Measured at $(fmt_time "$t")   (* = selected account)"
+  elif [ "$oldest" -gt 0 ]; then
+    echo "Oldest data measured at $(fmt_time "$oldest"). Run 'agyr list' (without -c) to refresh.   (* = selected account)"
+  else
+    echo "No quota data yet; run 'agyr list' (without -c) to measure.   (* = selected account)"
+  fi
+}
+
+# list [-c|--cached]: measure every account's real quota (agy -p /quota, 0 tokens, in parallel) and print a table; * = selected account.
+# -c only prints the saved data and does not call agy.
+cmd_list() {
+  need_jq; init_state
+  local cached=0
+  case "${1:-}" in
+    -c|--cached) cached=1 ;;
+    "") ;;
+    *) die "usage: agyr list [-c|--cached]" 2 ;;
+  esac
+  local -a names=()
+  mapfile -t names < <(slots)
+  if [ "${#names[@]}" -eq 0 ]; then
+    echo "(no accounts yet; log in with 'agy', then run 'agyr save <name>')"
+    return 0
+  fi
+  local failed="" live=0
+  if [ "$cached" -eq 0 ]; then
+    if command -v "$AGY_BIN" >/dev/null; then
+      if [ -t 2 ]; then printf 'Measuring quota of %d accounts…' "${#names[@]}" >&2; fi
+      measure_all "${names[@]}"
+      failed="$MEASURE_FAILED"
+      if [ -t 2 ]; then printf '\r\033[K' >&2; fi
+      live=1
+    else
+      echo "agyr: agy not found ($AGY_BIN), showing saved data" >&2
+    fi
+  fi
+  print_table "$failed" "$live"
+  [ -z "$failed" ]
+}
+
+# run [agy args...]: start agy with the login saved in the token file instead of the OS keyring, so 'agyr use' works.
+cmd_run() {
+  command -v "$AGY_BIN" >/dev/null || die "agy not found ($AGY_BIN)"
+  # wincred: the selected account already IS the login in Credential Manager, nothing to hide
+  if [ "$BACKEND" = wincred ]; then exec "$AGY_BIN" "$@"; fi
+  exec env "${PLATFORM_ENV_KEYRING[@]}" "$AGY_BIN" "$@"
+}
+
+# ---- agyr test: send "Hi" to every account -------------------------------------------------------------------------------
+# One real request per account (~ the cost of the smallest possible agy run), so it uses a little quota. Purpose: the 5-hour
+# window of an account starts counting down from its first request, so this starts every account's window now.
+
+# hi_call <HOME for agy> <AGY_HOME for agy>: run 'agy -p Hi' in an empty temp directory, no tools needed, detached from the
+# terminal. Prints one line  STATUS<US>reply<US>error  (US = unit separator; reply/error on one line, cut at 200 chars)
+# or nothing when agy produced no result at all (then returns 1).
+hi_call() {
+  local home="$1" agyhome="$2" tmp res
+  tmp="$(mktemp -d)"
+  local -a cap=()
+  # timeout runs INSIDE setsid (PLATFORM_DETACH_WAIT): it then leads its own process group and kills agy and whatever agy started
+  if command -v timeout >/dev/null; then cap=(timeout "${AGYR_TEST_TIMEOUT:-120}"); fi
+  res="$(cd "$tmp" && env HOME="$home" AGY_HOME="$agyhome" "${PLATFORM_ENV_KEYRING[@]}" \
+    "${PLATFORM_DETACH_WAIT[@]}" "${cap[@]}" "$AGY_BIN" -p Hi --add-dir "$tmp" --model gemini-3.8-flash-high --print-timeout 90s \
+    --output-format stream-json </dev/null 2>/dev/null |
+    grep '^{' | jq -r 'select(.event=="result") | .result
+      | "\(.status)\u001f\((.response // "") | gsub("[\\t\\r\\n]+"; " ") | .[0:200])\u001f\((.error // "") | gsub("[\\t\\r\\n]+"; " ") | .[0:200])"' 2>/dev/null |
+    tail -n 1)" || true
+  rm -rf "$tmp"
+  [ -n "$res" ] || return 1
+  printf '%s\n' "$res"
+}
+
+# the probe measure_all runs for 'agyr test': quota before, "Hi", quota after (prints the raw quota output of the last one)
+test_probe() {
+  local home="$1" agyhome="$2" name="$3" t0 res
+  quota_fetch "$home" "$agyhome" >"$TEST_DIR/$name.before" 2>/dev/null || : >"$TEST_DIR/$name.before"
+  t0="$(date +%s)"
+  res="$(hi_call "$home" "$agyhome")" || res="NO_RESULT"$'\x1f'$'\x1f'
+  printf '%s\x1f%s\n' "$res" "$(($(date +%s) - t0))" >"$TEST_DIR/$name.hi"
+  quota_fetch "$home" "$agyhome"
+}
+
+# the ingest for 'agyr test': store the quota; the account counts as failed unless it answered "Hi" and its quota was readable
+test_ingest() {
+  local name="$1" raw="$2" st
+  st="$(cut -d$'\x1f' -f1 "$TEST_DIR/$name.hi" 2>/dev/null)"
+  quota_ingest "$name" "$raw" || return 1
+  [ "$st" = SUCCESS ]
+}
+
+use_color() {
+  case "${AGYR_COLOR:-auto}" in always) return 0 ;; never) return 1 ;; *) [ -t 1 ] && [ -z "${NO_COLOR:-}" ] ;; esac
+}
+
+# table for 'agyr test'; every account of this run has its files in $TEST_DIR
+print_test_table() {
+  local n st resp err secs txt hcol before after snap g5 g5r reset b_iso b_epoch diff
+  local G="" Y="" R="" Z=""
+  if use_color; then G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; Z=$'\033[0m'; fi
+  printf '  %-14s %-46s %-12s %s\n' "ACCOUNT" "HI" "GEMINI 5H" "RESETS"
+  while read -r n; do
+    if [ -n "${TEST_SKIP[$n]:-}" ]; then
+      printf '  %-14s %s%s%s\n' "$n" "$Y" "skipped (${TEST_SKIP[$n]})" "$Z"
+      continue
+    fi
+    [ -n "${TEST_TRY[$n]:-}" ] || continue
+    st="" resp="" err="" secs=""
+    IFS=$'\x1f' read -r st resp err secs <"$TEST_DIR/$n.hi" || true
+    if [ "$st" = SUCCESS ]; then
+      txt="ok in ${secs}s"; [ -z "$resp" ] || txt="$txt: \"${resp:0:24}\""; hcol="$G"
+    elif [ "$st" = NO_RESULT ] || [ -z "$st" ]; then
+      txt="failed: agy gave no answer (${secs:-?}s)"; hcol="$R"
+    else
+      txt="failed: ${err:-$st}"; hcol="$R"
+    fi
+    [ "${#txt}" -le 46 ] || txt="${txt:0:43}..."
+    before="$(awk -F'\t' '$1=="Gemini Models" && $2 ~ /Five Hour/ {print $3; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
+    snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [.g5,.g5r] | @tsv' "$STATE")"
+    g5="" g5r=""; if [ -n "$snap" ]; then IFS=$'\t' read -r g5 g5r <<<"$snap"; fi
+    after="${g5:+$g5%}"; if [ "$g5" = -1 ]; then after=off; fi
+    if [ "$before" = disabled ]; then before=off; fi
+    reset="-"; [ -z "$g5r" ] || [ "$g5r" = 0 ] || reset="$(fmt_time "$g5r")"
+    # did the reset time move? (that is what shows that the request started a new 5-hour window)
+    b_iso="$(awk -F'\t' '$1=="Gemini Models" && $2 ~ /Five Hour/ {print $4; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
+    b_epoch=""; if [ -n "$b_iso" ]; then b_epoch="$(date -d "$b_iso" +%s 2>/dev/null)" || b_epoch=""; fi
+    if [ -n "$b_epoch" ] && [ -n "$g5r" ]; then
+      diff=$((g5r - b_epoch)); if [ "$diff" -lt 0 ]; then diff=$((-diff)); fi
+      if [ "$diff" -gt 120 ]; then reset="$reset (was $(date -d "@$b_epoch" '+%I:%M %p'))"; fi
+    fi
+    printf '  %-14s %s%-46s%s %-12s %s\n' "$n" "$hcol" "$txt" "$Z" "${before:-?}>${after:-?}" "$reset"
+  done < <(slots)
+  echo "Measured at $(fmt_time "$(now)")   (GEMINI 5H = before>after; RESETS = end of the account's current 5-hour window; \"(was ...)\" = it moved because of the Hi)"
+}
+
+# test [name...]: send "Hi" to every account (or only the named ones) and show what it cost
+cmd_test() {
+  need_jq; init_state
+  command -v "$AGY_BIN" >/dev/null || die "agy not found ($AGY_BIN)"
+  local a n t until
+  local -a all=() names=()
+  for a in "$@"; do
+    valid_name "$a"
+    [ -f "$ACCTS/$a.token" ] || die "no slot '$a' (see: agyr list)"
+  done
+  mapfile -t all < <(slots)
+  if [ "${#all[@]}" -eq 0 ]; then echo "(no accounts yet; log in with 'agyr', then run 'agyr save <name>')"; return 0; fi
+  TEST_TRY=() TEST_SKIP=()
+  t="$(now)"
+  if [ $# -gt 0 ]; then
+    for n in "$@"; do
+      if [ -z "${TEST_TRY[$n]:-}" ]; then TEST_TRY[$n]=1; names+=("$n"); fi
+    done
+  else
+    for n in "${all[@]}"; do
+      until="$(cooldown_until "$n")"
+      if [ "$until" -gt "$t" ]; then TEST_SKIP[$n]="cooldown, $(fmt_dur $((until - t))) left"; else TEST_TRY[$n]=1; names+=("$n"); fi
+    done
+  fi
+  if [ "${#names[@]}" -eq 0 ]; then
+    echo "nothing to do: every account is on cooldown (name an account to send it \"Hi\" anyway: agyr test <name>)"
+    return 0
+  fi
+  echo "Sending \"Hi\" to ${#names[@]} account(s): one real request each, so it uses a little quota..." >&2
+  TEST_DIR="$(mktemp -d)"
+  PROBE_FN=test_probe INGEST_FN=test_ingest
+  measure_all "${names[@]}"
+  PROBE_FN=quota_fetch INGEST_FN=quota_ingest
+  local failed="$MEASURE_FAILED"
+  print_test_table
+  rm -rf "$TEST_DIR"; TEST_DIR=""
+  [ -z "$failed" ]
+}
+
+cmd_active() { need_jq; init_state; active_name; }
+
+cmd_backend() { echo "$BACKEND"; }
+
+# forget [--force]: drop the login in use LOCALLY so agy asks for a new login (replaces 'rm <token file>'; nothing is revoked at Google).
+# Refuses when the login belongs to no slot (it would be lost), unless --force; it is always backed up first.
+cmd_forget() {
+  local force=0
+  case "${1:-}" in
+    "") ;;
+    -f|--force) force=1 ;;
+    *) die "usage: agyr forget [-f|--force]" 2 ;;
+  esac
+  need_jq; init_state
+  lock_acquire
+  live_load # again: the login may have changed while waiting for the lock
+  if [ -z "$LIVE" ]; then echo "no login in use; nothing to forget"; lock_release; return 0; fi
+  local snap cur
+  snap="$(live_snapshot)"; cur="$(owner_of "$snap")"
+  if [ -z "$cur" ] && [ "$force" = 0 ]; then
+    rm -f "$snap"
+    die "the login in use matches no slot, so forgetting it would lose it: run 'agyr save <name>' first (or 'agyr forget --force'; it is kept in $ACCTS/.last-token.bak either way)"
+  fi
+  atomic_cp "$snap" "$ACCTS/.last-token.bak"
+  if [ -n "$cur" ]; then atomic_cp "$snap" "$ACCTS/$cur.token"; fi # keep the freshest copy
+  rm -f "$snap"
+  live_clear
+  state_update '.active=""' # nobody is logged in now: 'agyr active' prints nothing and agy-run stops with "no active account"
+  lock_release
+  echo "login removed from this machine${cur:+ (still saved as slot '$cur')}; nothing was revoked at Google."
+  echo "run 'agyr' to log in to another account, then 'agyr save <name>'"
+}
+
+usage() {
+  cat <<'EOF'
+agyr — rotate between multiple agy (Antigravity CLI) accounts
+
+Usage: agyr <command> [args]        (agyr help <command> for the details of one command)
+       agyr [agy arguments]         start agy with the selected account (same as 'agyr run'): 'agyr', 'agyr -c', 'agyr -p "..."'
+
+Commands:
+  list [-c]                Measure every account's quota and show a table (* = selected account)
+  save <name>              Save the current login as slot <name>
+  use <name>               Switch to slot <name>
+  rename <old> <new>       Rename a slot (its login, cooldown and quota data move with it)
+  active                   Print the name of the account in use
+  run [agy args]           Start agy with the selected account; plain 'agyr' / 'agyr -c' do the same
+  rotate [time]            Interactive agy ran out of quota: cool this account down, switch to the next one
+  next [-v]                Print the ready account whose weekly limit resets soonest (what agy-run switches to)
+  cooldown <name> <time>   Mark an account as out of quota for a while
+  clear <name>             Remove an account's cooldown
+  test [name...]           Send "Hi" to every account (uses a little real quota) to start each 5-hour window
+  forget [-f|--force]      Drop the login in use locally, so 'agyr' asks for a new login (replaces 'rm <token file>')
+  backend                  Print where the login lives: file (Linux) or wincred (Windows Credential Manager)
+  help [command]           This overview, or the details of one command
+
+Typical use:
+  agyr save work           After logging in with 'agy': store that login as slot 'work' (once per account)
+  agyr list                Which account still has quota?
+  agyr use other           Switch account, then reopen agy with 'agyr'
+  agyr rotate              agy ran out of quota: cool this account down and switch, then run 'agyr -c'
+
+After every manual login with 'agy', run 'agyr save <name>' so the slot does not drift from the real account.
+EOF
+  if [ "$BACKEND" = wincred ]; then
+    cat <<'EOF'
+WINDOWS: agy keeps its login in ONE Windows Credential Manager entry (gemini:antigravity). 'agyr use' overwrites that
+entry with the slot's login (the previous login is backed up in accounts/.last-token.bak), so plain 'agy' and 'agyr'
+behave the same afterwards. 'agyr list' measures the accounts one after another, then puts your login back.
+EOF
+  else
+    cat <<'EOF'
+IMPORTANT: agy 1.2.14+ keeps its login in the OS keyring and ignores the token file, so a plain 'agy' always uses the
+account stored there, whatever 'agyr use' selected. Start agy with plain 'agyr' (same as 'agyr run'; 'agyr -c' continues the last conversation) to use
+the selected account. 'agyr list' and agy-run already take care of this themselves.
+EOF
+  fi
+  cat <<'EOF'
+
+Exit codes:   0 ok | 1 error (or an account could not be measured) | 2 bad usage | 3 no account is ready
+Environment:  AGYR_COLOR=auto|always|never (also NO_COLOR) | AGY_TZ (default UTC-7, i.e. UTC+7) | AGY_HOME | AGY_BIN |
+              AGYR_BACKEND=file|wincred (default: by OS) | AGY_CRED_TARGET (wincred entry, default gemini:antigravity)
+Files:        ~/.gemini/antigravity-cli/accounts/<name>.token (slots), accounts/state.json (active account, cooldowns,
+              last measured quota), accounts/.last-token.bak (token that was replaced by the last 'use')
+Also:         agy-run --help   (runs an agy task headless with automatic account rotation)
+EOF
+}
+
+# agyr help [command] / agyr <command> --help
+help_for() {
+  case "${1:-}" in
+    "") usage ;;
+    save) cat <<'EOF'
+Usage: agyr save <name>
+
+Save the login currently in use (the token file ~/.gemini/antigravity-cli/antigravity-oauth-token) as slot <name> and
+make <name> the active account. <name> may contain letters, digits, '-' and '_'.
+
+Run it once per account after logging in with 'agy', and again after every manual re-login.
+EOF
+      ;;
+    use) cat <<'EOF'
+Usage: agyr use <name>
+
+Switch to slot <name>. The token currently in use is first written back to the slot it belongs to (matched by
+refresh_token, so an access token that agy refreshed is not lost). A token that matches no slot is never written into
+any slot; it stays in accounts/.last-token.bak.
+
+A running agy keeps its old token: reopen agy after switching ('agy -c' continues the last conversation).
+EOF
+      ;;
+    list|ls) cat <<'EOF'
+Usage: agyr list [-c|--cached]        (alias: ls)
+
+Measure the real quota of every saved account with 'agy -p /quota' (no model call, 0 tokens) and print one table row per
+account. The accounts are measured in parallel, each in a throwaway HOME holding a copy of its token, so the token in use
+is never touched and running agy / agy-run processes are not disturbed.
+
+Rows are ordered by when the weekly limit resets, soonest first (accounts without data, never measured or just failed, come
+last); this is the order in which the weekly limits free up.
+
+  *            marks the account the real token file belongs to
+  GEMINI 5H    % left of the 5-hour limit and when it resets
+  GEMINI WEEK  % left of the weekly limit and when it resets
+  STATUS       ready | low (10% or less left) | weekly limit reached, <time> left (the 5-hour limit then shows 'off':
+               it does not apply) | cooldown, <time> left | not measured | stale, past reset time | measure failed
+
+An account at 0% automatically gets a cooldown until its reset time; an account with quota left has its cooldown cleared.
+Colours: green above 40%, yellow 11-40%, red 10% or less. Only on a terminal (see NO_COLOR and AGYR_COLOR).
+
+Options:
+  -c, --cached   do not call agy; print the data saved by the last measurement
+
+Exit code: 0 ok, 1 some account could not be measured.
+EOF
+      ;;
+    rename) cat <<'EOF'
+Usage: agyr rename <old> <new>
+
+Rename slot <old> to <new>. The saved login, the cooldown, the last measured quota and the "active" mark move with it.
+The real token file is not touched and agy is not started. Names may contain letters, digits, '-' and '_'.
+
+It refuses (exit 1, nothing changed) if <old> does not exist or <new> already exists. Do not rename a slot while an
+agy-run is using it: agy-run remembers the name it started with.
+EOF
+      ;;
+    active) cat <<'EOF'
+Usage: agyr active
+
+Print the name of the account in use: the slot the real token file belongs to (matched by refresh_token). If the token
+file matches no slot, the name stored in state is printed instead. Prints nothing when there is no active account.
+EOF
+      ;;
+    cooldown) cat <<'EOF'
+Usage: agyr cooldown <name> <time>
+
+Mark <name> as out of quota for <time>; 'next', 'rotate' and agy-run skip it until then.
+
+<time> accepts 4h13m27s, 43m, 1d2h, plain seconds (90), or a whole sentence such as
+"Individual quota reached. Resets in 4h13m27s." If it cannot be parsed, 5h is used.
+
+'agyr list' sets and clears cooldowns by itself from the measured quota, so this is rarely needed by hand.
+EOF
+      ;;
+    clear) cat <<'EOF'
+Usage: agyr clear <name>
+
+Remove the cooldown of <name>.
+EOF
+      ;;
+    next) cat <<'EOF'
+Usage: agyr next [-v|--why]
+
+Print the account to switch to: among the ready accounts (those not on cooldown) the one whose weekly limit resets soonest, from
+the last measurement; this is the order 'agyr list' shows. Accounts never measured come last, ties are broken by name. The
+account in use is returned only when nothing else is ready. 'agy-run' and 'agyr rotate' use this to pick the next account,
+so keep the numbers fresh with 'agyr list'.
+If every account is on cooldown: print nothing, report on stderr which one resets first, and exit 3.
+  -v, --why   also say on stderr which account was chosen and why
+EOF
+      ;;
+    rotate) cat <<'EOF'
+Usage: agyr rotate [<time>]
+
+For when an interactive agy runs out of quota: put the active account on cooldown and switch to the next ready one.
+The reset time is read from the most recent "Individual quota reached ... Resets in X" line in agy's log (only lines from
+the last hour); pass <time> (for example 4h13m) to give it yourself. If neither is available, 5h is used.
+
+Then exit agy and reopen it with 'agy -c' (a running agy keeps its old token).
+Exit code 3, and no switch, if every account is on cooldown.
+EOF
+      ;;
+    run) cat <<'EOF'
+Usage: agyr run [agy arguments...]        (shorthand: agyr [agy arguments...])
+
+Start agy (interactive, or any agy arguments you pass, e.g. 'agyr -c' or 'agyr -p "..."') using the login saved
+in the token file, i.e. the account selected by 'agyr use' / 'agyr rotate' / 'agyr list'.
+
+Why it exists: since agy 1.2.14 the login is kept in the OS keyring (GNOME keyring over D-Bus) and the token file is
+ignored while the keyring is reachable, so a plain 'agy' keeps using whatever account is stored there. 'agyr run' starts
+agy with the session bus made unreachable, so agy falls back to the token file. Shorthand: 'agyr' alone, or 'agyr' followed by a flag, is the same as 'agyr run ...'.
+
+Note: '--help' / '-h' as the first argument shows agyr's help instead of being passed to agy, and a first argument that
+does not start with '-' is read as an agyr command (use 'agyr run <word>' to pass such an argument to agy, e.g. 'agyr run models').
+EOF
+      ;;
+    test) cat <<'EOF'
+Usage: agyr test [<name>...]
+
+Send "Hi" to every account (or only the named ones) and show what it did: this is ONE REAL REQUEST per account, so it uses a
+little real quota (an agy run costs a baseline of roughly 20k tokens even for a one-word prompt).
+
+Why: the idea is that an account's 5-hour limit window starts counting down at its first request, so one "Hi" per account
+starts every window at the same moment. THAT IS AN ASSUMPTION, not something agy documents: check it. The RESETS column
+shows the reset time after the call and, when the call moved it, "(was hh:mm)" with the time before; if nothing moved for an
+account that had not been used, the Hi did not start a new window.
+
+For each account it measures the quota (0 tokens), sends "Hi" with 'agy -p Hi' (model gemini-3.8-flash-high, no tools,
+empty temporary directory, nothing of yours is read), then measures again. The table shows the reply (or the error), the
+5-hour % before>after and the reset time. The accounts are handled like in 'agyr list' (in parallel on Linux, one after the
+other on Windows), the login in use is never touched, and the saved quota data is updated.
+
+Without names, accounts that are on cooldown (out of quota) are skipped. A named account is always tried.
+Exit code: 0 if every tried account answered, 1 if some did not.
+Environment: AGYR_TEST_TIMEOUT (seconds an account may take, default 120)
+EOF
+      ;;
+    forget) cat <<'EOF'
+Usage: agyr forget [-f|--force]
+
+Remove the login in use from THIS machine only (the token file on Linux, the Credential Manager entry on Windows), so the
+next 'agyr' asks you to log in again. Nothing is revoked at Google, which is why this is used instead of agy's own logout.
+Use it between logging in to different accounts: 'agyr' (log in), 'agyr save <name>', 'agyr forget', 'agyr' (next account)...
+Log in with 'agyr', not a bare 'agy': on Linux a bare 'agy' (1.2.14+) logs in through the OS keyring and leaves the token file stale.
+
+The login is backed up in accounts/.last-token.bak first. If it belongs to no slot it would be lost, so forget refuses
+until you run 'agyr save <name>' (or pass -f / --force). It also clears the "active" mark, so 'agyr active' prints nothing and
+agy-run refuses to start (exit 4) until a login exists again. Do not forget while an agy-run is running.
+EOF
+      ;;
+    help) cat <<'EOF'
+Usage: agyr help [<command>]
+
+Show the overview, or the details of one command. 'agyr <command> --help' works too.
+EOF
+      ;;
+    *) echo "agyr: no such command '$1'" >&2; usage >&2; return 2 ;;
+  esac
+}
+
+main() {
+  # bare 'agyr' and 'agyr -<flag> ...' start agy (same as 'agyr run ...'); only -h/--help show agyr's help
+  if [ $# -eq 0 ]; then cmd_run; fi
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -*) cmd_run "$@" ;;
+  esac
+  local c="$1"; shift
+  # agyr <command> --help
+  case "${1:-}" in
+    -h|--help) if [ -n "$c" ]; then help_for "$c"; exit $?; fi ;;
+  esac
+  # commands that look at the login in use (cmd_use loads it itself, under the lock)
+  case "$c" in save|list|ls|active|next|rotate) live_load ;; esac
+  case "$c" in
+    backend) cmd_backend ;;
+    save) cmd_save "$@" ;;
+    use) cmd_use "$@" ;;
+    rename) cmd_rename "$@" ;;
+    forget) cmd_forget "$@" ;;
+    test) cmd_test "$@" ;;
+    list|ls) cmd_list "$@" ;;
+    active) cmd_active "$@" ;;
+    cooldown) cmd_cooldown "$@" ;;
+    clear) cmd_clear "$@" ;;
+    next) cmd_next "$@" ;;
+    rotate) cmd_rotate "$@" ;;
+    run) cmd_run "$@" ;;
+    "") usage ;;
+    help) help_for "$@" ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+main "$@"

@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# agy-run — run one agy task; when the account runs out of quota (429), kill agy, switch to
+# another account with agyr and resume the very same conversation.
+#
+# Usage:
+#   agy-run --prompt FILE --add-dir DIR --log FILE.jsonl [--model M] [--conversation ID]
+#
+# Exit codes:
+#   0 success | 1 other agy failure | 2 bad arguments
+#   4 login error (the user must log in again) | 5 whole pool out of quota | 6 switched accounts too many times
+#
+# Environment variables (for tests):
+#   AGY_BIN             agy binary (default agy)
+#   AGY_ACCT            agyr command (default: the file next to this script)
+#   AGY_RUN_POLL        seconds between two looks at the log (default 1)
+#   AGY_RUN_MAX_SWITCH  maximum number of account switches (default 10: the pool has about 9 accounts)
+set -uo pipefail
+
+AGY_BIN="${AGY_BIN:-agy}"
+AGY_ACCT="${AGY_ACCT:-$(dirname "$(readlink -f "$0")")/agyr}"
+POLL="${AGY_RUN_POLL:-1}"
+MAX_SWITCH="${AGY_RUN_MAX_SWITCH:-10}"
+MODEL="gemini-3.8-flash-high"
+# The platform layer (linux/ or windows/) holds the keyring bypass, the process-group helpers and the Git Bash quirks.
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLATFORM=windows ;; *) PLATFORM=linux ;; esac
+. "$(dirname "$(readlink -f "$0")")/../$PLATFORM/platform.sh"
+platform_init
+# Ask agyr which login backend is in use (file | wincred)
+BACKEND="$("$AGY_ACCT" backend 2>/dev/null)" || BACKEND=file
+
+# A real 429 shows up as plain-text lines at the start of a line ("error: Individual quota reached ..." and
+# "AGY_ERROR: {... RESOURCE_EXHAUSTED (code 429) ...}"). When a conversation is resumed, agy can ALSO echo the old quota
+# error inside the final {"event":"result",...} JSON line even though the new run worked (seen 2026-10-01: four false
+# "429"s in one session, with an unchanged "Resets in" value). JSON lines therefore must not count, otherwise an account
+# that still has quota is put on cooldown and the run needlessly moves to the next account.
+QUOTA_RE='^(error: Individual quota reached|AGY_ERROR: .*RESOURCE_EXHAUSTED \(code 429\))'
+AUTH_RE="authentication required|authentication failed or timed out|not logged into Antigravity"
+
+usage() {
+  cat <<'EOF'
+agy-run — run one agy task headless, rotating accounts when one runs out of quota
+
+Usage: agy-run --prompt FILE --add-dir DIR --log FILE.jsonl [--model M] [--conversation ID]
+
+  --prompt FILE       file containing the task prompt
+  --add-dir DIR       directory agy may work in (always pass it; for code changes use a dedicated git worktree)
+  --log FILE          stream-json log of the run (keep it as an audit trail)
+  --model M           model to use (default gemini-3.8-flash-high)
+  --conversation ID   resume an earlier conversation instead of starting fresh
+
+agy runs with --dangerously-skip-permissions --output-format stream-json. As soon as the log shows "Individual quota
+reached", agy is killed, the account gets a cooldown (from "Resets in ..."), agyr switches to the next ready account and
+the same conversation is resumed with --conversation <id>.
+
+Exit codes:   0 done | 1 agy failed otherwise | 2 bad arguments | 4 login error or no active account |
+              5 whole pool out of quota | 6 switched accounts too many times
+Environment:  AGY_BIN | AGY_ACCT | AGY_RUN_POLL (seconds, default 1) | AGY_RUN_MAX_SWITCH (default 10)
+See also:     agyr help
+EOF
+}
+
+log() { echo "[agy-run] $*" >&2; }
+die() { log "$1"; exit "${2:-1}"; }
+
+PROMPT_FILE="" ADD_DIR="" LOG_FILE="" CONV=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --prompt) PROMPT_FILE="${2:-}"; shift 2 ;;
+    --add-dir) ADD_DIR="${2:-}"; shift 2 ;;
+    --log) LOG_FILE="${2:-}"; shift 2 ;;
+    --model) MODEL="${2:-}"; shift 2 ;;
+    --conversation)
+      CONV="${2:-}"
+      [ -n "$CONV" ] || die "--conversation requires an ID" 2
+      shift 2
+      ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown argument: $1 (usage: --prompt FILE --add-dir DIR --log FILE [--model M] [--conversation ID]; see --help)" 2 ;;
+  esac
+done
+[ -f "$PROMPT_FILE" ] || die "--prompt must be an existing file" 2
+[ -d "$ADD_DIR" ] || die "--add-dir must be an existing directory" 2
+[ -n "$LOG_FILE" ] || die "missing --log" 2
+
+CUR="$("$AGY_ACCT" active)" || die "agyr failed" 1
+[ -n "$CUR" ] || die "no active account; log in, then run: agyr save <name>" 4
+
+ORIG_PROMPT="$(cat "$PROMPT_FILE")"
+RESUME_NOTE="Continue the task from where you stopped. The previous account ran out of quota mid-run, so partial uncommitted edits may already exist in the working directory: check git status/diff first, finish them (do not run tests, builds or linters: the harness verifies afterwards), do not revert them."
+
+PID=""
+OFF=0
+
+# run agy once; returns: 0 finished with SUCCESS | 10 quota | 11 auth | 1 other failure
+run_attempt() {
+  OFF="$(stat -c %s "$LOG_FILE" 2>/dev/null || echo 0)"
+  if [ "$BACKEND" = wincred ]; then
+    # the platform layer switches off Git Bash's rewriting of POSIX-looking arguments and gives the path in Windows form
+    local add_dir
+    add_dir="$(platform_arg_path "$ADD_DIR")"
+    env "${PLATFORM_ENV_NOCONV_ALL[@]}" "$AGY_BIN" "$@" --add-dir "$add_dir" --model "$MODEL" \
+      --dangerously-skip-permissions --output-format stream-json >>"$LOG_FILE" 2>&1 </dev/null &
+  else
+    # PLATFORM_DETACH: setsid gives agy its own process group (killed as one in stop_agy) where it exists;
+    # PLATFORM_ENV_KEYRING: the unreachable session bus on Linux
+    "${PLATFORM_DETACH[@]}" env "${PLATFORM_ENV_KEYRING[@]}" "$AGY_BIN" "$@" --add-dir "$ADD_DIR" --model "$MODEL" \
+      --dangerously-skip-permissions --output-format stream-json >>"$LOG_FILE" 2>&1 &
+  fi
+  PID=$!
+  local chunk
+  while kill -0 "$PID" 2>/dev/null; do
+    chunk="$(tail -c +$((OFF + 1)) "$LOG_FILE")"
+    if grep -qE "$QUOTA_RE" <<<"$chunk"; then stop_agy; return 10; fi
+    if grep -qE "$AUTH_RE" <<<"$chunk"; then stop_agy; return 11; fi
+    sleep "$POLL"
+  done
+  wait "$PID" 2>/dev/null
+  chunk="$(tail -c +$((OFF + 1)) "$LOG_FILE")"
+  if grep -qE "$QUOTA_RE" <<<"$chunk"; then return 10; fi
+  if grep -qE "$AUTH_RE" <<<"$chunk"; then return 11; fi
+  local st err
+  st="$(grep '^{' <<<"$chunk" | jq -r 'select(.event=="result") | .result.status' 2>/dev/null | tail -1)"
+  [ "$st" = "SUCCESS" ] && return 0
+  err="$(grep '^{' <<<"$chunk" | jq -r 'select(.event=="result") | .result.error // empty' 2>/dev/null | tail -1)"
+  log "agy ended with status '${st:-NO_RESULT}'${err:+ (result error: ${err:0:120})}; no new 429 line, so no account switch (read the log)"
+  return 1
+}
+
+stop_agy() { # kill the whole process group (Windows: the whole process tree, see platform_kill_tree), then reap it
+  if [ "$BACKEND" = wincred ] && platform_kill_tree "$PID"; then return 0; fi
+  kill -TERM -- "-$PID" 2>/dev/null || kill -TERM "$PID" 2>/dev/null
+  sleep 0.2
+  kill -KILL -- "-$PID" 2>/dev/null
+  wait "$PID" 2>/dev/null
+  return 0
+}
+
+conv_id_from_log() { # conversation_id of the first init event in the new part of the log
+  tail -c +$((OFF + 1)) "$LOG_FILE" | grep '^{"event":"init"' | head -1 |
+    jq -r '.conversation_id // empty' 2>/dev/null
+}
+
+SWITCHES=0
+if [ -n "$CONV" ]; then
+  ARGS=(--conversation "$CONV" -p "$ORIG_PROMPT")
+else
+  ARGS=(-p "$ORIG_PROMPT")
+fi
+
+while :; do
+  log "running on account '$CUR'${CONV:+ (resume $CONV)}"
+  run_attempt "${ARGS[@]}"
+  rc=$?
+  id="$(conv_id_from_log)"
+  [ -n "$id" ] && CONV="$id"
+
+  case "$rc" in
+    0) log "done (account '$CUR')"; exit 0 ;;
+    11) die "login error on account '$CUR': log in again with '! agy', then 'agyr save $CUR'" 4 ;;
+    10) ;;
+    *) exit 1 ;;
+  esac
+
+  reset="$(tail -c +$((OFF + 1)) "$LOG_FILE" | grep -m1 -E "$QUOTA_RE" | grep -oE 'Resets in [0-9dhms]+' | head -1)"
+  log "account '$CUR' is out of quota (${reset:-reset time unknown})"
+  "$AGY_ACCT" cooldown "$CUR" "${reset:-5h}" >&2 || true
+
+  SWITCHES=$((SWITCHES + 1))
+  [ "$SWITCHES" -le "$MAX_SWITCH" ] || die "switched accounts $MAX_SWITCH times, stopping" 6
+  if ! NEXT="$("$AGY_ACCT" next -v)"; then
+    die "whole pool is out of quota (conversation ${CONV:-none}); wait for a reset or log in to another account" 5
+  fi
+  "$AGY_ACCT" use "$NEXT" >&2 || die "could not switch to '$NEXT'" 1
+  CUR="$NEXT"
+
+  if [ -n "$CONV" ]; then
+    ARGS=(--conversation "$CONV" -p "$RESUME_NOTE")
+  else
+    ARGS=(-p "$ORIG_PROMPT
+
+NOTE: $RESUME_NOTE")
+  fi
+done

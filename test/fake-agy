@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# Fake agy for tests. Behaviour depends on the (fake) token content in $AGY_HOME:
+#   - token listed in FAKE_QUOTA_TOKENS (space-separated) -> print a 429 error, then hang like agy retrying
+#   - FAKE_AUTH=1 -> print a login error, exit 1
+#   - FAKE_STALE_ERROR=1 -> init + a result event with status ERROR that merely echoes an old quota error
+#   - FAKE_KEYRING=1 -> use the "keyring" account unless DBUS_SESSION_BUS_ADDRESS is unreachable
+#   - otherwise -> init + SUCCESS result
+# Every call appends "token|argv" to $FAKE_ARGS_LOG.
+set -u
+JQ=(jq); if jq -b -n . >/dev/null 2>&1; then JQ=(jq -b); fi # a native Windows jq.exe would print CRLF without -b
+if [ -n "${FAKE_CRED_FILE:-}" ]; then
+  # FAKE_CRED_FILE emulates agy on Windows: the login is the (fake) Credential Manager entry, whatever is in $AGY_HOME
+  tok="$(cat "$FAKE_CRED_FILE" 2>/dev/null)" || tok="no-login"
+else
+  tok="$(cat "$AGY_HOME/antigravity-oauth-token")"
+  # FAKE_KEYRING=1 emulates agy >= 1.2.14: the login comes from the OS keyring and the token file is ignored, unless the
+  # session bus is unreachable (then it falls back to the token file).
+  if [ "${FAKE_KEYRING:-0}" = 1 ] && [ "${DBUS_SESSION_BUS_ADDRESS:-}" != "unix:path=/nonexistent" ]; then tok="keyring-account"; fi
+fi
+echo "$tok|$*" >>"${FAKE_ARGS_LOG:?}"
+
+# Fake /quota, same format as the real agy. Percentages derive from the token's last character: 5h = 50+10n, week = 40+10n.
+#   FAKE_DEAD_TOKENS: tokens treated as logged out (status ERROR)
+#   FAKE_ZERO_TOKENS: tokens that are out of 5h quota (0%)
+#   FAKE_P5:          force the 5h percentage for every token
+#   FAKE_LOW_TOKENS:  tokens with 5% of the 5h quota left
+#   FAKE_TTY=1:       try to change the terminal mode (stty) like the real agy
+#   FAKE_WEEKLY_HIT_TOKENS: tokens whose weekly limit is used up (5h line = disabled, no reset time)
+#   FAKE_WEEK_ORDER=1: the weekly reset time depends on the account digit (acc3 earliest), to test the row order
+#   FAKE_HI_SHIFT=1:  after a Hi call the 5h reset time is 10 minutes later (the window "started" by the call)
+#   FAKE_HI_ERROR_TOKENS: tokens whose non-/quota calls end in a quota error (status ERROR) at once
+#   FAKE_CROSSTALK_TOKENS: tokens whose measurement leaves ANOTHER account's login in agy's HOME token file
+#   FAKE_REFRESH=1:   rewrite the token file (simulates agy refreshing the access token itself)
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "-p" ] && [ "$a" = "/quota" ]; then
+    for d in ${FAKE_DEAD_TOKENS:-}; do
+      [ "$d" = "$tok" ] && { echo '{"event":"result","result":{"status":"ERROR","error":"not logged in"}}'; exit 1; }
+    done
+    # FAKE_TTY=1: like the real agy, try to change the controlling terminal's mode (only has an effect if agyr does NOT detach agy from the terminal)
+    if [ "${FAKE_TTY:-0}" = 1 ]; then stty -icanon -echo </dev/tty >/dev/null 2>&1 || true; fi
+    # digit taken from "rt-accN" in a JSON token, otherwise from the token's last character
+    if [[ "$tok" =~ rt-acc([0-9]) ]]; then n="${BASH_REMATCH[1]}"; else n="${tok: -1}"; fi
+    [[ "$n" =~ ^[0-9]$ ]] || n=0
+    p5=$((50 + n * 10)); pw=$((40 + n * 10))
+    for z in ${FAKE_ZERO_TOKENS:-}; do [ "$z" = "$tok" ] && p5=0; done
+    [[ "${FAKE_P5:-}" =~ ^[0-9]+$ ]] && p5="$FAKE_P5"
+    for z in ${FAKE_LOW_TOKENS:-}; do [ "$z" = "$tok" ] && p5=5; done
+    # every earlier 'agy -p Hi' call of this token used 1% of the 5h quota (agyr test)
+    used="$(grep -cF -- "$tok|-p Hi " "$FAKE_ARGS_LOG" 2>/dev/null || true)"
+    p5=$((p5 - ${used:-0})); [ "$p5" -ge 0 ] || p5=0
+    # FAKE_REFRESH=1: agy "refreshes the token itself" by rewriting the token file in its own HOME
+    # (a JSON login keeps its refresh_token and only gets a new access_token, like the real thing)
+    if [ "${FAKE_REFRESH:-0}" = 1 ]; then
+      dest="${FAKE_CRED_FILE:-$AGY_HOME/antigravity-oauth-token}"
+      if [[ "$tok" == "{"* ]]; then "${JQ[@]}" -c '.token.access_token += "-refreshed"' <<<"$tok" >"$dest"; else echo "$tok-refreshed" >"$dest"; fi
+    fi
+    # FAKE_CROSSTALK_TOKENS: during this measurement the login file in agy's HOME ends up holding ANOTHER account's login
+    # (whatever the cause); agyr must never write that into the slot
+    for z in ${FAKE_CROSSTALK_TOKENS:-}; do
+      if [ "$z" = "$tok" ]; then echo '{"token":{"access_token":"at-intruder","refresh_token":"rt-intruder"}}' >"${FAKE_CRED_FILE:-$AGY_HOME/antigravity-oauth-token}"; fi
+    done
+    now="${AGY_NOW:-$(date +%s)}"
+    shift5=0; if [ "${FAKE_HI_SHIFT:-0}" = 1 ] && [ "${used:-0}" -gt 0 ]; then shift5=600; fi # FAKE_HI_SHIFT=1: a Hi call moves the 5h reset time by +10 min
+    r5="$(date -u -d "@$((now + 3600 + shift5))" +%Y-%m-%dT%H:%M:%SZ)"
+    wk=259200; if [ "${FAKE_WEEK_ORDER:-0}" = 1 ]; then wk=$((259200 + (9 - n) * 3600)); fi # FAKE_WEEK_ORDER=1: a higher digit resets its week EARLIER (acc3 < acc2 < acc1)
+    rw="$(date -u -d "@$((now + wk))" +%Y-%m-%dT%H:%M:%SZ)"
+    p5txt="$p5%"; r5gem="$r5"
+    # FAKE_WEEKLY_HIT_TOKENS: the weekly limit is used up; like the real agy the 5-hour line then says "disabled" and has no reset time
+    for z in ${FAKE_WEEKLY_HIT_TOKENS:-}; do if [ "$z" = "$tok" ]; then pw=0; p5txt="disabled"; r5gem=""; fi; done
+    resp="$(printf 'Gemini Models\tWeekly Limit Remaining\t%s%%\t%s\nGemini Models\tFive Hour Limit Remaining\t%s\t%s\nClaude and GPT models\tWeekly Limit Remaining\t100%%\t%s\nClaude and GPT models\tFive Hour Limit Remaining\t100%%\t%s\n' "$pw" "$rw" "$p5txt" "$r5gem" "$rw" "$r5")"
+    "${JQ[@]}" -nc --arg r "$resp" '{event:"result",result:{status:"SUCCESS",response:$r,num_turns:0}}'
+    exit 0
+  fi
+  prev="$a"
+done
+
+cid="conv-fake-1"
+prev=""
+for a in "$@"; do
+  [ "$prev" = "--conversation" ] && cid="$a"
+  prev="$a"
+done
+
+if [ "${FAKE_AUTH:-0}" = 1 ]; then
+  echo "Error: authentication required. Run 'agy' to log in, then retry." >&2
+  exit 1
+fi
+
+echo "{\"event\":\"init\",\"conversation_id\":\"$cid\",\"init\":{\"model\":\"fake\"}}"
+for q in ${FAKE_QUOTA_TOKENS:-}; do
+  if [ "$q" = "$tok" ]; then
+    echo "error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in ${FAKE_RESET:-4h13m19s}. (response may be truncated)"
+    echo 'AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached.","error_code":429}'
+    sleep 30 # the real agy retries ~8 times; agy-run must kill it before that
+    exit 1
+  fi
+done
+for h in ${FAKE_HI_ERROR_TOKENS:-}; do
+  if [ "$h" = "$tok" ]; then
+    # a normal (non-/quota) call that ends in a quota error right away, like a real agy for an exhausted account
+    echo '{"event":"result","result":{"status":"ERROR","response":"","error":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 4h13m19s."}}'
+    exit 0
+  fi
+done
+if [ "${FAKE_STALE_ERROR:-0}" = 1 ]; then
+  # a resumed conversation: the run worked, but the final result event echoes the OLD quota error (no plain-text error lines)
+  echo '{"event":"result","result":{"status":"ERROR","response":"all done","error":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h19m16s.","num_turns":3}}'
+  exit 0
+fi
+echo '{"event":"result","result":{"status":"SUCCESS","response":"ok","num_turns":1}}'
