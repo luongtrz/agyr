@@ -105,7 +105,7 @@ bash "$REPO/test/run.sh" > "$LOG" 2>&1; echo "exit=$?"
 grep '^result:' "$LOG"
 ```
 
-Expected: `exit=0` and `result: 794 pass, 0 fail`. The number may change between versions. `0 fail` is the requirement. On Windows, two checks are skipped on purpose. If anything fails, report the lines that start with `FAIL` and stop.
+Expected: `exit=0` and `result: 794 pass, 0 fail`. The number may change between versions. `0 fail` is the requirement. On Windows, two checks are skipped on purpose. On Windows the suite does not pass at the moment (see `docs/chi-tiet.md`, section Windows). If anything fails, report the lines that start with `FAIL` and stop. Do not try to fix the test suite.
 
 Do not run `agyr list` yet. It needs logins that the user has not saved.
 
@@ -163,6 +163,7 @@ On exit 4 (login), stop and tell the user to log in again. On exit 5, stop and r
 | `another agyr is switching accounts` | another agyr holds the lock | Wait a moment and retry. Do not delete the lock directory. |
 | An install script refuses to replace a file | an unrelated file has the command name | Show the file to the user and ask. |
 | `agyr backend` prints `file` on Windows | `AGYR_BACKEND=file` is set | Unset it. The Windows default is `wincred`. |
+| `refusing to replace ... not a wrapper for this clone` (Windows) | `~/.local/bin/<name>` belongs to another clone | Show the file to the user and ask. After the user agrees, back it up, remove it, and run `bash "$REPO/windows/install.sh"` again. |
 
 ## 10. Environment variables
 

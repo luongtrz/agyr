@@ -24,7 +24,7 @@ Cần `bash`, `git` và `jq`. Trên Linux thêm `timeout` (coreutils) và `setsi
 bash linux/install.sh        # tạo symlink agyr, agy-run, agy-task trong ~/.local/bin
 ```
 
-Trên Windows dùng `bash windows/install.sh` (xem mục bên dưới). Script chỉ tạo symlink hoặc wrapper, không login và không đọc file token. Sau khi cài, `agyr help` phải chạy được và `bash test/run.sh` phải báo `794 pass, 0 fail`. Việc này không cần login. Skill `agy` là bản sao riêng, xem mục [Skill `agy` (bản sao)](#skill-agy-bản-sao).
+Trên Windows dùng `bash windows/install.sh` (xem mục bên dưới). Script chỉ tạo symlink hoặc wrapper, không login và không đọc file token. Sau khi cài, `agyr help` phải chạy được và `bash test/run.sh` phải báo `794 pass, 0 fail` (trên Windows hiện chưa đạt, xem [Tình trạng test trên Windows](#tình-trạng-test-trên-windows)). Việc này không cần login. Skill `agy` là bản sao riêng, xem mục [Skill `agy` (bản sao)](#skill-agy-bản-sao).
 
 ### Cấu trúc repo
 
@@ -35,13 +35,46 @@ Trên Windows dùng `bash windows/install.sh` (xem mục bên dưới). Script c
 
 ## Windows (Git Bash)
 
-Chạy trong **Git Bash**, cần `jq` (ví dụ `winget install jqlang.jq`). Lệnh cài:
+Chạy trong **Git Bash** (đi kèm Git for Windows). Cần:
+
+- `jq` (ví dụ `winget install jqlang.jq`);
+- PowerShell (`powershell.exe` trên PATH), `cygpath` và `taskkill` (cũng đi kèm Git for Windows);
+- agy chính thức, `agy.exe`, thường nằm trong `%LOCALAPPDATA%\agy\bin`. Đã thử với agy 1.4.9 trên Windows 11.
+
+### Cài lệnh
+
+Chạy trong thư mục clone của repo:
 
 ```bash
 bash windows/install.sh
 ```
 
 Git Bash không tạo symlink dùng được, nên script ghi ba wrapper nhỏ, mỗi cái gọi `bin/<tên>` trong repo (`git pull` là cập nhật). Đường dẫn repo được ghi cứng vào wrapper, nên nếu chuyển thư mục repo thì chạy lại script.
+
+Script lưu ba lệnh vào `~/.local/bin` (tức `C:\Users\<bạn>\.local\bin`). Thư mục này phải có trong PATH của Git Bash. Script không tự sửa `~/.bashrc`; nếu thiếu, thêm dòng này:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Nếu `~/.local/bin/<tên>` đã có mà không phải wrapper của clone này (ví dụ đã cài từ một clone khác), script in `refusing to replace ...` và không ghi gì. Khi đó sao lưu các file đó, xóa, rồi chạy lại script:
+
+```bash
+mkdir -p ~/tools/wrapper-backup
+for n in agyr agy-run agy-task; do [ -e ~/.local/bin/$n ] && cp -p ~/.local/bin/$n ~/tools/wrapper-backup/ && rm ~/.local/bin/$n; done
+bash windows/install.sh
+```
+
+Kiểm tra:
+
+```bash
+agyr help | head -1
+agy-run --help | head -1
+agy-task --help | head -1
+agyr backend          # phải in: wincred
+```
+
+### Đăng nhập và kiểm tra
 
 Trên Windows `agy` lưu đăng nhập trong **một mục Windows Credential Manager** (target `gemini:antigravity`, loại generic, nội dung là JSON giống file token trên Linux). Không có file token, và không có cách chuyển hướng cho từng tiến trình, nên `agyr` tự chọn backend `wincred` (xem `agyr backend`) và đổi account bằng cách **ghi đè chính mục đó**:
 
@@ -51,22 +84,35 @@ Trên Windows `agy` lưu đăng nhập trong **một mục Windows Credential Ma
 - `agyr forget`: xóa login hiện tại **chỉ ở máy này** (không thu hồi gì phía Google), để `agy` hỏi đăng nhập account khác. Thay cho `rm ~/.gemini/antigravity-cli/antigravity-oauth-token` của Linux. Từ chối nếu login chưa nằm trong slot nào (trừ khi `--force`).
 - Mọi thao tác ghi vào Credential Manager đều dùng khóa `accounts/.swap.lock`, để `agy-run` và `agyr list` chạy cùng lúc không giẫm lên nhau. Từ 09/10/2026 khóa này cũng bảo vệ backend file trên Linux (xem mục "Chạy song song" bên dưới); khóa là một file tạo độc quyền (`set -o noclobber`), **không dùng `mkdir`**, vì `mkdir` của uutils coreutils (mặc định trên Ubuntu mới) không nguyên tử.
 
-Setup một lần trên Windows:
+Đăng nhập từng account, lặp lại cho mỗi account:
 
 ```bash
-agy                       # đăng nhập account 1, rồi thoát
-agyr save acc1
-agyr forget
-agy                       # đăng nhập account 2, rồi thoát
+agyr                      # mở agy bằng slot đang chọn; đăng nhập account 1, rồi thoát agy
+agyr save acc1            # lưu login vừa đăng nhập thành slot acc1
+agyr forget               # xóa login cục bộ, để đăng nhập account tiếp theo
+agyr                      # đăng nhập account 2, rồi thoát agy
 agyr save acc2
 agyr forget
-agy                       # đăng nhập account 3...
+agyr                      # đăng nhập account 3...
 agyr save acc3
-agyr use acc1 # chọn account dùng hằng ngày
-agyr list                 # kiểm tra từng slot còn sống
+agyr use acc1             # chọn account dùng hằng ngày
+agyr list                 # kiểm tra từng slot: mỗi slot phải có số quota riêng
 ```
 
 Slot là file thường, được bảo vệ bằng quyền của thư mục profile Windows (không có `chmod 600` trên NTFS). Các file riêng của Windows nằm trong `windows/`: `cred.sh` + `cred.ps1` (đọc/ghi/xóa mục Credential Manager, không bao giờ in nội dung) và `inspect-cred.ps1` (chỉ in metadata của mục, không in giá trị, để chẩn đoán). Đổi target bằng `AGY_CRED_TARGET`, ép backend bằng `AGYR_BACKEND=file|wincred`.
+
+### Skill `agy` cho Claude Code (toàn cục)
+
+Để Claude Code trên máy này dùng skill `agy` ở mọi project, chép skill vào `~/.claude/skills/agy` (tức `C:\Users\<bạn>\.claude\skills\agy`). Nếu thư mục đó đã có, đổi tên bản cũ trước thay vì ghi đè:
+
+```bash
+[ -e ~/.claude/skills/agy ] && mv ~/.claude/skills/agy ~/.claude/agy-skill-backup   # nếu tên này đã có, chọn tên khác
+mkdir -p ~/.claude/skills && cp -r skill/agy ~/.claude/skills/agy
+```
+
+### Tình trạng test trên Windows
+
+`bash test/run.sh` trên Windows **chưa đạt**. Lần chạy gần nhất ghi 207 kiểm tra OK và 48 FAIL, chủ yếu ở mục `agy-run`; sau đó chạy tới mục `concurrency` và không kết thúc được trong hơn 10 phút. Nguyên nhân: `test/run.sh` đặt `FAKE_KEYRING=1` cho mọi hệ điều hành, nhưng giả lập keyring đó chỉ khớp với Linux (ở đó `linux/platform.sh` đưa agy về file token qua D-Bus). Trên bản sao có `FAKE_KEYRING=0`, mục `agy-run` đi qua hết. Repo chưa sửa dòng này. Lệnh cài đặt và `agyr help` đã chạy được trên Windows.
 
 ## Quan trọng (Linux): agy từ bản 1.2.14 dùng kho mật khẩu của hệ điều hành
 
@@ -310,7 +356,7 @@ Bản sao đã được làm sạch: tên tài khoản được thay bằng `acc
 bash test/run.sh
 ```
 
-794 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
+794 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm. Trên Windows bộ test hiện chưa đạt, xem [Tình trạng test trên Windows](#tình-trạng-test-trên-windows).
 
 ## Giới hạn đã biết
 
