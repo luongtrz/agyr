@@ -33,6 +33,14 @@ for n in "${COMMANDS[@]}"; do
   printf '#!/usr/bin/env bash\nexec "%s/bin/%s" "$@"\n' "$REPO" "$n" > "$BIN_DIR/$n"
   chmod +x "$BIN_DIR/$n"
   echo "wrote $BIN_DIR/$n -> $REPO/bin/$n"
+
+  cat << CMD_EOF > "$BIN_DIR/$n.cmd"
+@echo off
+rem $n for PowerShell / cmd: runs the bash script with Git Bash
+"%ProgramFiles%\\Git\\bin\\bash.exe" "$REPO/bin/$n" %*
+exit /b %ERRORLEVEL%
+CMD_EOF
+  echo "wrote $BIN_DIR/$n.cmd -> $REPO/bin/$n"
 done
 
 case ":$PATH:" in
