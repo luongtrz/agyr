@@ -101,13 +101,20 @@ agyr list                 # kiểm tra từng slot: mỗi slot phải có số q
 
 Slot là file thường, được bảo vệ bằng quyền của thư mục profile Windows (không có `chmod 600` trên NTFS). Các file riêng của Windows nằm trong `windows/`: `cred.sh` + `cred.ps1` (đọc/ghi/xóa mục Credential Manager, không bao giờ in nội dung) và `inspect-cred.ps1` (chỉ in metadata của mục, không in giá trị, để chẩn đoán). Đổi target bằng `AGY_CRED_TARGET`, ép backend bằng `AGYR_BACKEND=file|wincred`.
 
-### Skill `agy` cho Claude Code (toàn cục)
+### Skill `agy` cho Claude Code và Antigravity (toàn cục)
 
-Để Claude Code trên máy này dùng skill `agy` ở mọi project, chép skill vào `~/.claude/skills/agy` (tức `C:\Users\<bạn>\.claude\skills\agy`). Nếu thư mục đó đã có, đổi tên bản cũ trước thay vì ghi đè:
+- **Claude Code:** chép skill vào `~/.claude/skills/agy` (tức `C:\Users\<bạn>\.claude\skills\agy`):
 
 ```bash
 [ -e ~/.claude/skills/agy ] && mv ~/.claude/skills/agy ~/.claude/agy-skill-backup   # nếu tên này đã có, chọn tên khác
 mkdir -p ~/.claude/skills && cp -r skill/agy ~/.claude/skills/agy
+```
+
+- **Antigravity (AGY CLI / IDE):** chép skill vào `~/.gemini/config/skills/agy` (tức `C:\Users\<bạn>\.gemini\config\skills\agy`):
+
+```bash
+[ -e ~/.gemini/config/skills/agy ] && mv ~/.gemini/config/skills/agy ~/.gemini/config/skills/agy-backup   # nếu tên này đã có, chọn tên khác
+mkdir -p ~/.gemini/config/skills && cp -r skill/agy ~/.gemini/config/skills/agy
 ```
 
 ### Tình trạng test trên Windows
@@ -339,11 +346,13 @@ Summary ghi vào `.agy-sessions/NAME.summary.txt` (và in ra stdout khi hoàn th
 
 ## Skill `agy` (bản sao)
 
-`skill/agy/` là **bản sao** của skill Claude Code `agy` (`~/.claude/skills/agy/`), được đồng bộ với bản đang dùng tại commit gần nhất (cập nhật bằng lệnh bên dưới): `SKILL.md` (quy trình giao việc, quy tắc an toàn, cách dùng `agy-task`/`agy-run`) và `references/` (chi tiết chỉ đọc khi gặp đúng tình huống: quota/đăng nhập, fallback 503, chạy song song, log và chi phí, quy trình thủ công). Bản đang dùng thật nằm ở `~/.claude/skills/agy/`, thư mục trong repo không tự cập nhật theo.
+`skill/agy/` là **bản sao** của skill `agy` dùng cho cả Claude Code (`~/.claude/skills/agy/`) và Antigravity (`~/.gemini/config/skills/agy/`), được đồng bộ với bản đang dùng tại commit gần nhất: `SKILL.md` (quy trình giao việc, quy tắc an toàn, cách dùng `agy-task`/`agy-run`) và `references/` (chi tiết chỉ đọc khi gặp đúng tình huống: quota/đăng nhập, fallback 503, chạy song song, log và chi phí, quy trình thủ công).
 
 ```bash
-rm -rf skill/agy && cp -r ~/.claude/skills/agy skill/agy                   # cập nhật bản sao trong repo
-mkdir -p ~/.claude/skills && cp -r skill/agy ~/.claude/skills/              # cài lên máy khác
+# Cài cho Claude Code:
+mkdir -p ~/.claude/skills && cp -r skill/agy ~/.claude/skills/
+# Cài cho Antigravity (AGY):
+mkdir -p ~/.gemini/config/skills && cp -r skill/agy ~/.gemini/config/skills/
 ```
 
 Khối HARD RULES cho task implement nằm ở `templates/hard-rules.txt` (`agy-task` tự ghép vào prompt); bản cho task chỉ-đọc nằm ở `skill/agy/references/hard-rules-explore.txt`.

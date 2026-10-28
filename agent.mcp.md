@@ -17,7 +17,7 @@ Using several accounts this way may conflict with Google's terms of service. Say
 1. Never read, print, `cat`, `grep`, open or copy these: `~/.gemini/antigravity-cli/antigravity-oauth-token`, any file under `~/.gemini/antigravity-cli/accounts/`, and the Windows Credential Manager entry `gemini:antigravity`. Allowed: `test -f`, `stat -c %Y` (modification time), and listing file names.
 2. Do not log in to Google. Do not run `agyr save`, `forget`, `rename`, `use`, `rotate`, `cooldown`, `clear` or `test` unless the user asks for that action in this conversation. `agyr test` sends real requests and spends quota.
 3. Never start agy for this pool with a bare `agy`. Use `agyr` (plain, `agyr -c`, or `agyr run ...`), `agy-run` or `agy-task`. On Linux they hide the GNOME keyring, which is what makes account switching work.
-4. Do not overwrite, move or delete any file outside the clone and the three commands you install. That includes `~/.claude/CLAUDE.md`, an existing `~/.claude/skills/agy`, and any existing file in the bin directory. Show the diff and ask first.
+4. Do not overwrite, move or delete any file outside the clone and the three commands you install. That includes `~/.claude/CLAUDE.md`, an existing `~/.claude/skills/agy`, `~/.gemini/config/skills/agy`, and any existing file in the bin directory. Show the diff and ask first.
 5. Do not commit, push, change git remotes, or edit the user's shell profile.
 6. Do not uninstall, and do not delete `~/.gemini/antigravity-cli/accounts/`, unless the user asks in this conversation.
 7. If a step opens a browser or asks for a password, stop and hand it to the user.
@@ -124,9 +124,11 @@ On Windows, `save` and `forget` work on the Credential Manager entry `gemini:ant
 
 After the user confirms the saves, you may run `agyr list -c`. It prints the saved numbers without starting agy. Do not run `agyr list` without asking, because it starts agy once per account (about 10–20 seconds in total).
 
-## 7. Optional: the Claude Code skill
+## 7. Optional: the Claude Code and Antigravity skill
 
-Install this only if the user runs Claude Code on this machine and wants the `agy` skill. The skill tells Claude how to hand work to agy through `agy-task` and `agy-run`.
+Install this only if the user runs Claude Code or Antigravity (AGY CLI / IDE) on this machine and wants the `agy` skill. The skill tells the agent how to hand work to agy through `agy-task` and `agy-run`.
+
+### For Claude Code:
 
 ```bash
 SKILL="$HOME/.claude/skills/agy"
@@ -137,7 +139,18 @@ else
 fi
 ```
 
-If a different skill is already there, show the diff and ask. Do not touch `~/.claude/CLAUDE.md`: it belongs to the user.
+### For Antigravity (AGY CLI / IDE):
+
+```bash
+SKILL="$HOME/.gemini/config/skills/agy"
+if [ -e "$SKILL" ]; then
+  diff -r "$REPO/skill/agy" "$SKILL" && echo "skill already identical"
+else
+  mkdir -p "$HOME/.gemini/config/skills" && cp -r "$REPO/skill/agy" "$SKILL" && echo "skill installed"
+fi
+```
+
+If a different skill is already there, show the diff and ask. Do not touch `~/.claude/CLAUDE.md` or `GEMINI.md`: they belong to the user.
 
 ## 8. What the commands do
 

@@ -34,7 +34,7 @@ Login không tự động được: đăng nhập bằng `agyr`, rồi chạy `a
 
 - [docs/chi-tiet.md](docs/chi-tiet.md): cách hoạt động, lệnh đầy đủ, Windows, keyring, biến môi trường, giới hạn đã biết.
 - [agent.mcp.md](agent.mcp.md): hướng dẫn cài và kiểm tra cho agent AI.
-- [skill/agy](skill/agy): skill Claude Code dùng `agy-task` và `agy-run`.
+- [skill/agy](skill/agy): skill cho Claude Code và Antigravity (AGY) dùng `agy-task` và `agy-run`.
 
 ## Cấu trúc
 
