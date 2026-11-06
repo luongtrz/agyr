@@ -108,6 +108,8 @@ agyr active                   # print active account name
 agyr save <name>              # save current token as a slot
 agyr rename <old> <new>       # rename a slot (login, cooldown, and quota snapshot move with it); refuses if <new> exists
 agyr del <name>               # permanently delete slot <name> (alias: rm; removes token, state, and active login if matching)
+agyr swapui <n1> <n2>         # swap UI display order of two accounts in agyr list without affecting agyr next rotation
+agyr swapui --reset           # restore default weekly reset display order in agyr list
 agyr test [name...]           # send "Hi" to every account to start its 5-hour window (spends real quota; see below)
 agyr forget                   # drop current local login to sign in to another account; refuses if unsaved (-f to force)
 agyr                          # start agy with the selected account (replaces bare `agy`); agyr -c, agyr -p "..." also work
@@ -177,6 +179,15 @@ Permanently removes:
 - The live login (and `accounts/.last-token.bak`) if the active account matches `<name>`, clearing `state.json`'s active entry.
 
 Refuses (exit 1) if `<name>` is invalid or the slot does not exist.
+
+## Customizing display order (`agyr swapui`)
+
+```bash
+agyr swapui <name1> <name2>    # swap UI display positions of two accounts in agyr list
+agyr swapui --reset            # reset display order to default (weekly limit reset order)
+```
+
+Customizes the row order in `agyr list` without affecting account rotation (`agyr next`). Rotation strictly follows weekly reset time regardless of UI ordering.
 
 ## Time zone
 

@@ -323,7 +323,8 @@ cmd_rename() {
   mv "$ACCTS/$old.token" "$ACCTS/$new.token"
   state_update '(if .active == $o then .active = $n else . end)
     | (if ((.cooldown // {}) | has($o)) then .cooldown[$n] = .cooldown[$o] | del(.cooldown[$o]) else . end)
-    | (if ((.quota // {}) | has($o)) then .quota[$n] = .quota[$o] | del(.quota[$o]) else . end)' --arg o "$old" --arg n "$new"
+    | (if ((.quota // {}) | has($o)) then .quota[$n] = .quota[$o] | del(.quota[$o]) else . end)
+    | (if .ui_order then .ui_order |= map(if . == $o then $n else . end) else . end)' --arg o "$old" --arg n "$new"
   echo "renamed slot '$old' to '$new'"
 }
 
@@ -345,7 +346,7 @@ cmd_del() {
   if [ "$is_live" = 1 ]; then
     live_clear
   fi
-  state_update '(if .active == $n then .active = "" else . end) | del(.cooldown[$n]) | del(.quota[$n])' --arg n "$name"
+  state_update '(if .active == $n then .active = "" else . end) | del(.cooldown[$n]) | del(.quota[$n]) | (if .ui_order then .ui_order |= map(select(. != $n)) else . end)' --arg n "$name"
   lock_release
   if [ "$is_live" = 1 ]; then
     echo "deleted account '$name' (and cleared active login)"
@@ -359,6 +360,43 @@ cmd_clear() {
   valid_name "$1"; need_jq; init_state
   state_update 'del(.cooldown[$n])' --arg n "$1"
   echo "cleared cooldown of '$1'"
+}
+
+cmd_swapui() {
+  need_jq; init_state
+  if [ $# -eq 1 ] && { [ "$1" = "--reset" ] || [ "$1" = "reset" ]; }; then
+    lock_acquire
+    state_update 'del(.ui_order)'
+    lock_release
+    echo "reset UI display order to default (weekly limit reset order)"
+    return 0
+  fi
+  [ $# -eq 2 ] || die "usage: agyr swapui <name1> <name2> (or: agyr swapui --reset)"
+  local a="$1" b="$2"
+  valid_name "$a"; valid_name "$b"
+  [ -f "$ACCTS/$a.token" ] || die "no slot '$a' (see: agyr list)"
+  [ -f "$ACCTS/$b.token" ] || die "no slot '$b' (see: agyr list)"
+  [ "$a" != "$b" ] || die "cannot swap an account with itself: '$a'"
+  lock_acquire
+  local -a def_arr=()
+  mapfile -t def_arr < <(rows_by_week_reset " ")
+  local def_json="[]"
+  if [ "${#def_arr[@]}" -gt 0 ]; then
+    def_json="$(printf '%s\n' "${def_arr[@]}" | jq -R . | jq -s .)"
+  fi
+  state_update '
+    (if (.ui_order // []) | length == 0 then $def else .ui_order end) as $base
+    | ($base + [$def[] | select(. as $x | ($base | index($x)) == null)]) as $arr
+    | ($arr | index($a)) as $ia
+    | ($arr | index($b)) as $ib
+    | if $ia != null and $ib != null then
+        .ui_order = ($arr | .[$ia] = $b | .[$ib] = $a)
+      else
+        .
+      end
+  ' --arg a "$a" --arg b "$b" --argjson def "$def_json"
+  lock_release
+  echo "swapped UI positions of '$a' and '$b' in 'agyr list'"
 }
 
 # Print the account to switch to: among the READY accounts (no cooldown) the one whose weekly limit resets soonest, from the last
@@ -638,6 +676,32 @@ rows_by_week_reset() {
   done < <(slots) | sort -k1,1n -k2,2 | cut -d' ' -f2
 }
 
+# Display order for 'agyr list': user-customized order from .ui_order in state.json,
+# followed by any new/unpositioned slots in weekly-reset order.
+rows_for_list() {
+  local failed="$1"
+  local -a ui_order=()
+  mapfile -t ui_order < <(jq -r '(.ui_order // [])[]' "$STATE" 2>/dev/null)
+  if [ "${#ui_order[@]}" -eq 0 ]; then
+    rows_by_week_reset "$failed"
+    return 0
+  fi
+  local -A seen=()
+  local n
+  for n in "${ui_order[@]}"; do
+    if [ -f "$ACCTS/$n.token" ] && [ -z "${seen[$n]:-}" ]; then
+      seen["$n"]=1
+      echo "$n"
+    fi
+  done
+  while read -r n; do
+    [ -n "$n" ] || continue
+    if [ -z "${seen[$n]:-}" ]; then
+      echo "$n"
+    fi
+  done < <(rows_by_week_reset "$failed")
+}
+
 table_dash() { local s; printf -v s "%*s" "$1" ""; echo -n "${s// /─}"; }
 
 term_width() {
@@ -824,7 +888,7 @@ print_table() {
       st_disp="${st:0:$((status_pad - 1))}…"
     fi
     printf '%s│ %s %-14s │ %s │ %s%s │ %s%-*s%s │%s\n' "$row_bg" "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$extra" "$sc" "$status_pad" "$st_disp" "$Z" "$ALL_RST"
-  done < <(rows_by_week_reset "$failed")
+  done < <(rows_for_list "$failed")
   echo "$bot"
   if [ "$claude_hidden" -eq 1 ] && [ "$argon_hidden" -eq 1 ]; then
     echo "(Note: Argon and Claude columns hidden to fit terminal width ${tw}. Use 'agyr list -w' to show all)"
@@ -1280,6 +1344,7 @@ Commands:
   list [-c]                Measure every account's quota and show a table (* = selected account)
   save <name>              Save the current login as slot <name>
   use <name>               Switch to slot <name>
+  swapui <n1> <n2>         Swap UI display order of two accounts in 'agyr list' (--reset to restore)
   rename <old> <new>       Rename a slot (its login, cooldown and quota data move with it)
   del <name>               Delete slot <name> permanently (removes its token and state)
   active                   Print the name of the account in use
@@ -1346,6 +1411,15 @@ refresh_token, so an access token that agy refreshed is not lost). A token that 
 any slot; it stays in accounts/.last-token.bak.
 
 A running agy keeps its old token: reopen agy after switching ('agy -c' continues the last conversation).
+EOF
+      ;;
+    swapui) cat <<'EOF'
+Usage: agyr swapui <name1> <name2>
+       agyr swapui --reset
+
+Swap the display positions of two accounts in 'agyr list' without affecting account rotation ('agyr next').
+
+Use --reset (or 'reset') to clear custom UI ordering and restore default weekly reset order.
 EOF
       ;;
     list|ls) cat <<'EOF'
@@ -1523,6 +1597,7 @@ main() {
     backend) cmd_backend ;;
     save) cmd_save "$@" ;;
     use) cmd_use "$@" ;;
+    swapui) cmd_swapui "$@" ;;
     rename) cmd_rename "$@" ;;
     del|rm) cmd_del "$@" ;;
     forget) cmd_forget "$@" ;;
