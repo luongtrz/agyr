@@ -30,6 +30,7 @@ echo "$tok|$*" >>"${FAKE_ARGS_LOG:?}"
 #   FAKE_HI_SHIFT=1:  after a Hi call the 5h reset time is 10 minutes later (the window "started" by the call)
 #   FAKE_HI_ERROR_TOKENS: tokens whose non-/quota calls end in a quota error (status ERROR) at once
 #   FAKE_CROSSTALK_TOKENS: tokens whose measurement leaves ANOTHER account's login in agy's HOME token file
+#   FAKE_ARGON_TOKENS: tokens whose /quota also lists the "Gemini 4 Argon" group (weekly limit = week% - 15); FAKE_ARGON_5H=1 adds an Argon five-hour line too
 #   FAKE_REFRESH=1:   rewrite the token file (simulates agy refreshing the access token itself)
 prev=""
 for a in "$@"; do
@@ -69,6 +70,12 @@ for a in "$@"; do
     # FAKE_WEEKLY_HIT_TOKENS: the weekly limit is used up; like the real agy the 5-hour line then says "disabled" and has no reset time
     for z in ${FAKE_WEEKLY_HIT_TOKENS:-}; do if [ "$z" = "$tok" ]; then pw=0; p5txt="disabled"; r5gem=""; fi; done
     resp="$(printf 'Gemini Models\tWeekly Limit Remaining\t%s%%\t%s\nGemini Models\tFive Hour Limit Remaining\t%s\t%s\nClaude and GPT models\tWeekly Limit Remaining\t100%%\t%s\nClaude and GPT models\tFive Hour Limit Remaining\t100%%\t%s\n' "$pw" "$rw" "$p5txt" "$r5gem" "$rw" "$r5")"
+    for z in ${FAKE_ARGON_TOKENS:-}; do
+      if [ "$z" = "$tok" ]; then
+        resp+="$(printf '\nGemini 4 Argon\tGemini 4 Argon Weekly Limit\t%s%%\t%s\n' "$((pw - 15))" "$rw")"
+        if [ "${FAKE_ARGON_5H:-0}" = 1 ]; then resp+="$(printf '\nGemini 4 Argon\tGemini 4 Argon Five Hour Limit\t%s%%\t%s' "$((p5 - 5))" "$r5")"; fi
+      fi
+    done
     "${JQ[@]}" -nc --arg r "$resp" '{event:"result",result:{status:"SUCCESS",response:$r,num_turns:0}}'
     exit 0
   fi
