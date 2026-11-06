@@ -10,8 +10,8 @@ Read this when a run ends with, or a running session keeps showing, `UNAVAILABLE
 
 - 503 is Google-side capacity, not quota/auth: re-login, account switch or relaunching on the same model does not help.
 - `agy-run` does not handle 503: it ends with exit 1 and the 503 in the log.
-- Before relaunching on a fallback model: kill the stuck run (the `agy-run` pid and its `agy -p` child, `pgrep -P <agy-run pid>`), check the worktree is still clean (or note partial edits in the new prompt), archive the old `.jsonl` by renaming it (do not delete), reuse the same prompt file unchanged, and relaunch through `agy-run … --model gemini-3.8-flash-medium` (never a bare `agy`).
-- Go back to `gemini-3.8-flash-high` for the next new task. Medium and low are outage fallbacks, not the new default. No other models, ever (no Claude, GPT-OSS).
+- Before relaunching on a fallback model: first check `grep -c '^{' <task>.jsonl` and `tail -1` to be sure `step_update` events are not still growing (`agy-run` stderr only logs account switches and looks idle during a normal run). Then kill the stuck run (`kill -KILL` the `agy-run` pid and its `agy -p` child, `pgrep -P <agy-run pid>`), check the worktree is still clean (or note partial edits in the new prompt), archive the old `.jsonl` by renaming it (do not delete), reuse the same prompt file unchanged, and relaunch through `agy-run … --model gemini-3.8-flash-medium` (never a bare `agy`).
+- Go back to `gemini-3.8-flash-high` for the next new task. Medium and low are outage fallbacks, not the new default. No other models, ever (no `gemini-4-argon-*`, Claude, or GPT-OSS unless the user explicitly asks).
 - Review output from a fallback model as strictly as 3.8-high's: run the tests yourself and read the diff.
 
 **Stalled or erroring without a clean 503 (2026-10-01):** a session that sits under ~5 events after ~5 min, or a `result` of ERROR/500 with a clean worktree → kill it (`pgrep -P <agy-run pid>`), archive the jsonl, relaunch on `gemini-3.8-flash-medium`.

@@ -3,15 +3,17 @@
 ## stream-json log
 `agy-run` always runs agy with `--output-format stream-json`. (Confirmed 2026-09-22: `--output-format text` writes NOTHING to stdout until the whole turn finishes, so `tail -f` stays empty; stream-json appends one NDJSON event per line as it goes.) There is no web UI / attach flow for agy.
 
-Events: `{"event":"init",…}` once (lists the tools; the first line holds the conversation id), repeated `{"event":"step_update","step_update":{…,"step_type":"agent_response","text_delta":"…"}}` (other `step_type`s for tool calls), and a final `{"event":"result","result":{"status":"SUCCESS","response":"<full text>","num_turns":…,"usage":{…}}}`.
+Events: `{"event":"init",…}` once (lists the tools; the first line holds the conversation id), repeated `{"event":"step_update","step_update":{…,"step_type":"agent_response","text_delta":"…"}}` (other `step_type`s for tool calls), and a final `{"event":"result","result":{"status":"SUCCESS","response":"<full text>","num_turns":…,"usage":{…}}}`. Since agy 1.4.11, `.result.finished_reason` is also included when a turn ended early (`"print_timeout"` when `--print-timeout` expired, `"interrupted"` when canceled, or `"error"` on failure; omitted on a normal finish).
 
 agy interleaves plain-text lines into the log (e.g. `root agent idle; waiting up to 15m0s for 1 background task(s)`), so **`grep '^{'` is required before `jq`**, otherwise `jq` fails with `parse error: Invalid numeric literal`.
 
 ```bash
 # live feed for the user
 tail -f "$LOG" | jq -r --unbuffered 'select(.event=="step_update") | .step_update.text_delta // empty'
+# check whether a running session is still making progress (before killing a "stuck" run)
+grep -c '^{' "$LOG" && grep '^{' "$LOG" | tail -1
 # final result of a run
-grep '^{' "$LOG" | jq -c 'select(.event=="result") | .result | {status,error,num_turns,usage}'
+grep '^{' "$LOG" | jq -c 'select(.event=="result") | .result | {status,finished_reason,error,num_turns,usage}'
 # full response text (no need to reassemble text_delta chunks)
 grep '^{' "$LOG" | jq -r 'select(.event=="result") | .result.response'
 # what agy actually executed
@@ -26,7 +28,7 @@ Without `--add-dir`, agy does NOT operate on the shell's cwd — `--sandbox` and
 Every tool call is one model request that resends the whole conversation context. Baseline ~20k tokens even for a 1-turn prompt; long sessions reach the 256k context ceiling and then cost ~250k tokens *per tool call*. Worst observed: one conversation bundling 6 bugs = 437 requests, 56.5M context tokens; 21–24/09 total ≈ 4.4k requests / 455M context tokens. Aggravators: bundling many tasks into one session, repeatedly viewing/editing huge files (2000+ line locale JSON or service files), ~10 overlapping sessions in parallel. So:
 - **One small task per session.** Never bundle several bugs/features into one prompt.
 - **Point to exact files/lines** so agy doesn't explore or re-read big files; say which verify commands Claude already ran.
-- Consider `--print-timeout` to cap runaway sessions.
+- Consider `--print-timeout` to cap runaway sessions. In agy >= 1.5.0, headless `-p` without `--print-timeout` waits for background tasks to finish (no hidden 30-minute limit); when `--print-timeout` cuts a turn short, `agy` exits with code `3`, prints an `AGY_ERROR` line naming the terminated tasks, writes `[agy] print timeout after …` to stderr, and sets `.result.finished_reason` to `"print_timeout"`.
 
 Cost reference (read-only review of 3 small files, 2026-09-25): ~7 min, ~122 steps, ~642k tokens (3.4M cache-read) — a "small" review still burns far more than the smoke test because agy explores (git log/blame, generated api-client, runs lint/type-check/tests on its own).
 
