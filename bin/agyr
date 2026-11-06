@@ -642,10 +642,16 @@ table_dash() { local s; printf -v s "%*s" "$1" ""; echo -n "${s// /─}"; }
 
 term_width() {
   if [ -n "${AGYR_WIDE:-}" ]; then echo 0; return; fi
-  if [ -t 1 ] || [ -n "${AGYR_RESPONSIVE:-}" ]; then
+  if [ -n "${AGYR_RESPONSIVE:-}" ] || [ "${1:-}" = "1" ] || [ -t 1 ]; then
     local w="${AGYR_COLUMNS:-${COLUMNS:-}}"
     if [ -z "$w" ] || [ "$w" -le 0 ] 2>/dev/null; then
       w="$(tput cols 2>/dev/null || echo 0)"
+    fi
+    if [ -z "$w" ] || [ "$w" -le 0 ] 2>/dev/null; then
+      w="$(stty size 2>/dev/null | awk '{print $2}')"
+    fi
+    if [ -z "$w" ] || [ "$w" -le 0 ] 2>/dev/null; then
+      w="$(stty size < /dev/tty 2>/dev/null | awk '{print $2}')"
     fi
     echo "${w:-0}"
   else
@@ -691,7 +697,8 @@ print_table() {
   show_c5="$(jq -r '[.quota[]? | select(.c5 != null)] | length' "$STATE")"
   show_cw="$(jq -r '[.quota[]? | select(.cw != null)] | length' "$STATE")"
 
-  local tw; tw="$(term_width)"
+  local is_tty=0; [ -t 1 ] && is_tty=1
+  local tw; tw="$(term_width "$is_tty")"
   local claude_hidden=0 argon_hidden=0
   local status_dash=45 status_pad=43
 
@@ -974,7 +981,8 @@ print_test_table() {
     fi
   done
 
-  local tw; tw="$(term_width)"
+  local is_tty=0; [ -t 1 ] && is_tty=1
+  local tw; tw="$(term_width "$is_tty")"
   local show_test_claude=1 show_test_argon=1
   local hi_dash=48 hi_pad=46
   local rst_dash=37 rst_pad=35
