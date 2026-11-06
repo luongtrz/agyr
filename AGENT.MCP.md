@@ -111,7 +111,7 @@ bash "$REPO/test/run.sh" > "$LOG" 2>&1; echo "exit=$?"
 grep '^result:' "$LOG"
 ```
 
-Expected: `exit=0` and `result: 844 pass, 0 fail`. The number may change between versions. `0 fail` is the requirement. On Windows, two checks are skipped on purpose. If anything fails, report the lines that start with `FAIL` and stop.
+Expected: `exit=0` and `result: 880 pass, 0 fail`. The number may change between versions. `0 fail` is the requirement. On Windows, two checks are skipped on purpose. If anything fails, report the lines that start with `FAIL` and stop.
 
 Do not run `agyr list` yet. It needs logins that the user has not saved.
 

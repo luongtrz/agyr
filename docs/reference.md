@@ -31,7 +31,7 @@ bash platforms/linux/install.sh        # Linux: creates symlinks in ~/.local/bin
 bash platforms/windows/install.sh      # Windows: creates Git Bash + .cmd wrappers in ~/.local/bin
 ```
 
-The install scripts only create symlinks or wrappers; they never sign in or read token files. After installation, `agyr help` should work and `bash test/run.sh` should report `844 pass, 0 fail` without needing any login. For installing the `agy` skill and orchestrator rules, see [docs/agent-setup.md](agent-setup.md).
+The install scripts only create symlinks or wrappers; they never sign in or read token files. After installation, `agyr help` should work and `bash test/run.sh` should report `880 pass, 0 fail` without needing any login. For installing the `agy` skill and orchestrator rules, see [docs/agent-setup.md](agent-setup.md).
 
 ### Repository layout
 
@@ -107,6 +107,7 @@ agyr next [-v]                # ready account whose weekly limit resets soonest 
 agyr active                   # print active account name
 agyr save <name>              # save current token as a slot
 agyr rename <old> <new>       # rename a slot (login, cooldown, and quota snapshot move with it); refuses if <new> exists
+agyr del <name>               # permanently delete slot <name> (alias: rm; removes token, state, and active login if matching)
 agyr test [name...]           # send "Hi" to every account to start its 5-hour window (spends real quota; see below)
 agyr forget                   # drop current local login to sign in to another account; refuses if unsaved (-f to force)
 agyr                          # start agy with the selected account (replaces bare `agy`); agyr -c, agyr -p "..." also work
@@ -163,6 +164,19 @@ Each account has its quota measured (0 tokens), receives one `agy -p Hi` request
 - Without arguments, accounts on cooldown are skipped. Named accounts (`agyr test acct1 work`) are always tested.
 - Never touches the active login. Timed out after `AGYR_TEST_TIMEOUT` seconds (default 120).
 - Exit code: `0` if every tested account answered, `1` otherwise.
+
+## Deleting an account slot (`agyr del`, alias `rm`)
+
+```bash
+agyr del <name>        # permanently delete a saved slot (alias: agyr rm <name>)
+```
+
+Permanently removes:
+- The saved slot token file (`~/.gemini/antigravity-cli/accounts/<name>.token`).
+- Cooldown and quota records for `<name>` in `accounts/state.json`.
+- The live login (and `accounts/.last-token.bak`) if the active account matches `<name>`, clearing `state.json`'s active entry.
+
+Refuses (exit 1) if `<name>` is invalid or the slot does not exist.
 
 ## Time zone
 
@@ -302,7 +316,7 @@ bash test/run.sh linux        # Linux suite
 bash test/run.sh windows      # Windows suite
 ```
 
-Runs 844 checks using fake tokens and `test/fake-agy` (emulating `init`, `429`, and `/quota` output) without touching real credentials. The `wincred` suite runs on all platforms against `test/fake-cred`. On Windows, two checks (POSIX `600`/`700` file modes and `pgrep`) are intentionally skipped.
+Runs 880 checks using fake tokens and `test/fake-agy` (emulating `init`, `429`, and `/quota` output) without touching real credentials. The `wincred` suite runs on all platforms against `test/fake-cred`. On Windows, two checks (POSIX `600`/`700` file modes and `pgrep`) are intentionally skipped.
 
 ## Known limitations
 
