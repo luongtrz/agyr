@@ -61,7 +61,7 @@ Google sign-in is interactive: sign in with `agyr`, then run `agyr save <name>`.
 ## Tests
 
 ```bash
-bash test/run.sh              # run all suites (core + linux + windows; 880 checks, never touches real logins)
+bash test/run.sh              # run all suites (core + linux + windows; 882 checks, never touches real logins)
 bash test/run.sh core         # run only platform-independent core tests
 bash test/run.sh linux        # run only Linux platform tests
 bash test/run.sh windows      # run only Windows platform tests

@@ -909,6 +909,7 @@ setup
 export FAKE_WEEK_ORDER=1
 "$ACCT" list >/dev/null 2>&1
 eq "list: the table has one row per account plus the header" "4" "$("$ACCT" list -c | grep -cE '^[ *] +(ACCOUNT|acc[0-9])')"
+has "list: separator line between rows" "  ---" "$("$ACCT" list -c)"
 unset FAKE_WEEK_ORDER
 has "help list: says how the rows are ordered" "ordered by when the weekly limit resets" "$("$ACCT" help list)"
 
@@ -928,6 +929,7 @@ has "test: acc2 5h before>after" "70%>69%" "$out"
 has "test: acc3 5h before>after" "80%>79%" "$out"
 has "test: shows the reset time" "12/01/1970 09:46 PM" "$out"
 eq "test: exactly one Hi per account" "3" "$(hi_count)"
+has "test: separator line between rows" "  ---" "$out"
 eq "test: each Hi uses its own account's login, not the keyring's" "tok-acc1 tok-acc2 tok-acc3 " "$(hi_lines | cut -d'|' -f1 | sort | tr '\n' ' ')"
 eq "test: every Hi uses gemini-3.8-flash-high" "3" "$(hi_lines | grep -c -- '--model gemini-3.8-flash-high')"
 hasnt "test: Hi never gets --dangerously-skip-permissions (no tools needed)" "--dangerously-skip-permissions" "$(hi_lines)"

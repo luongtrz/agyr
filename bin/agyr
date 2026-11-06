@@ -672,7 +672,10 @@ print_table() {
   if [ "$show_aw" -gt 0 ]; then hdr+="$(printf '   %-25s' "ARGON WEEK")"; fi
   if [ "$show_c5" -gt 0 ]; then hdr+="$(printf '   %-25s' "CLAUDE 5H")"; fi
   if [ "$show_cw" -gt 0 ]; then hdr+="$(printf '   %-25s' "CLAUDE WEEK")"; fi
-  echo "$hdr   STATUS"
+  local full_hdr="$hdr   STATUS"
+  local sep="  $(printf '%*s' $((${#full_hdr} - 2)) '' | tr ' ' '-')"
+  echo "$full_hdr"
+  echo "$sep"
   while read -r n; do
     g5=""; g5r=0; gw=""; gwr=0; at=0
     snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [.g5,.g5r,.gw,.gwr,.at] | @tsv' "$STATE")"
@@ -698,6 +701,7 @@ print_table() {
     if [ "$show_c5" -gt 0 ]; then extra+="   $(cell "$c5" "${c5r:-0}")"; fi
     if [ "$show_cw" -gt 0 ]; then extra+="   $(cell "$cw" "${cwr:-0}")"; fi
     printf '%s %-14s %s   %s%s   %s%s%s\n' "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$extra" "$sc" "$st" "$Z"
+    echo "$sep"
   done < <(rows_by_week_reset "$failed")
   if [ -n "$LIVE" ] && [ -z "$cur" ]; then
     echo "${Y}! The login in use matches no slot (just logged in to another account?). Run 'agyr save <name>' to store it; 'agyr use' will not overwrite any slot.${Z}"
@@ -837,15 +841,20 @@ print_test_table() {
 
   local argon_hdr="ARGON WEEK"
   if [ "$has_argon_5h" -eq 1 ]; then argon_hdr="ARGON 5H"; fi
+  local test_hdr
   if [ "$has_argon" -eq 1 ]; then
-    printf '  %-14s %-46s %-12s %-35s %-12s %-35s %-12s %s\n' "ACCOUNT" "HI" "GEMINI 5H" "RESETS" "$argon_hdr" "ARGON RESETS" "CLAUDE 5H" "CLAUDE RESETS"
+    test_hdr="$(printf '  %-14s %-46s %-12s %-35s %-12s %-35s %-12s %s' "ACCOUNT" "HI" "GEMINI 5H" "RESETS" "$argon_hdr" "ARGON RESETS" "CLAUDE 5H" "CLAUDE RESETS")"
   else
-    printf '  %-14s %-46s %-12s %s\n' "ACCOUNT" "HI" "GEMINI 5H" "RESETS"
+    test_hdr="$(printf '  %-14s %-46s %-12s %s' "ACCOUNT" "HI" "GEMINI 5H" "RESETS")"
   fi
+  local test_sep="  $(printf '%*s' $((${#test_hdr} - 2)) '' | tr ' ' '-')"
+  echo "$test_hdr"
+  echo "$test_sep"
 
   while read -r n; do
     if [ -n "${TEST_SKIP[$n]:-}" ]; then
       printf '  %-14s %s%s%s\n' "$n" "$Y" "skipped (${TEST_SKIP[$n]})" "$Z"
+      echo "$test_sep"
       continue
     fi
     [ -n "${TEST_TRY[$n]:-}" ] || continue
@@ -958,6 +967,7 @@ print_test_table() {
     else
       printf '  %-14s %s%-46s%s %-12s %s\n' "$n" "$hcol" "$txt" "$Z" "${before:-?}>${after:-?}" "$reset"
     fi
+    echo "$test_sep"
   done < <(slots)
   echo "Measured at $(fmt_time "$(now)")   (GEMINI 5H = before>after; RESETS = end of the account's current 5-hour window; \"(was ...)\" = it moved because of the Hi)"
 }

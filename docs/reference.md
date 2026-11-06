@@ -31,7 +31,7 @@ bash platforms/linux/install.sh        # Linux: creates symlinks in ~/.local/bin
 bash platforms/windows/install.sh      # Windows: creates Git Bash + .cmd wrappers in ~/.local/bin
 ```
 
-The install scripts only create symlinks or wrappers; they never sign in or read token files. After installation, `agyr help` should work and `bash test/run.sh` should report `880 pass, 0 fail` without needing any login. For installing the `agy` skill and orchestrator rules, see [docs/agent-setup.md](agent-setup.md).
+The install scripts only create symlinks or wrappers; they never sign in or read token files. After installation, `agyr help` should work and `bash test/run.sh` should report `882 pass, 0 fail` without needing any login. For installing the `agy` skill and orchestrator rules, see [docs/agent-setup.md](agent-setup.md).
 
 ### Repository layout
 
@@ -316,7 +316,7 @@ bash test/run.sh linux        # Linux suite
 bash test/run.sh windows      # Windows suite
 ```
 
-Runs 880 checks using fake tokens and `test/fake-agy` (emulating `init`, `429`, and `/quota` output) without touching real credentials. The `wincred` suite runs on all platforms against `test/fake-cred`. On Windows, two checks (POSIX `600`/`700` file modes and `pgrep`) are intentionally skipped.
+Runs 882 checks using fake tokens and `test/fake-agy` (emulating `init`, `429`, and `/quota` output) without touching real credentials. The `wincred` suite runs on all platforms against `test/fake-cred`. On Windows, two checks (POSIX `600`/`700` file modes and `pgrep`) are intentionally skipped.
 
 ## Known limitations
 
