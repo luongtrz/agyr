@@ -311,13 +311,13 @@ Khối HARD RULES cho task implement nằm ở `templates/hard-rules.txt` (`agy-
 bash test/run.sh
 ```
 
-794 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
+795 kiểm tra, dùng token giả và `test/fake-agy` (mô phỏng init, 429, `/quota` đúng định dạng thật); không đụng token thật. Mục `wincred` chạy với `test/fake-cred` (mục Credential Manager giả là một file), trên mọi hệ điều hành; cả bộ test ép dùng helper giả nên không bao giờ chạm vào Credential Manager thật. Trên Windows hai kiểm tra bị bỏ qua có chủ đích (quyền file 600/700 và `pgrep`); chạy mất khoảng 5 phút vì Git Bash khởi động tiến trình chậm.
 
 ## Giới hạn đã biết
 
 - Chưa kiểm chứng với nhiều account thật: giả định "chỉ cần đổi file `antigravity-oauth-token` là đổi được account" mới được test bằng agy giả. Sau khi setup, chạy `agyr list`: mỗi slot phải hiện số quota riêng của nó (slot hỏng báo `measure failed`; `agy models` không dùng được để kiểm tra vì nó chỉ liệt kê model, không cho biết account nào). Refresh token có thể bị thu hồi (đổi mật khẩu Google, Google tự thu hồi); slot nào chết thì login lại và `save` lại.
 - Process agy đang chạy giữ token cũ; `agy-run` luôn kill rồi resume, không đổi token "nóng".
-- `agy-run` chỉ tính là hết quota khi log có dòng chữ thường `error: Individual quota reached …` hoặc `AGY_ERROR: … RESOURCE_EXHAUSTED (code 429)`. Khi chạy tiếp một conversation, agy có thể lặp lại lỗi quota cũ ngay trong dòng JSON `result` cuối dù lần chạy đó làm việc bình thường (thấy ngày 01/10: 4 lần "429" giả trong một session, giá trị `Resets in` không đổi); dòng JSON bị bỏ qua nên không còn đổi account oan. Khi đó `agy-run` thoát với exit 1 và ghi rõ lý do, đọc log để biết task đã xong chưa.
+- `agy-run` chỉ tính là hết quota khi log có dòng chữ thường `error: Individual quota reached …` hoặc `AGY_ERROR: … RESOURCE_EXHAUSTED (code 429)`. Khi chạy tiếp một conversation đã từng hết quota ở turn trước, agy vẫn lặp lại lỗi quota cũ ngay trong dòng JSON `result` cuối (`status: "ERROR"`, `error: "Individual quota reached …"`) dù lần chạy mới đã làm xong và có `response` đầy đủ; dòng JSON bị bỏ qua nên không đổi account oan, và khi `response` khác rỗng thì `agy-run` vẫn trả về exit 0 (còn nếu `response` rỗng thì thoát với exit 1).
 - Chưa xử lý 503 "No capacity" tự động (làm tay theo skill agy: `gemini-3.8-flash-medium`, chỉ dùng `gemini-3.8-flash-low` khi medium cũng không chạy được).
 - Chạy nhiều `agy-run` song song dùng chung một pool theo kiểu best-effort: mỗi lần một lệnh đổi account thì file token thật đổi theo, nên dấu `*` trong `agyr list` nhảy qua lại trong lúc chúng đang chạy. Các process đang chạy vẫn giữ token riêng của mình.
 - `agyr list` đo bằng bản sao token trong HOME tạm. Token đã bị thu hồi thì báo `measure failed` thay vì đoán.

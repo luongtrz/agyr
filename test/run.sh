@@ -195,17 +195,24 @@ runit; rc=$?
 eq "an old 429 line in the log is not counted again" "0" "$rc"
 eq "old log: runs only once" "1" "$(lines)"
 
-# a resumed conversation echoes the OLD quota error in its final result event (no plain-text 429 lines): not a new 429
+# a resumed conversation echoes the OLD quota error in its final result event (no plain-text 429 lines, non-empty response): not a new 429 and treated as done
 setup
 export FAKE_STALE_ERROR=1
 runit; rc=$?
 eq "stale quota error in the result event: no account switch (runs once)" "1" "$(lines)"
 eq "stale quota error: acc1 gets no cooldown" "0" "$(cd_of acc1)"
 eq "stale quota error: the active account is unchanged" "acc1" "$("$ACCT" active)"
-eq "stale quota error: exit 1 (status ERROR, not a quota stop)" "1" "$rc"
+eq "stale quota error: exit 0 (response is non-empty, stale quota echo)" "0" "$rc"
 has "stale quota error: says why it did not switch" "no new 429 line" "$(cat "$T/run.err")"
 has "stale quota error: shows the result error" "result error: Individual quota reached" "$(cat "$T/run.err")"
 unset FAKE_STALE_ERROR
+
+# result status ERROR with empty response and no plain-text 429 line still exits 1
+setup
+export FAKE_HI_ERROR_TOKENS="tok-acc1"
+runit; rc=$?
+eq "status ERROR with empty response and no plain-text 429 line: exit 1" "1" "$rc"
+unset FAKE_HI_ERROR_TOKENS
 
 setup
 "$RUN" --prompt "$T/prompt.txt" --add-dir "$T/work" --log "$T/run.jsonl" --conversation "conv-custom-123" 2>"$T/run.err"; rc=$?

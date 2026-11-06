@@ -38,7 +38,7 @@ Requirements:
 - **All platforms:** bash, git, jq.
 - **Linux:** `timeout` and `setsid` are used when present (coreutils and util-linux). Not required.
 - **Windows (Git Bash):** jq (`winget install jqlang.jq`), PowerShell (`powershell.exe` on PATH), and `cygpath` and `taskkill` (both come with Git for Windows).
-- **agy:** the official Antigravity CLI, installed by the user. Tested with agy 1.4.7 on Linux. Do not install agy yourself unless the user asks.
+- **agy:** the official Antigravity CLI, installed by the user. Tested with agy 1.5.1 on Linux. Do not install agy yourself unless the user asks.
 
 If a required tool is missing, stop. Tell the user the install command for that system. Do not install packages without asking.
 
@@ -105,7 +105,7 @@ bash "$REPO/test/run.sh" > "$LOG" 2>&1; echo "exit=$?"
 grep '^result:' "$LOG"
 ```
 
-Expected: `exit=0` and `result: 794 pass, 0 fail`. The number may change between versions. `0 fail` is the requirement. On Windows, two checks are skipped on purpose. If anything fails, report the lines that start with `FAIL` and stop.
+Expected: `exit=0` and `result: 795 pass, 0 fail`. The number may change between versions. `0 fail` is the requirement. On Windows, two checks are skipped on purpose. If anything fails, report the lines that start with `FAIL` and stop.
 
 Do not run `agyr list` yet. It needs logins that the user has not saved.
 

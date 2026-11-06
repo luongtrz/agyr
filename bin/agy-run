@@ -118,10 +118,15 @@ run_attempt() {
   chunk="$(tail -c +$((OFF + 1)) "$LOG_FILE")"
   if grep -qE "$QUOTA_RE" <<<"$chunk"; then return 10; fi
   if grep -qE "$AUTH_RE" <<<"$chunk"; then return 11; fi
-  local st err
+  local st err resp
   st="$(grep '^{' <<<"$chunk" | jq -r 'select(.event=="result") | .result.status' 2>/dev/null | tail -1)"
   [ "$st" = "SUCCESS" ] && return 0
   err="$(grep '^{' <<<"$chunk" | jq -r 'select(.event=="result") | .result.error // empty' 2>/dev/null | tail -1)"
+  resp="$(grep '^{' <<<"$chunk" | jq -r 'select(.event=="result") | .result.response // empty' 2>/dev/null | tail -1)"
+  if [ "$st" = "ERROR" ] && [ -n "$resp" ] && [[ "$err" == "Individual quota reached"* ]]; then
+    log "agy ended with status 'ERROR' (result error: ${err:0:120}); no new 429 line and response is non-empty, so no account switch (stale quota echo)"
+    return 0
+  fi
   log "agy ended with status '${st:-NO_RESULT}'${err:+ (result error: ${err:0:120})}; no new 429 line, so no account switch (read the log)"
   return 1
 }
