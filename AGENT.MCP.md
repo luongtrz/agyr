@@ -1,4 +1,4 @@
-# agent.mcp.md: install and check agyr
+# AGENT.MCP.md: install and check agyr
 
 Read this file when a user asks you to install agyr on a machine. You are an AI agent with shell access. This file is not an MCP server.
 

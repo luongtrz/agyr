@@ -15,7 +15,7 @@ bash ~/tools/agy-acct/linux/install.sh       # Linux: symlink vào ~/.local/bin
 bash ~/tools/agy-acct/windows/install.sh     # Windows (Git Bash): wrapper vào ~/.local/bin
 ```
 
-Agent AI cài repo này theo [agent.mcp.md](agent.mcp.md).
+Agent AI cài repo này theo [AGENT.MCP.md](AGENT.MCP.md).
 
 ## Dùng
 
@@ -33,7 +33,7 @@ Login không tự động được: đăng nhập bằng `agyr`, rồi chạy `a
 ## Tài liệu
 
 - [docs/chi-tiet.md](docs/chi-tiet.md): cách hoạt động, lệnh đầy đủ, Windows, keyring, biến môi trường, giới hạn đã biết.
-- [agent.mcp.md](agent.mcp.md): hướng dẫn cài và kiểm tra cho agent AI.
+- [AGENT.MCP.md](AGENT.MCP.md): hướng dẫn cài và kiểm tra cho agent AI.
 - [skill/agy](skill/agy): skill Claude Code dùng `agy-task` và `agy-run`.
 
 ## Cấu trúc

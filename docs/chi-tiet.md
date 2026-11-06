@@ -16,7 +16,7 @@ Gồm ba lệnh trong `bin/`:
 
 ## Cài
 
-Nếu bạn là agent AI được nhờ cài repo này lên máy, đọc [agent.mcp.md](../agent.mcp.md): các bước cài và những việc agent không được làm (login, save, đọc file token).
+Nếu bạn là agent AI được nhờ cài repo này lên máy, đọc [AGENT.MCP.md](../AGENT.MCP.md): các bước cài và những việc agent không được làm (login, save, đọc file token).
 
 Cần `bash`, `git` và `jq`. Trên Linux thêm `timeout` (coreutils) và `setsid` (util-linux), không bắt buộc. Đã thử trên Linux với agy 1.5.1.
 
