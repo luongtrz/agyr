@@ -6,7 +6,7 @@
 # session bus agy falls back to the token file in its HOME, so every agy started by agyr or agy-run gets this unreachable
 # bus address.
 PLATFORM_ENV_KEYRING=(DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent)
-# Git Bash argument conversion does not exist here, so nothing has to be excluded from it (see windows/platform.sh).
+# Git Bash argument conversion does not exist here, so nothing has to be excluded from it (see platforms/windows/platform.sh).
 PLATFORM_ENV_NOCONV_QUOTA=()
 PLATFORM_ENV_NOCONV_ALL=()
 # setsid gives agy its own process group (agy-run kills the group) and, for agyr's quota calls, no controlling terminal:

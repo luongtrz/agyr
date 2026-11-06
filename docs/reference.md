@@ -4,9 +4,9 @@ Overview and quick install: [README](../README.md).
 
 Rotate between multiple Google accounts for `agy` (Antigravity CLI) when an account runs out of quota (429), and view the real quota of each account.
 
-Works exclusively with the official `agy` binary by copying `~/.gemini/antigravity-cli/antigravity-oauth-token` back and forth between saved slots. No proxy, and never reads or prints token contents.
+Works exclusively with the official `agy` binary by swapping authentication credentials back and forth between saved slots (`~/.gemini/antigravity-cli/accounts/`). Both Linux and Windows are supported as first-class platforms. No proxy is used, and it never reads or prints token contents.
 
-> Disclaimer: Google has previously restricted accounts that used third-party proxies or tools to harvest Antigravity quota. Swapping the local token file behaves the same as manually signing in to another account, but comes with no zero-risk guarantee. Use in moderation.
+> Disclaimer: Google has previously restricted accounts that used third-party proxies or tools to harvest Antigravity quota. Swapping credentials behaves the same as manually signing in to another account, but comes with no zero-risk guarantee. Use in moderation.
 
 Provides three commands in `bin/`:
 
@@ -18,83 +18,78 @@ Provides three commands in `bin/`:
 
 If you are an AI agent asked to install this repository on a machine, read [AGENT.MCP.md](../AGENT.MCP.md) for the step-by-step instructions and hard rules (never log in, never save/modify slots, never read token files).
 
-Requires `bash`, `git`, and `jq`. On Linux, `timeout` (coreutils) and `setsid` (util-linux) are used when available, though not required. Tested on Linux with agy 1.5.1.
+Requires `bash`, `git`, and `jq`.
+- **Linux:** `timeout` (coreutils) and `setsid` (util-linux) are used when available, though not required.
+- **Windows (Git Bash / MSYS):** `jq` (e.g. `winget install jqlang.jq`), PowerShell (`powershell.exe` on PATH), `cygpath`, and `taskkill` (included with Git for Windows).
 
 ```bash
-bash linux/install.sh        # creates symlinks for agyr, agy-run, agy-task in ~/.local/bin
+# Unified auto-detect installer (recommended):
+bash install.sh
+
+# Or invoke the specific platform installer directly:
+bash platforms/linux/install.sh        # Linux: creates symlinks in ~/.local/bin
+bash platforms/windows/install.sh      # Windows: creates Git Bash + .cmd wrappers in ~/.local/bin
 ```
 
-On Windows, use `bash windows/install.sh` (see the Windows section below). The install scripts only create symlinks or wrappers; they never sign in or read token files. After installation, `agyr help` should work and `bash test/run.sh` should report `795 pass, 0 fail` without needing any login. The `agy` skill and `CLAUDE.md` are separate copies; see [Skill `agy` (copy)](#skill-agy-copy).
+The install scripts only create symlinks or wrappers; they never sign in or read token files. After installation, `agyr help` should work and `bash test/run.sh` should report `795+ pass, 0 fail` without needing any login. The `agy` skill and `CLAUDE.md` are separate copies; see [Skill `agy` (copy)](#skill-agy-copy).
 
 ### Repository layout
 
 - `bin/`: the three entry-point commands (`agyr`, `agy-run`, `agy-task`), free of platform-specific code.
-- `linux/`: `platform.sh` (Linux invocation layer: keyring bypass, `setsid`) and `install.sh`.
-- `windows/`: `platform.sh` (Git Bash: path conversion, `taskkill`, argument conversion guard), `cred.sh` and `cred.ps1` (read/write Credential Manager entries), `inspect-cred.ps1` (prints metadata only), and `install.sh`.
+- `install.sh`: unified root installer (auto-detects OS via `uname -s`).
+- `platforms/linux/`: `platform.sh` (Linux invocation layer: keyring bypass, `setsid`) and `install.sh` (symlink installer).
+- `platforms/windows/`: `platform.sh` (Git Bash: path conversion, `taskkill`, argument conversion guard), `cred.sh` and `cred.ps1` (read/write Credential Manager entries), `inspect-cred.ps1` (metadata diagnostics), and `install.sh` (writes bash and `.cmd` wrappers).
 - `skill/agy/`, `claude/`, `templates/`, `test/`: copy of the `agy` skill, copy of `CLAUDE.md`, `HARD RULES` templates, and test suite.
 
-## Windows (Git Bash)
+## How it works & platform backends
 
-Run inside **Git Bash** with `jq` installed (e.g. `winget install jqlang.jq`). Install with:
+`agyr` automatically selects the appropriate backend for the operating system (`agyr backend`): `file` on Linux and `wincred` on Windows. You can override the backend with `AGYR_BACKEND=file|wincred`.
 
-```bash
-bash windows/install.sh
-```
+### Linux backend (`file`)
 
-Because Git Bash cannot create usable symlinks by default, the script writes three small wrapper scripts that invoke `bin/<name>` in the clone (`git pull` updates them in place). The clone path is embedded in the wrappers; re-run the script if you move the clone.
+- **Token storage:** Credentials are stored in `~/.gemini/antigravity-cli/antigravity-oauth-token` as JSON.
+- **Keyring bypass:** Starting with version **1.2.14**, `agy` stores its login in the **GNOME keyring** (`libsecret` over D-Bus; item `Password for 'antigravity' on 'gemini'`) and **ignores the token file** whenever the keyring is reachable. As a result, swapping the token file would have no effect if the keyring is reachable. `agyr` and `agy-run` hide the keyring by running `agy` with an unreachable D-Bus session bus address (`DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent`), forcing `agy` to fall back to the token file in its `HOME`. When running `agy` interactively, always run `agyr` (or `agyr -c`, `agyr -p "..."`) rather than bare `agy`.
+- **Parallel quota measurement:** `agyr list` runs quota probes for all accounts in parallel (~10–20 seconds total). Each probe runs in a temporary `HOME` directory with a copy of the slot's token, so it never touches the live token file and never disturbs an open `agy` or a running `agy-run`. Probes are detached via `setsid` with `/dev/null` stdin so parallel processes do not contend on terminal modes.
+- **Process control:** Headless tasks run in their own process group via `setsid`, allowing `agy-run` to cleanly kill the entire group.
 
-On Windows, `agy` stores its login in a **single Windows Credential Manager entry** (target `gemini:antigravity`, generic type, containing JSON identical to the Linux token file). There is no token file and no per-process way to redirect it, so `agyr` selects the `wincred` backend (`agyr backend`) and switches accounts by **overwriting that entry**:
+### Windows backend (`wincred`)
 
-- `agyr save <name>`: copies the current Credential Manager entry into slot `accounts/<name>.token` (same format as Linux).
-- `agyr use <name>`: backs up the active login to `accounts/.last-token.bak`, then writes the slot over the Credential Manager entry. Afterwards, a bare `agy` and `agyr` behave identically (no D-Bus bypass needed on Windows).
-- `agyr list`: **measures sequentially**, not in parallel (for each account: writes the login entry, runs `agy -p /quota`, and saves back the refreshed token). Restores the original active login when done, including on Ctrl+C or error. Do not open `agy` or sign in manually while `agyr list` is running.
-- `agyr forget`: removes the active login **locally on this machine only** (nothing is revoked at Google) so `agy` prompts for a new login. Replaces `rm ~/.gemini/antigravity-cli/antigravity-oauth-token` on Linux. Refuses if the current login is not saved in any slot (unless `--force` is passed).
-- Every write to Credential Manager acquires `accounts/.swap.lock` so concurrent `agy-run` and `agyr list` processes do not clobber each other. This lock also protects the file backend on Linux (see [Parallel runs and slot safety](#parallel-runs-and-slot-safety) below); it uses an exclusive file creation (`set -o noclobber`) rather than `mkdir`, because uutils coreutils `mkdir` (default on newer Ubuntu releases) is not atomic.
+- **Token storage:** On Windows, `agy` stores its login in a **single Windows Credential Manager entry** (target `gemini:antigravity`, generic type, containing JSON identical to the Linux token file).
+- **Credential swapping:** Because Windows Credential Manager cannot be redirected per-process, `agyr use` backs up the active login to `accounts/.last-token.bak`, then writes the slot over the Credential Manager entry using `platforms/windows/cred.sh` + `cred.ps1`. Afterwards, a bare `agy`, `agyr`, and `.cmd` wrappers behave identically (no D-Bus bypass needed on Windows).
+- **Sequential quota measurement:** Because Credential Manager is a single global store and each read/write invokes PowerShell (~1 s), `agyr list` measures accounts sequentially: it swaps each slot in, runs `agy -p /quota`, saves back the refreshed token, and restores the original active login when finished (or on Ctrl+C/error).
+- **Wrappers for Git Bash, PowerShell, and CMD:** `platforms/windows/install.sh` writes both bash scripts (`$BIN_DIR/<name>`) and Windows `.cmd` batch wrappers (`$BIN_DIR/<name>.cmd`), allowing `agyr`, `agy-run`, and `agy-task` to be invoked directly from Git Bash, Windows PowerShell, and CMD.
+- **Git Bash argument conversion:** Git Bash rewrites POSIX-like arguments into Windows file paths by default (e.g. turning `/quota` into `C:/Program Files/Git/quota`). `platforms/windows/platform.sh` sets `MSYS2_ARG_CONV_EXCL=/quota` for `agyr` and `MSYS2_ARG_CONV_EXCL='*'` for `agy-run` so arguments are preserved. Paths handed to `agy` use forward-slash Windows paths via `cygpath -m`.
+- **Process tree termination:** Process groups do not exist in Git Bash, so `platforms/windows/platform.sh` reaps the native Windows process tree using `taskkill //T //F //PID <winpid>`.
+- **Helpers:** Windows-specific helpers live in `platforms/windows/`: `cred.sh` + `cred.ps1` (read/write/delete the Credential Manager entry without ever printing secrets) and `inspect-cred.ps1` (prints entry metadata only, for diagnostics). Override the target name with `AGY_CRED_TARGET`.
 
-One-time setup on Windows:
+### Cross-platform locking & slot safety
 
-```bash
-agy                       # sign in to account 1, then quit
-agyr save acct1
-agyr forget
-agy                       # sign in to account 2, then quit
-agyr save acct2
-agyr forget
-agy                       # sign in to account 3...
-agyr save acct3
-agyr use acct1            # select daily account
-agyr list                 # verify all slots are alive
-```
-
-Slots are regular files protected by your Windows user profile directory permissions (NTFS has no `chmod 600`). Windows-specific helpers live in `windows/`: `cred.sh` + `cred.ps1` (read/write/delete the Credential Manager entry without ever printing its secret) and `inspect-cred.ps1` (prints entry metadata only, for diagnostics). Override the target name with `AGY_CRED_TARGET`, or force a backend with `AGYR_BACKEND=file|wincred`.
-
-## Important (Linux): agy >= 1.2.14 uses the OS keyring
-
-Starting with version **1.2.14**, `agy` stores its login in the **GNOME keyring** (`libsecret` over D-Bus; item `Password for 'antigravity' on 'gemini'`) and **ignores the token file** whenever the keyring is reachable. As a result, `agyr use` swaps the token file, but a bare `agy` still uses the account stored in the keyring, and quota checks would measure the same account every time.
-
-How `agyr` handles this: every `agy` process launched by `agyr` or `agy-run` runs with a non-existent D-Bus session bus address (`DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent`), causing `agy` to fall back to the token file. `agyr list` and `agy-run` do this automatically. When starting `agy` interactively, run **`agyr`** instead of `agy`: plain `agyr` opens `agy`, `agyr -c` continues the most recent conversation, and any `agy` flag works (e.g. `agyr -p "..."`). A first argument that does not start with `-` is interpreted as an `agyr` subcommand (e.g. `agyr list`); to pass a subcommand word to `agy` itself, use `agyr run models`. A bare `agy` still uses the keyring account and ignores `agyr use`.
+- **Cross-platform lock (`accounts/.swap.lock`):** Serializes all login swaps, slot writes, and `state.json` updates across both `file` and `wincred` backends using atomic exclusive file creation (`set -o noclobber`). This prevents concurrent `agy-run` or `agyr list` operations from clobbering credentials.
+- **Atomic file writes:** Token files, slots, backups, and `state.json` are written to temporary files in the same directory and renamed into place atomically.
+- **Slot naming:** Slot names may contain only ASCII letters, digits, `-`, and `_` (e.g. `acct1`, `work`). No spaces, dots, `@`, or `/`.
+- **File permissions:** On Linux, permissions are managed via `umask 077` and `chmod 600`/`700`. On Windows, slots are protected by NTFS user profile ACLs.
 
 ## One-time setup
 
-Slot names are chosen by you and may contain only ASCII letters, digits, `-`, and `_` (e.g. `acct1`, `work`). No spaces, dots, `@`, or `/`.
-
-For each account, sign in with `agyr` and save the slot. This must be done manually in a browser. **Do not use agy's built-in logout** (which may revoke the token on Google's side); instead run `agyr forget` (deletes the local token file while keeping your saved slots):
+For each account, sign in with `agyr` and save the slot. This must be done interactively in a browser. **Do not use agy's built-in logout** (which may revoke the token on Google's side); instead run `agyr forget` (clears the local login while preserving saved slots):
 
 ```bash
-agyr save acct1                 # currently signed-in account
-agyr forget                     # remove local login
+agyr                            # sign in to account 1 in browser, then quit agy
+agyr save acct1                 # save active login as a slot
+agyr forget                     # clear active login locally
 agyr                            # sign in to account 2, then quit
 agyr save acct2
 agyr forget
 agyr                            # sign in to account 3, then quit
 agyr save acct3
+agyr use acct1                  # select daily active account
+agyr list                       # verify all slots are alive and report quota
 ```
 
-Verify with `agyr list`: each slot must report its own quota numbers (a broken or revoked slot shows `measure failed`).
-
-`agyr forget` refuses (exit 1, deleting nothing) when the active login has not been saved to a slot yet, preventing accidental loss; run `agyr save <name>` first, or `agyr forget -f` to discard it (a backup remains in `accounts/.last-token.bak` until the next `use` or `forget`). It only removes the local token file and does not sign out from Google.
-
-After any manual sign-in, run `agyr save <name>`. If you forget, `agyr list` warns that the active token matches no slot, and `agyr use` will not overwrite any slot with it.
+- On Linux, `agyr forget` deletes the local token file (`~/.gemini/antigravity-cli/antigravity-oauth-token`).
+- On Windows, `agyr forget` removes the Credential Manager entry `gemini:antigravity`.
+- On both platforms, `agyr forget` refuses (exit 1, removing nothing) when the active login has not been saved to a slot yet, preventing accidental loss; pass `-f` to force discarding it (a backup remains in `accounts/.last-token.bak` until the next `use` or `forget`).
+- After any manual sign-in, run `agyr save <name>`. If you forget, `agyr list` warns that the active token matches no slot, and `agyr use` will not overwrite any slot with it.
 
 ## Commands
 

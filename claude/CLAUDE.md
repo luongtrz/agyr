@@ -14,7 +14,7 @@ Claude may still edit non-project files (skills, memory, CLAUDE.md, agy prompt f
 
 ## Git commits
 
-Never add a `
+Never add a `Co-Authored-By:` trailer (or any AI co-author trailer) to commit messages.
 
 Write detailed commit messages using multiple `-m` flags (one per paragraph/section — e.g. `-m "subject" -m "why this change" -m "what changed and where"`), not a single terse one-liner. The goal is a commit history that's easy to trace later: what broke, why, and what the fix touched. Split unrelated changes into separate commits (e.g. a frontend feature vs. a backend bugfix) rather than bundling everything into one — only commit the files actually relevant to each logical change.
 

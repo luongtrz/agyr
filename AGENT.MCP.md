@@ -38,7 +38,7 @@ Requirements:
 - **All platforms:** bash, git, jq.
 - **Linux:** `timeout` and `setsid` are used when present (coreutils and util-linux). Not required.
 - **Windows (Git Bash):** jq (`winget install jqlang.jq`), PowerShell (`powershell.exe` on PATH), and `cygpath` and `taskkill` (both come with Git for Windows).
-- **agy:** the official Antigravity CLI, installed by the user. Tested with agy 1.5.1 on Linux. Do not install agy yourself unless the user asks.
+- **agy:** the official Antigravity CLI, installed by the user. Tested with agy 1.5.1 on Linux and Windows. Do not install agy yourself unless the user asks.
 
 If a required tool is missing, stop. Tell the user the install command for that system. Do not install packages without asking.
 
@@ -57,16 +57,22 @@ fi
 git -C "$REPO" log --oneline -1
 ```
 
-The repository has these folders: `bin/` (the three commands), `linux/` and `windows/` (platform code and install scripts), `skill/agy/` (Claude Code skill), `templates/`, `test/`, `docs/`.
+The repository has these folders: `bin/` (the three commands), `install.sh` (unified installer), `platforms/linux/` and `platforms/windows/` (platform code and install scripts), `skill/agy/` (Claude Code skill), `templates/`, `test/`, `docs/`.
 
 ## 4. Install the commands
 
-The install scripts create the three commands in `~/.local/bin`, or in a directory given as the first argument.
+Run the unified installer (auto-detects Linux vs Windows):
+
+```bash
+bash "$REPO/install.sh"
+```
+
+Or run the platform-specific installer directly:
 
 Linux:
 
 ```bash
-bash "$REPO/linux/install.sh"
+bash "$REPO/platforms/linux/install.sh"
 ```
 
 This creates symbolic links from `~/.local/bin/<name>` to `$REPO/bin/<name>`.
@@ -74,15 +80,15 @@ This creates symbolic links from `~/.local/bin/<name>` to `$REPO/bin/<name>`.
 Windows (Git Bash):
 
 ```bash
-bash "$REPO/windows/install.sh"
+bash "$REPO/platforms/windows/install.sh"
 ```
 
-Git Bash cannot make working symlinks here, so this writes one-line wrappers that run `$REPO/bin/<name>`. The clone path is written into the wrappers. If the clone is moved, run the script again.
+Git Bash cannot make working symlinks here, so this writes both bash wrappers (`~/.local/bin/<name>`) and Windows CMD/PowerShell batch wrappers (`~/.local/bin/<name>.cmd`) that invoke `$REPO/bin/<name>`. This allows running `agyr`, `agy-run`, and `agy-task` directly from Git Bash, PowerShell, and Command Prompt. The clone path is written into the wrappers. If the clone is moved, run the script again.
 
-Both scripts:
+All installers:
 
 - stop with exit 1 when `jq` or `git` is missing;
-- refuse to replace a regular file (Linux), or a file that is not a wrapper for this clone (Windows), and print why. If that happens, show the file to the user and ask. Do not delete it;
+- refuse to replace a regular file (Linux), or a file that is not a wrapper for this clone (Windows, checking both `<name>` and `<name>.cmd`), and print why. If that happens, show the file to the user and ask. Do not delete it;
 - print a note when the bin directory is not on `PATH`.
 
 If `~/.local/bin` is not on `PATH`, tell the user to add `export PATH="$HOME/.local/bin:$PATH"` to their shell profile. Do not edit the profile yourself.
@@ -141,7 +147,7 @@ If a different skill is already there, show the diff and ask. Do not touch `~/.c
 
 ## 8. What the commands do
 
-- `agyr` (also `agyr -c`, `agyr -p "..."`): start agy with the selected account. On Linux a plain `agy` ignores the selected account, so always start agy through `agyr`.
+- `agyr` (also `agyr -c`, `agyr -p "..."`): start agy with the selected account. On Linux a plain `agy` ignores the selected account (due to the GNOME keyring), so always start agy through `agyr`. On Windows, `agyr` ensures the selected account's credentials are active in Credential Manager.
 - `agyr list`: measure every saved account (0 tokens). `agyr list -c`: show the saved numbers only.
 - `agyr use <name>`: select an account. `agyr active`: print the selected one.
 - `agyr next`: print the ready account whose weekly limit resets soonest. Exit 3 when every account is on cooldown.
@@ -179,7 +185,7 @@ On exit 4 (login), stop and tell the user to log in again. On exit 5, stop and r
 
 ## 11. Update and uninstall
 
-- Update (only when the clone has no local changes): `git -C "$REPO" pull --ff-only`. On Linux the symlinks need no change. On Windows, run `bash "$REPO/windows/install.sh"` again. Then repeat section 5.
+- Update (only when the clone has no local changes): `git -C "$REPO" pull --ff-only`. On Linux the symlinks need no change. On Windows, run `bash "$REPO/install.sh"` (or `bash "$REPO/platforms/windows/install.sh"`) again. Then repeat section 5.
 - Uninstall (only when the user asks): remove the three links or wrappers in the bin directory. Remove the clone only if the user asks. Never delete `~/.gemini/antigravity-cli/accounts/`, which holds the user's saved logins, unless the user asks for that by name.
 
 ## 12. Known limits to tell the user

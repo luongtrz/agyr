@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Link agyr, agy-run and agy-task from this clone into a bin directory (Linux).
 #
-# Usage: linux/install.sh [BIN_DIR]        (default: ~/.local/bin)
+# Usage: platforms/linux/install.sh [BIN_DIR]        (default: ~/.local/bin)
+# Or use the top-level install.sh which auto-detects the platform.
 #
 # It only creates symbolic links. It never logs in, never saves or forgets a login, and never reads a token file.
 # A regular file that already has one of the three names is left alone and the script stops.
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+REPO="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
 BIN_DIR="${1:-$HOME/.local/bin}"
 COMMANDS=(agyr agy-run agy-task)
 

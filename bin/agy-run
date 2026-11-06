@@ -21,9 +21,9 @@ AGY_ACCT="${AGY_ACCT:-$(dirname "$(readlink -f "$0")")/agyr}"
 POLL="${AGY_RUN_POLL:-1}"
 MAX_SWITCH="${AGY_RUN_MAX_SWITCH:-10}"
 MODEL="gemini-3.8-flash-high"
-# The platform layer (linux/ or windows/) holds the keyring bypass, the process-group helpers and the Git Bash quirks.
+# The platform layer (platforms/linux/ or platforms/windows/) holds the keyring bypass, the process-group helpers and the Git Bash quirks.
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) PLATFORM=windows ;; *) PLATFORM=linux ;; esac
-. "$(dirname "$(readlink -f "$0")")/../$PLATFORM/platform.sh"
+. "$(dirname "$(readlink -f "$0")")/../platforms/$PLATFORM/platform.sh"
 platform_init
 # Ask agyr which login backend is in use (file | wincred)
 BACKEND="$("$AGY_ACCT" backend 2>/dev/null)" || BACKEND=file

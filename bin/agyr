@@ -31,24 +31,24 @@ need_jq() { command -v jq >/dev/null || die "jq is required"; }
 valid_name() { [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]] || die "account name may only contain letters, digits, '-' and '_': '$1'"; }
 
 # --- where the login lives -------------------------------------------------------------------------------------------
-# file     (Linux)   agy's token file; agy is pointed at it by hiding the keyring (PLATFORM_ENV_KEYRING in linux/platform.sh).
+# file     (Linux)   agy's token file; agy is pointed at it by hiding the keyring (PLATFORM_ENV_KEYRING in platforms/linux/platform.sh).
 # wincred  (Windows) ONE Windows Credential Manager entry (target gemini:antigravity) shared by every agy of this user.
 #                    agy cannot be redirected there, so 'use' overwrites that entry with the slot's copy and 'list'
 #                    measures the accounts one after another (not in parallel), then puts the original login back.
-# Chosen by the OS; override with AGYR_BACKEND=file|wincred. AGYR_CRED_HELPER replaces windows/cred.sh (used by the tests):
+# Chosen by the OS; override with AGYR_BACKEND=file|wincred. AGYR_CRED_HELPER replaces platforms/windows/cred.sh (used by the tests):
 # it is called as 'helper read FILE' | 'helper write FILE' | 'helper delete' and exits 3 when there is no entry.
 SELF_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) ON_WINDOWS=1 ;; *) ON_WINDOWS=0 ;; esac
-# the platform layer: linux/ or windows/ (keyring bypass, process groups, argument paths, Git Bash quirks)
+# the platform layer: platforms/linux/ or platforms/windows/ (keyring bypass, process groups, argument paths, Git Bash quirks)
 if [ "$ON_WINDOWS" = 1 ]; then PLATFORM=windows; else PLATFORM=linux; fi
-. "$SELF_DIR/../$PLATFORM/platform.sh"
+. "$SELF_DIR/../platforms/$PLATFORM/platform.sh"
 platform_init
 case "${AGYR_BACKEND:-auto}" in
   file|wincred) BACKEND="$AGYR_BACKEND" ;;
   auto) if [ "$ON_WINDOWS" = 1 ]; then BACKEND=wincred; else BACKEND=file; fi ;;
   *) die "AGYR_BACKEND must be file or wincred (got '$AGYR_BACKEND')" 2 ;;
 esac
-CRED_HELPER="${AGYR_CRED_HELPER:-$SELF_DIR/../windows/cred.sh}"
+CRED_HELPER="${AGYR_CRED_HELPER:-$SELF_DIR/../platforms/windows/cred.sh}"
 if [ "$BACKEND" = wincred ]; then TOKEN_WHERE="Credential Manager entry ${AGY_CRED_TARGET:-gemini:antigravity}"; else TOKEN_WHERE="$TOKEN"; fi
 
 init_state() {
@@ -431,7 +431,7 @@ quota_fetch() {
   # PLATFORM_DETACH_WAIT (setsid -w, empty stdin): agy runs without a controlling terminal. Otherwise several agy processes
   # running in parallel all change/restore your terminal mode (raw mode, terminal capability queries) and leave the
   # terminal garbled (staircase newlines, no echo). The keyring bypass and the /quota argument exclusion come from the
-  # platform layer (linux/platform.sh, windows/platform.sh).
+  # platform layer (platforms/linux/platform.sh, platforms/windows/platform.sh).
   out="$(env HOME="$home" AGY_HOME="$agyhome" "${PLATFORM_ENV_KEYRING[@]}" "${PLATFORM_ENV_NOCONV_QUOTA[@]}" \
     "${PLATFORM_DETACH_WAIT[@]}" "$AGY_BIN" -p /quota --add-dir "$tmp" \
     --model gemini-3.8-flash-high --output-format stream-json </dev/null 2>/dev/null |

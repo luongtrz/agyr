@@ -1156,9 +1156,9 @@ eq "wincred: tests only ever use the fake credential helper" "$HERE/fake-cred" "
 # regression (seen on a real Windows machine: every account 'measure failed'): Git Bash rewrote the argument /quota into
 # C:/Program Files/Git/quota. The fake agy is a bash script, so it cannot show this; check that the protection is there.
 has "wincred: agyr hands the /quota exclusion to quota_fetch" 'PLATFORM_ENV_NOCONV_QUOTA' "$(grep -n 'PLATFORM_ENV_NOCONV_QUOTA' "$ACCT")"
-has "wincred: windows platform shields /quota from msys path conversion" 'MSYS2_ARG_CONV_EXCL=/quota' "$(grep -n 'MSYS2_ARG_CONV_EXCL' "$HERE/../windows/platform.sh")"
+has "wincred: windows platform shields /quota from msys path conversion" 'MSYS2_ARG_CONV_EXCL=/quota' "$(grep -n 'MSYS2_ARG_CONV_EXCL' "$HERE/../platforms/windows/platform.sh")"
 has "wincred: agy-run hands the prompt over unchanged (PLATFORM_ENV_NOCONV_ALL)" 'PLATFORM_ENV_NOCONV_ALL' "$(grep -n 'PLATFORM_ENV_NOCONV_ALL' "$RUN")"
-has "wincred: windows platform shields the prompt from msys path conversion" "MSYS2_ARG_CONV_EXCL='*'" "$(grep -n 'MSYS2_ARG_CONV_EXCL' "$HERE/../windows/platform.sh")"
+has "wincred: windows platform shields the prompt from msys path conversion" "MSYS2_ARG_CONV_EXCL='*'" "$(grep -n 'MSYS2_ARG_CONV_EXCL' "$HERE/../platforms/windows/platform.sh")"
 
 # like setup, but the login lives in the fake credential entry $T/cred (there is no token file at all)
 setupw() {
@@ -1891,15 +1891,21 @@ unset AGY_RUN
 echo "== install scripts (into temp bin dirs, never the real ~/.local/bin)"
 INST="$(mktemp -d)"; TMPS+=("$INST")
 REPO_ABS="$(cd "$HERE/.." && pwd)"
-if bash "$HERE/../linux/install.sh" "$INST/lin" >/dev/null 2>&1; then pass "linux/install.sh runs"; else fail "linux/install.sh runs"; fi
-eq "linux/install.sh links agyr to bin/agyr" "$REPO_ABS/bin/agyr" "$(readlink -f "$INST/lin/agyr")"
+if bash "$HERE/../platforms/linux/install.sh" "$INST/lin" >/dev/null 2>&1; then pass "platforms/linux/install.sh runs"; else fail "platforms/linux/install.sh runs"; fi
+eq "platforms/linux/install.sh links agyr to bin/agyr" "$REPO_ABS/bin/agyr" "$(readlink -f "$INST/lin/agyr")"
 has "linked agyr answers help" "agyr" "$("$INST/lin/agyr" help 2>&1 | head -1)"
 mkdir -p "$INST/guard" && echo mine >"$INST/guard/agyr"
-if bash "$HERE/../linux/install.sh" "$INST/guard" >/dev/null 2>&1; then fail "linux/install.sh refuses to replace a regular file"; else pass "linux/install.sh refuses to replace a regular file"; fi
+if bash "$HERE/../platforms/linux/install.sh" "$INST/guard" >/dev/null 2>&1; then fail "platforms/linux/install.sh refuses to replace a regular file"; else pass "platforms/linux/install.sh refuses to replace a regular file"; fi
 eq "the regular file is left as it was" "mine" "$(cat "$INST/guard/agyr")"
-if bash "$HERE/../windows/install.sh" "$INST/win" >/dev/null 2>&1; then pass "windows/install.sh writes the wrappers"; else fail "windows/install.sh writes the wrappers"; fi
+if bash "$HERE/../platforms/windows/install.sh" "$INST/win" >/dev/null 2>&1; then pass "platforms/windows/install.sh writes the wrappers"; else fail "platforms/windows/install.sh writes the wrappers"; fi
 has "windows wrapper points at this clone's bin/agyr" "exec \"$REPO_ABS/bin/agyr\"" "$(cat "$INST/win/agyr")"
+has "windows .cmd wrapper points at this clone's bin/agyr" "$REPO_ABS/bin/agyr" "$(cat "$INST/win/agyr.cmd")"
 has "windows wrapper answers help" "agyr" "$("$INST/win/agyr" help 2>&1 | head -1)"
+mkdir -p "$INST/guard-wincmd" && echo mine >"$INST/guard-wincmd/agyr.cmd"
+if bash "$HERE/../platforms/windows/install.sh" "$INST/guard-wincmd" >/dev/null 2>&1; then fail "platforms/windows/install.sh refuses to replace an unrelated agyr.cmd"; else pass "platforms/windows/install.sh refuses to replace an unrelated agyr.cmd"; fi
+eq "the unrelated agyr.cmd file is left as it was" "mine" "$(cat "$INST/guard-wincmd/agyr.cmd")"
+if bash "$HERE/../install.sh" "$INST/auto" >/dev/null 2>&1; then pass "root install.sh runs"; else fail "root install.sh runs"; fi
+has "root install.sh installs working agyr" "agyr" "$("$INST/auto/agyr" help 2>&1 | head -1)"
 
 echo "== safety"
 real_agy_busy && REAL_BUSY=1

@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # Install agyr, agy-run and agy-task as small wrappers that run this clone (Windows, Git Bash).
 #
-# Usage: windows/install.sh [BIN_DIR]     (default: ~/.local/bin)
+# Usage: platforms/windows/install.sh [BIN_DIR]     (default: ~/.local/bin)
+# Or use the top-level install.sh which auto-detects the platform.
 #
 # Git Bash cannot make working symlinks here, so each command is a one-line script that execs bin/<name> in this clone.
+# Both bash wrappers ($BIN_DIR/<name>) and Windows cmd/PowerShell wrappers ($BIN_DIR/<name>.cmd) are created.
 # The clone path is written into the wrappers: run this script again if the clone is moved. It only writes those wrappers.
 # It never logs in, never saves or forgets a login, and never reads the Credential Manager entry.
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+REPO="$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)"
 BIN_DIR="${1:-$HOME/.local/bin}"
 COMMANDS=(agyr agy-run agy-task)
 
@@ -19,20 +21,25 @@ done
 [ "$missing" = 0 ] || exit 1
 
 for n in "${COMMANDS[@]}"; do
-  if [ -e "$BIN_DIR/$n" ] && [ ! -L "$BIN_DIR/$n" ]; then
-    # a file this script did not write (a previous wrapper is also a plain file, so check its content first)
-    if ! grep -q "$REPO/bin/$n" "$BIN_DIR/$n" 2>/dev/null; then
-      echo "refusing to replace $BIN_DIR/$n: it is not a wrapper for this clone" >&2
-      exit 1
+  for f in "$n" "$n.cmd"; do
+    if [ -e "$BIN_DIR/$f" ] && [ ! -L "$BIN_DIR/$f" ]; then
+      # a file this script did not write (a previous wrapper is also a plain file, so check its content first)
+      if ! grep -q "$REPO/bin/$n" "$BIN_DIR/$f" 2>/dev/null; then
+        echo "refusing to replace $BIN_DIR/$f: it is not a wrapper for this clone" >&2
+        exit 1
+      fi
     fi
-  fi
+  done
 done
 
 mkdir -p "$BIN_DIR"
 for n in "${COMMANDS[@]}"; do
   printf '#!/usr/bin/env bash\nexec "%s/bin/%s" "$@"\n' "$REPO" "$n" > "$BIN_DIR/$n"
   chmod +x "$BIN_DIR/$n"
+  printf '@echo off\nbash "%s/bin/%s" %%*\n' "$REPO" "$n" > "$BIN_DIR/$n.cmd"
+  chmod +x "$BIN_DIR/$n.cmd"
   echo "wrote $BIN_DIR/$n -> $REPO/bin/$n"
+  echo "wrote $BIN_DIR/$n.cmd -> $REPO/bin/$n"
 done
 
 case ":$PATH:" in

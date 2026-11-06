@@ -2,17 +2,28 @@
 
 Rotate between multiple Google accounts for `agy` (Antigravity CLI) when an account runs out of quota, and inspect each account's real quota.
 
-- Uses only the official `agy` binary. No proxy, and never reads or prints token contents: it only swaps token files between slots.
+- Uses only the official `agy` binary. No proxy, and never reads or prints token contents: it only swaps authentication tokens between saved slots.
+- First-class support for both Linux and Windows.
 - Using multiple accounts this way may conflict with Google's terms of service. Use in moderation.
+
+## Platform backends
+
+- **Linux (`file` backend):** agy stores its login in the token file (`~/.gemini/antigravity-cli/antigravity-oauth-token`). `agyr` and `agy-run` hide the GNOME keyring over D-Bus (`DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent`) so agy reads the swapped token file instead of falling back to system keyring credentials.
+- **Windows (`wincred` backend):** agy stores its login in Windows Credential Manager (`gemini:antigravity`). `agyr` swaps slots directly into Credential Manager. Both Git Bash shell scripts and Windows `.cmd` wrappers are generated, allowing `agyr`, `agy-run`, and `agy-task` to be invoked directly from Git Bash, Windows PowerShell, and Command Prompt (CMD).
 
 ## Quick install
 
-Requires `bash`, `git`, `jq`. Tested with agy 1.5.1 on Linux.
+Requires `bash`, `git`, and `jq`.
 
 ```bash
 git clone https://github.com/luongtrz/rotate-agy.git ~/tools/agy-acct
-bash ~/tools/agy-acct/linux/install.sh       # Linux: symlinks into ~/.local/bin
-bash ~/tools/agy-acct/windows/install.sh     # Windows (Git Bash): wrappers into ~/.local/bin
+
+# Unified auto-detect installer (recommended):
+bash ~/tools/agy-acct/install.sh
+
+# Or invoke the specific platform installer directly:
+bash ~/tools/agy-acct/platforms/linux/install.sh       # Linux: symlinks into ~/.local/bin
+bash ~/tools/agy-acct/platforms/windows/install.sh     # Windows: Git Bash + .cmd wrappers into ~/.local/bin
 ```
 
 AI agents installing this repository should follow [AGENT.MCP.md](AGENT.MCP.md).
@@ -32,20 +43,22 @@ Google sign-in is interactive: sign in with `agyr`, then run `agyr save <name>`.
 
 ## Documentation
 
-- [docs/reference.md](docs/reference.md): how it works, full command reference, Windows backend, keyring bypass, environment variables, known limitations.
+- [docs/reference.md](docs/reference.md): how it works, full command reference, Linux and Windows platform backends, environment variables, known limitations.
 - [AGENT.MCP.md](AGENT.MCP.md): installation and verification guide for AI agents.
 - [skill/agy](skill/agy): Claude Code / Antigravity skill for delegating tasks through `agy-task` and `agy-run`.
 
 ## Repository layout
 
 - `bin/`: `agyr`, `agy-run`, `agy-task`
-- `linux/`, `windows/`: platform-specific layers and install scripts
+- `install.sh`: unified root installer (auto-detects OS via `uname -s`)
+- `platforms/linux/`: Linux platform layer and installer (symlinks)
+- `platforms/windows/`: Windows platform layer, Credential Manager helpers (`cred.sh`, `cred.ps1`, `inspect-cred.ps1`), and installer (Git Bash + `.cmd` wrappers)
 - `skill/agy/`, `templates/`, `test/`, `docs/`
 
 ## Tests
 
 ```bash
-bash test/run.sh      # 795 checks using a fake agy and fake tokens; never touches real logins
+bash test/run.sh      # 795+ checks using a fake agy and fake tokens; never touches real logins
 ```
 
 ## License

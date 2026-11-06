@@ -3,7 +3,7 @@
 # user name, blob size, encoding guess, and the JSON key structure (key names, value types, string lengths).
 # Entries whose target does not match are not printed at all.
 #
-# Usage:  powershell -NoProfile -ExecutionPolicy Bypass -File windows\inspect-cred.ps1
+# Usage:  powershell -NoProfile -ExecutionPolicy Bypass -File platforms\windows\inspect-cred.ps1
 $ErrorActionPreference = 'Stop'
 
 Add-Type -TypeDefinition @'
