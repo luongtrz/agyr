@@ -31,7 +31,7 @@ bash platforms/linux/install.sh        # Linux: creates symlinks in ~/.local/bin
 bash platforms/windows/install.sh      # Windows: creates Git Bash + .cmd wrappers in ~/.local/bin
 ```
 
-The install scripts only create symlinks or wrappers; they never sign in or read token files. After installation, `agyr help` should work and `bash test/run.sh` should report `795+ pass, 0 fail` without needing any login. The `agy` skill and `CLAUDE.md` are separate copies; see [Skill `agy` (copy)](#skill-agy-copy).
+The install scripts only create symlinks or wrappers; they never sign in or read token files. After installation, `agyr help` should work and `bash test/run.sh` should report `800 pass, 0 fail` without needing any login. For installing the `agy` skill and orchestrator rules, see [docs/agent-setup.md](agent-setup.md).
 
 ### Repository layout
 
@@ -39,8 +39,10 @@ The install scripts only create symlinks or wrappers; they never sign in or read
 - `install.sh`: unified root installer (auto-detects OS via `uname -s`).
 - `platforms/linux/`: `platform.sh` (Linux invocation layer: keyring bypass, `setsid`) and `install.sh` (symlink installer).
 - `platforms/windows/`: `platform.sh` (Git Bash: path conversion, `taskkill`, argument conversion guard), `cred.sh` and `cred.ps1` (read/write Credential Manager entries), `inspect-cred.ps1` (metadata diagnostics), and `install.sh` (writes bash and `.cmd` wrappers).
+- `skills/agy/`: the `agy` skill (`SKILL.md` and `references/`) for Claude Code, Antigravity, and Gemini CLI.
+- `templates/`: runtime templates used by `agy-task` (`hard-rules.txt`, `agy-task.conf.example`).
+- `docs/`: technical reference (`reference.md`) and orchestrator setup guide (`agent-setup.md`).
 - `test/`: modular test suite (`run.sh` runner, `core.sh` platform-independent suite, `linux.sh` Linux suite, `windows.sh` Windows suite, and fake helpers `fake-agy`, `fake-agy-run`, `fake-cred`).
-- `skill/agy/`, `claude/`, `templates/`: copy of the `agy` skill, copy of `CLAUDE.md`, and `HARD RULES` templates.
 
 ## How it works & platform backends
 
@@ -279,30 +281,33 @@ Every `agy-task run` that reaches summary output appends a tab-separated row to 
 | `AGY_RUN_MAX_SWITCH` | `10` | Maximum account switches per `agy-run` |
 | `AGY_RUN_POLL` | `1` | Poll interval in seconds for `agy-run` |
 
-## Skill `agy` (copy)
+## Skill `agy` and orchestrator setup
 
-`skill/agy/` is a tracked copy of the `agy` skill (`SKILL.md` and `references/`):
+`skills/agy/` contains the `agy` skill (`SKILL.md` and `references/`), and [docs/agent-setup.md](agent-setup.md) contains the recommended `CLAUDE.md` / `GEMINI.md` / `AGENTS.md` role-split snippet:
 
 ```bash
-rm -rf skill/agy && cp -r ~/.claude/skills/agy skill/agy                   # sync from local skill into repo
-mkdir -p ~/.claude/skills && cp -r skill/agy ~/.claude/skills/              # install for Claude Code
-mkdir -p ~/.gemini/config/skills && cp -r skill/agy ~/.gemini/config/skills/ # install for Antigravity / Gemini
+rm -rf skills/agy && cp -r ~/.claude/skills/agy skills/agy                   # sync from local skill into repo
+mkdir -p ~/.claude/skills && cp -r skills/agy ~/.claude/skills/              # install for Claude Code
+mkdir -p ~/.gemini/skills && cp -r skills/agy ~/.gemini/skills/              # install for Antigravity / Gemini
 ```
 
-`claude/CLAUDE.md` is a reference copy of global `CLAUDE.md` instructions for orchestrating `agy`. The `HARD RULES` block for implement tasks is in `templates/hard-rules.txt` (automatically appended by `agy-task`); the read-only exploration block is in `skill/agy/references/hard-rules-explore.txt`.
+The `HARD RULES` block for implement tasks is in `templates/hard-rules.txt` (automatically appended by `agy-task`); the read-only exploration block is in `skills/agy/references/hard-rules-explore.txt`.
 
 ## Tests
 
 ```bash
-bash test/run.sh
+bash test/run.sh              # all suites (core + linux + windows)
+bash test/run.sh core         # platform-independent core suite
+bash test/run.sh linux        # Linux suite
+bash test/run.sh windows      # Windows suite
 ```
 
-Runs 795 checks using fake tokens and `test/fake-agy` (emulating `init`, `429`, and `/quota` output) without touching real credentials. The `wincred` suite runs on all platforms against `test/fake-cred`. On Windows, two checks (POSIX `600`/`700` file modes and `pgrep`) are intentionally skipped.
+Runs 800 checks using fake tokens and `test/fake-agy` (emulating `init`, `429`, and `/quota` output) without touching real credentials. The `wincred` suite runs on all platforms against `test/fake-cred`. On Windows, two checks (POSIX `600`/`700` file modes and `pgrep`) are intentionally skipped.
 
 ## Known limitations
 
 - Running `agy` processes keep their initial token in memory; `agy-run` always kills and resumes the conversation rather than hot-swapping tokens.
 - `agy-run` only triggers a quota switch on plain-text `error: Individual quota reached …` or `AGY_ERROR: … RESOURCE_EXHAUSTED (code 429)` lines. When a conversation that previously hit 429 is resumed, `agy` still echoes the old quota error inside the final `{"event":"result"}` JSON (`status: "ERROR"`, `error: "Individual quota reached …"`) even when the resumed turn completed normally; `agy-run` ignores JSON lines so it does not switch accounts falsely, and returns exit `0` when `.result.response` is non-empty (or exit `1` if `response` is empty).
-- `503 No capacity` errors are not switched automatically by `agy-run`; follow `skill/agy/references/503-fallback.md` (`gemini-3.8-flash-medium`, then `gemini-3.8-flash-low`).
+- `503 No capacity` errors are not switched automatically by `agy-run`; follow `skills/agy/references/503-fallback.md` (`gemini-3.8-flash-medium`, then `gemini-3.8-flash-low`).
 - Parallel `agy-run` processes share one pool best-effort (see above).
 - **Windows:** the `wincred` backend is tested against `test/fake-cred`; because each Credential Manager read/write spawns PowerShell (~1 s), `agyr list` measures accounts sequentially rather than in parallel, and you should not sign in manually while `agyr list` or `agyr use` is running.

@@ -57,7 +57,7 @@ fi
 git -C "$REPO" log --oneline -1
 ```
 
-The repository has these folders: `bin/` (the three commands), `install.sh` (unified installer), `platforms/linux/` and `platforms/windows/` (platform code and install scripts), `skill/agy/` (Claude Code skill), `templates/`, `test/`, `docs/`.
+The repository has these folders: `bin/` (the three commands), `install.sh` (unified installer), `platforms/linux/` and `platforms/windows/` (platform code and install scripts), `skills/agy/` (orchestrator skill for Claude Code / Antigravity / Gemini), `templates/`, `docs/`, `test/`.
 
 ## 4. Install the commands
 
@@ -130,20 +130,20 @@ On Windows, `save` and `forget` work on the Credential Manager entry `gemini:ant
 
 After the user confirms the saves, you may run `agyr list -c`. It prints the saved numbers without starting agy. Do not run `agyr list` without asking, because it starts agy once per account (about 10–20 seconds in total).
 
-## 7. Optional: the Claude Code skill
+## 7. Optional: the `agy` skill
 
-Install this only if the user runs Claude Code on this machine and wants the `agy` skill. The skill tells Claude how to hand work to agy through `agy-task` and `agy-run`.
+Install this only if the user runs Claude Code, Antigravity, or Gemini CLI on this machine and wants the `agy` skill (see [docs/agent-setup.md](docs/agent-setup.md)). The skill tells the orchestrator how to hand work to agy through `agy-task` and `agy-run`.
 
 ```bash
 SKILL="$HOME/.claude/skills/agy"
 if [ -e "$SKILL" ]; then
-  diff -r "$REPO/skill/agy" "$SKILL" && echo "skill already identical"
+  diff -r "$REPO/skills/agy" "$SKILL" && echo "skill already identical"
 else
-  mkdir -p "$HOME/.claude/skills" && cp -r "$REPO/skill/agy" "$SKILL" && echo "skill installed"
+  mkdir -p "$HOME/.claude/skills" && cp -r "$REPO/skills/agy" "$SKILL" && echo "skill installed"
 fi
 ```
 
-If a different skill is already there, show the diff and ask. Do not touch `~/.claude/CLAUDE.md`: it belongs to the user.
+If a different skill is already there, show the diff and ask. Do not touch `~/.claude/CLAUDE.md` or `~/.gemini/GEMINI.md`: they belong to the user.
 
 ## 8. What the commands do
 

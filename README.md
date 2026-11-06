@@ -44,8 +44,8 @@ Google sign-in is interactive: sign in with `agyr`, then run `agyr save <name>`.
 ## Documentation
 
 - [docs/reference.md](docs/reference.md): how it works, full command reference, Linux and Windows platform backends, environment variables, known limitations.
+- [docs/agent-setup.md](docs/agent-setup.md): how to install the `skills/agy` skill and configure `CLAUDE.md` / `GEMINI.md` / `AGENTS.md` for AI agent orchestration.
 - [AGENT.MCP.md](AGENT.MCP.md): installation and verification guide for AI agents.
-- [skill/agy](skill/agy): Claude Code / Antigravity skill for delegating tasks through `agy-task` and `agy-run`.
 
 ## Repository layout
 
@@ -53,8 +53,10 @@ Google sign-in is interactive: sign in with `agyr`, then run `agyr save <name>`.
 - `install.sh`: unified root installer (auto-detects OS via `uname -s`)
 - `platforms/linux/`: Linux platform layer and installer (symlinks)
 - `platforms/windows/`: Windows platform layer, Credential Manager helpers (`cred.sh`, `cred.ps1`, `inspect-cred.ps1`), and installer (Git Bash + `.cmd` wrappers)
+- `skills/agy/`: skill for Claude Code / Antigravity / Gemini to delegate tasks through `agy-task` and `agy-run`
+- `templates/`: runtime templates used by `agy-task` (`hard-rules.txt`, `agy-task.conf.example`)
+- `docs/`: technical reference (`reference.md`) and orchestrator setup guide (`agent-setup.md`)
 - `test/`: test runner (`run.sh`), shared core suite (`core.sh`), and platform suites (`linux.sh`, `windows.sh`)
-- `skill/agy/`, `templates/`, `docs/`
 
 ## Tests
 
