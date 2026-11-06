@@ -1,53 +1,53 @@
 # agyr
 
-Xoay vòng nhiều account Google cho `agy` (Antigravity CLI) khi một account hết quota, và xem quota thật của từng account.
+Rotate between multiple Google accounts for `agy` (Antigravity CLI) when an account runs out of quota, and inspect each account's real quota.
 
-- Chỉ dùng binary `agy` chính thức. Không proxy, không đọc hay in nội dung token: chỉ copy file token giữa các slot.
-- Dùng nhiều account theo cách này có thể vi phạm điều khoản của Google. Dùng ở mức vừa phải.
+- Uses only the official `agy` binary. No proxy, and never reads or prints token contents: it only swaps token files between slots.
+- Using multiple accounts this way may conflict with Google's terms of service. Use in moderation.
 
-## Cài nhanh
+## Quick install
 
-Cần `bash`, `git`, `jq`. Đã thử với agy 1.5.1 trên Linux.
+Requires `bash`, `git`, `jq`. Tested with agy 1.5.1 on Linux.
 
 ```bash
 git clone https://github.com/luongtrz/rotate-agy.git ~/tools/agy-acct
-bash ~/tools/agy-acct/linux/install.sh       # Linux: symlink vào ~/.local/bin
-bash ~/tools/agy-acct/windows/install.sh     # Windows (Git Bash): wrapper vào ~/.local/bin
+bash ~/tools/agy-acct/linux/install.sh       # Linux: symlinks into ~/.local/bin
+bash ~/tools/agy-acct/windows/install.sh     # Windows (Git Bash): wrappers into ~/.local/bin
 ```
 
-Agent AI cài repo này theo [AGENT.MCP.md](AGENT.MCP.md).
+AI agents installing this repository should follow [AGENT.MCP.md](AGENT.MCP.md).
 
-## Dùng
+## Usage
 
 ```bash
-agyr                  # mở agy bằng account đang chọn
-agyr list             # quota của mọi account, * là account đang chọn
-agyr use <tên>        # đổi account
-agyr save <tên>       # lưu login vừa đăng nhập bằng tay thành một slot
-agyr forget           # xóa login cục bộ trước khi đăng nhập account khác
-agyr help             # danh sách lệnh; agyr help <lệnh> để xem chi tiết
+agyr                  # start agy with the selected account
+agyr list             # quota of all accounts (* marks the selected account)
+agyr use <name>       # switch account
+agyr save <name>      # save a manually logged-in account as a slot
+agyr forget           # drop the local login before signing in to another account
+agyr help             # command overview; agyr help <command> for details
 ```
 
-Login không tự động được: đăng nhập bằng `agyr`, rồi chạy `agyr save <tên>`.
+Google sign-in is interactive: sign in with `agyr`, then run `agyr save <name>`.
 
-## Tài liệu
+## Documentation
 
-- [docs/chi-tiet.md](docs/chi-tiet.md): cách hoạt động, lệnh đầy đủ, Windows, keyring, biến môi trường, giới hạn đã biết.
-- [AGENT.MCP.md](AGENT.MCP.md): hướng dẫn cài và kiểm tra cho agent AI.
-- [skill/agy](skill/agy): skill Claude Code dùng `agy-task` và `agy-run`.
+- [docs/reference.md](docs/reference.md): how it works, full command reference, Windows backend, keyring bypass, environment variables, known limitations.
+- [AGENT.MCP.md](AGENT.MCP.md): installation and verification guide for AI agents.
+- [skill/agy](skill/agy): Claude Code / Antigravity skill for delegating tasks through `agy-task` and `agy-run`.
 
-## Cấu trúc
+## Repository layout
 
 - `bin/`: `agyr`, `agy-run`, `agy-task`
-- `linux/`, `windows/`: phần riêng của từng hệ điều hành và script cài đặt
+- `linux/`, `windows/`: platform-specific layers and install scripts
 - `skill/agy/`, `templates/`, `test/`, `docs/`
 
-## Test
+## Tests
 
 ```bash
-bash test/run.sh      # 795 kiểm tra, dùng agy giả và token giả, không đụng login thật
+bash test/run.sh      # 795 checks using a fake agy and fake tokens; never touches real logins
 ```
 
-## Giấy phép
+## License
 
-MIT, xem [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
