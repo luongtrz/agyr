@@ -39,7 +39,8 @@ The install scripts only create symlinks or wrappers; they never sign in or read
 - `install.sh`: unified root installer (auto-detects OS via `uname -s`).
 - `platforms/linux/`: `platform.sh` (Linux invocation layer: keyring bypass, `setsid`) and `install.sh` (symlink installer).
 - `platforms/windows/`: `platform.sh` (Git Bash: path conversion, `taskkill`, argument conversion guard), `cred.sh` and `cred.ps1` (read/write Credential Manager entries), `inspect-cred.ps1` (metadata diagnostics), and `install.sh` (writes bash and `.cmd` wrappers).
-- `skill/agy/`, `claude/`, `templates/`, `test/`: copy of the `agy` skill, copy of `CLAUDE.md`, `HARD RULES` templates, and test suite.
+- `test/`: modular test suite (`run.sh` runner, `core.sh` platform-independent suite, `linux.sh` Linux suite, `windows.sh` Windows suite, and fake helpers `fake-agy`, `fake-agy-run`, `fake-cred`).
+- `skill/agy/`, `claude/`, `templates/`: copy of the `agy` skill, copy of `CLAUDE.md`, and `HARD RULES` templates.
 
 ## How it works & platform backends
 

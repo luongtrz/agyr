@@ -53,12 +53,16 @@ Google sign-in is interactive: sign in with `agyr`, then run `agyr save <name>`.
 - `install.sh`: unified root installer (auto-detects OS via `uname -s`)
 - `platforms/linux/`: Linux platform layer and installer (symlinks)
 - `platforms/windows/`: Windows platform layer, Credential Manager helpers (`cred.sh`, `cred.ps1`, `inspect-cred.ps1`), and installer (Git Bash + `.cmd` wrappers)
-- `skill/agy/`, `templates/`, `test/`, `docs/`
+- `test/`: test runner (`run.sh`), shared core suite (`core.sh`), and platform suites (`linux.sh`, `windows.sh`)
+- `skill/agy/`, `templates/`, `docs/`
 
 ## Tests
 
 ```bash
-bash test/run.sh      # 795+ checks using a fake agy and fake tokens; never touches real logins
+bash test/run.sh              # run all suites (core + linux + windows; 800 checks, never touches real logins)
+bash test/run.sh core         # run only platform-independent core tests
+bash test/run.sh linux        # run only Linux platform tests
+bash test/run.sh windows      # run only Windows platform tests
 ```
 
 ## License
