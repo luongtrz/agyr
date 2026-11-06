@@ -18,13 +18,13 @@ Gồm ba lệnh trong `bin/`:
 
 Nếu bạn là agent AI được nhờ cài repo này lên máy, đọc [agent.mcp.md](../agent.mcp.md): các bước cài và những việc agent không được làm (login, save, đọc file token).
 
-Cần `bash`, `git` và `jq`. Trên Linux thêm `timeout` (coreutils) và `setsid` (util-linux), không bắt buộc. Đã thử trên Linux với agy 1.4.7.
+Cần `bash`, `git` và `jq`. Trên Linux thêm `timeout` (coreutils) và `setsid` (util-linux), không bắt buộc. Đã thử trên Linux với agy 1.5.1.
 
 ```bash
 bash linux/install.sh        # tạo symlink agyr, agy-run, agy-task trong ~/.local/bin
 ```
 
-Trên Windows dùng `bash windows/install.sh` (xem mục bên dưới). Script chỉ tạo symlink hoặc wrapper, không login và không đọc file token. Sau khi cài, `agyr help` phải chạy được và `bash test/run.sh` phải báo `794 pass, 0 fail`. Việc này không cần login. Skill `agy` và `CLAUDE.md` là bản sao riêng, xem mục [Skill `agy` (bản sao)](#skill-agy-bản-sao).
+Trên Windows dùng `bash windows/install.sh` (xem mục bên dưới). Script chỉ tạo symlink hoặc wrapper, không login và không đọc file token. Sau khi cài, `agyr help` phải chạy được và `bash test/run.sh` phải báo `795 pass, 0 fail`. Việc này không cần login. Skill `agy` và `CLAUDE.md` là bản sao riêng, xem mục [Skill `agy` (bản sao)](#skill-agy-bản-sao).
 
 ### Cấu trúc repo
 
@@ -62,7 +62,7 @@ agyr save acct2
 agyr forget
 agy                       # đăng nhập account 3...
 agyr save acct3
-agyr use acct1 # chọn account dùng hằng ngày
+agyr use acct1            # chọn account dùng hằng ngày
 agyr list                 # kiểm tra từng slot còn sống
 ```
 
@@ -76,7 +76,7 @@ Cách `agyr` xử lý: mọi `agy` do `agyr` hoặc `agy-run` khởi động đ�
 
 ## Setup một lần
 
-Tên slot do bạn tự đặt: chỉ gồm chữ cái không dấu, số, `-` và `_` (ví dụ `acct2`, `work`). Không dùng dấu cách, dấu chấm, `@` hay `/`.
+Tên slot do bạn tự đặt: chỉ gồm chữ cái không dấu, số, `-` và `_` (ví dụ `acct1`, `work`). Không dùng dấu cách, dấu chấm, `@` hay `/`.
 
 Với từng account, đăng nhập bằng `agyr` rồi lưu slot. Làm tay vì cần đăng nhập Google. **Đừng dùng lệnh logout của agy** (chưa rõ nó có thu hồi token ở phía Google không); thay vào đó dùng `agyr forget` (xóa file token cục bộ, tương đương `rm ~/.gemini/antigravity-cli/antigravity-oauth-token`, slot đã giữ bản copy):
 
@@ -303,7 +303,6 @@ mkdir -p ~/.claude/skills && cp -r skill/agy ~/.claude/skills/              # c�
 `claude/CLAUDE.md` là bản sao `~/.claude/CLAUDE.md` (quy tắc chung của Claude Code, phần agy chỉ trỏ tới skill). Cập nhật bằng `cp ~/.claude/CLAUDE.md claude/CLAUDE.md`. Không copy ngược từ repo vào máy khi chưa xem diff.
 
 Khối HARD RULES cho task implement nằm ở `templates/hard-rules.txt` (`agy-task` tự ghép vào prompt); bản cho task chỉ-đọc nằm ở `skill/agy/references/hard-rules-explore.txt`.
-
 
 ## Test
 

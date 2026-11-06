@@ -7,7 +7,7 @@ Xoay vòng nhiều account Google cho `agy` (Antigravity CLI) khi một account 
 
 ## Cài nhanh
 
-Cần `bash`, `git`, `jq`. Đã thử với agy 1.4.7 trên Linux.
+Cần `bash`, `git`, `jq`. Đã thử với agy 1.5.1 trên Linux.
 
 ```bash
 git clone https://github.com/luongtrz/rotate-agy.git ~/tools/agy-acct
@@ -45,7 +45,7 @@ Login không tự động được: đăng nhập bằng `agyr`, rồi chạy `a
 ## Test
 
 ```bash
-bash test/run.sh      # 794 kiểm tra, dùng agy giả và token giả, không đụng login thật
+bash test/run.sh      # 795 kiểm tra, dùng agy giả và token giả, không đụng login thật
 ```
 
 ## Giấy phép

@@ -394,7 +394,7 @@ eq "refresh: the active account's slot is not overwritten" "at-acc1" "$(jq -r .t
 eq "refresh: the real token file is not overwritten" "at-acc1" "$(jq -r .token.access_token "$AGY_HOME/antigravity-oauth-token")"
 unset FAKE_REFRESH
 
-# agy leaves ANOTHER account's login in the temp HOME (the 2026-10-09 symptom: acct4's slot ended up with acct3's login):
+# agy leaves ANOTHER account's login in the temp HOME (the 2026-10-09 symptom: acc2's slot ended up with acc1's login):
 # the slot must keep its own login
 setup
 for a in acc1 acc2 acc3; do jtok "$a" "at-$a" >"$AGY_HOME/antigravity-oauth-token"; "$ACCT" save "$a" >/dev/null; done
