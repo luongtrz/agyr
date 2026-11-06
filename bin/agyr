@@ -469,9 +469,17 @@ measure_one() {
 # Fails if the Gemini numbers are missing.
 quota_ingest() {
   local name="$1" raw="$2" grp metric pct reset epoch g5="" g5r=0 gw="" gwr=0 g5off=0
+  local c5=null c5r=null cw=null cwr=null # Claude / GPT limits: kept only for accounts that also report Gemini 4 Argon
   local a5=null a5r=null aw=null awr=null # Gemini 4 Argon (only some accounts have it): null = no such limit reported
   while IFS=$'\t' read -r grp metric pct reset; do
     case "$grp|$metric" in
+      "Claude and GPT models|"*)
+        [ -n "$reset" ] || continue
+        epoch="$(date -d "$reset" +%s 2>/dev/null)" || continue
+        case "$metric" in
+          *"Five Hour"*) c5="${pct%\%}"; c5r="$epoch" ;;
+          *Weekly*) cw="${pct%\%}"; cwr="$epoch" ;;
+        esac ;;
       "Gemini 4 Argon|"*)
         # reported as its own group, e.g. "Gemini 4 Argon<TAB>Gemini 4 Argon Weekly Limit<TAB>25%<TAB>2026-11-13T02:27:40Z"
         [ -n "$reset" ] || continue
@@ -498,9 +506,14 @@ quota_ingest() {
   [[ "$g5" =~ ^-?[0-9]+$ && "$gw" =~ ^[0-9]+$ ]] || return 1
   [[ "$a5" == null || "$a5" =~ ^[0-9]+$ ]] || { a5=null; a5r=null; }
   [[ "$aw" == null || "$aw" =~ ^[0-9]+$ ]] || { aw=null; awr=null; }
-  state_update '.quota[$n]={at:$t,g5:$a,g5r:$ar,gw:$b,gwr:$br,a5:$x5,a5r:$x5r,aw:$xw,awr:$xwr}' --arg n "$name" --argjson t "$(now)" \
+  # only accounts that have Gemini 4 Argon get the Claude columns
+  if [ "$a5" == null ] && [ "$aw" == null ]; then c5=null; c5r=null; cw=null; cwr=null; fi
+  [[ "$c5" == null || "$c5" =~ ^[0-9]+$ ]] || { c5=null; c5r=null; }
+  [[ "$cw" == null || "$cw" =~ ^[0-9]+$ ]] || { cw=null; cwr=null; }
+  state_update '.quota[$n]={at:$t,g5:$a,g5r:$ar,gw:$b,gwr:$br,a5:$x5,a5r:$x5r,aw:$xw,awr:$xwr,c5:$y5,c5r:$y5r,cw:$yw,cwr:$ywr}' --arg n "$name" --argjson t "$(now)" \
     --argjson a "$g5" --argjson ar "$g5r" --argjson b "$gw" --argjson br "$gwr" \
-    --argjson x5 "$a5" --argjson x5r "$a5r" --argjson xw "$aw" --argjson xwr "$awr"
+    --argjson x5 "$a5" --argjson x5r "$a5r" --argjson xw "$aw" --argjson xwr "$awr" \
+    --argjson y5 "$c5" --argjson y5r "$c5r" --argjson yw "$cw" --argjson ywr "$cwr"
   local until=0
   if [ "$g5" -eq 0 ]; then until=$g5r; fi
   if [ "$gw" -eq 0 ] && [ "$gwr" -gt "$until" ]; then until=$gwr; fi
@@ -622,12 +635,16 @@ print_table() {
     else printf '%s  %-19s' "$(pct "$1")" "$(fmt_time "$2")"; fi
   }
   # Gemini 4 Argon columns appear only when at least one account reports that limit
-  local show_a5 show_aw hdr
+  local show_a5 show_aw show_c5 show_cw hdr
   show_a5="$(jq -r '[.quota[]? | select(.a5 != null)] | length' "$STATE")"
   show_aw="$(jq -r '[.quota[]? | select(.aw != null)] | length' "$STATE")"
+  show_c5="$(jq -r '[.quota[]? | select(.c5 != null)] | length' "$STATE")"
+  show_cw="$(jq -r '[.quota[]? | select(.cw != null)] | length' "$STATE")"
   hdr="$(printf '  %-14s %-25s   %-25s' "ACCOUNT" "GEMINI 5H" "GEMINI WEEK")"
   if [ "$show_a5" -gt 0 ]; then hdr+="$(printf '   %-25s' "ARGON 5H")"; fi
   if [ "$show_aw" -gt 0 ]; then hdr+="$(printf '   %-25s' "ARGON WEEK")"; fi
+  if [ "$show_c5" -gt 0 ]; then hdr+="$(printf '   %-25s' "CLAUDE 5H")"; fi
+  if [ "$show_cw" -gt 0 ]; then hdr+="$(printf '   %-25s' "CLAUDE WEEK")"; fi
   echo "$hdr   STATUS"
   while read -r n; do
     g5=""; g5r=0; gw=""; gwr=0; at=0
@@ -644,11 +661,15 @@ print_table() {
     elif { [ "$g5" != -1 ] && [ "$g5" -le 10 ]; } || [ "$gw" -le 10 ]; then st="low"; sc="$R"
     else st="ready"; sc="$G"; fi
     mark=" "; if [ "$n" = "$cur" ]; then mark="*"; fi
-    local extra="" a5 a5r aw awr
+    local extra="" a5 a5r aw awr c5 c5r cw cwr
+    IFS=$'\t' read -r c5 c5r cw cwr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.c5 // "-"),(.c5r // 0),(.cw // "-"),(.cwr // 0)] | @tsv' "$STATE")"
+    [ "${c5:-}" = "-" ] && c5=""; [ "${cw:-}" = "-" ] && cw=""
     IFS=$'\t' read -r a5 a5r aw awr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.a5 // "-"),(.a5r // 0),(.aw // "-"),(.awr // 0)] | @tsv' "$STATE")"
     [ "${a5:-}" = "-" ] && a5=""; [ "${aw:-}" = "-" ] && aw=""
     if [ "$show_a5" -gt 0 ]; then extra+="   $(cell "$a5" "${a5r:-0}")"; fi
     if [ "$show_aw" -gt 0 ]; then extra+="   $(cell "$aw" "${awr:-0}")"; fi
+    if [ "$show_c5" -gt 0 ]; then extra+="   $(cell "$c5" "${c5r:-0}")"; fi
+    if [ "$show_cw" -gt 0 ]; then extra+="   $(cell "$cw" "${cwr:-0}")"; fi
     printf '%s %-14s %s   %s%s   %s%s%s\n' "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$extra" "$sc" "$st" "$Z"
   done < <(rows_by_week_reset "$failed")
   if [ -n "$LIVE" ] && [ -z "$cur" ]; then
@@ -953,6 +974,7 @@ last); this is the order in which the weekly limits free up.
   GEMINI 5H    % left of the 5-hour limit and when it resets
   GEMINI WEEK  % left of the weekly limit and when it resets
   ARGON 5H / ARGON WEEK  the same for the Gemini 4 Argon model; shown only when an account reports that limit
+  CLAUDE 5H / CLAUDE WEEK  the Claude and GPT models limits; kept only for accounts that also have Gemini 4 Argon
   STATUS       ready | low (10% or less left) | weekly limit reached, <time> left (the 5-hour limit then shows 'off':
                it does not apply) | cooldown, <time> left | not measured | stale, past reset time | measure failed
 
