@@ -36,6 +36,7 @@ Before any `agy` run, load and follow the `agy` skill (`SKILL.md`): model select
 Orchestrator responsibilities:
 - **Plan, don't over-specify** — do only enough investigation to write a clear plan: goal, root cause or suspected area, relevant files, the pattern to mirror, and acceptance criteria. Do NOT pre-trace every line or write out the full code in the prompt — let `agy` locate and implement the details, then trace the code during review. Keep one bug or logical change per `agy` session; every prompt carries the `HARD RULES` block (`agy-task` appends it automatically).
 - **Isolate** — implement tasks run only inside a dedicated git worktree created by `agy-task run` (never the main checkout); read-only exploration tasks may target the repository via `agy-run --add-dir`.
+- **Launch individually** — launch each `agy-task run` or `agy-run` as its own separate background tool call (never bundle multiple tasks into one shell loop, wrapper script like `launch.sh`, or `for pid in ...; wait` command). Bundling hides individual task status from the user and blocks completion notifications until the slowest task finishes.
 - **Review & verify** — treat `agy`'s output as untrusted: read the full diff, run build/lint/type-check/tests yourself, and verify `agy`'s conclusions against the code. If the result is wrong, send `agy` a corrected follow-up prompt (`agy-task run --name <task> --resume ...`) rather than fixing it by hand.
 - **Integrate** — stage verified in-scope changes, commit, and clean up the worktree (`agy-task rm <task> -f`).
 ```
