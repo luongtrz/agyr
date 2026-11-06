@@ -638,6 +638,21 @@ rows_by_week_reset() {
   done < <(slots) | sort -k1,1n -k2,2 | cut -d' ' -f2
 }
 
+table_dash() { local s; printf -v s "%*s" "$1" ""; echo -n "${s// /─}"; }
+
+term_width() {
+  if [ -n "${AGYR_WIDE:-}" ]; then echo 0; return; fi
+  if [ -t 1 ] || [ -n "${AGYR_RESPONSIVE:-}" ]; then
+    local w="${AGYR_COLUMNS:-${COLUMNS:-}}"
+    if [ -z "$w" ] || [ "$w" -le 0 ] 2>/dev/null; then
+      w="$(tput cols 2>/dev/null || echo 0)"
+    fi
+    echo "${w:-0}"
+  else
+    echo 0
+  fi
+}
+
 # Print the table from state. $1 = names of accounts that failed to measure, $2 = 1 if measured just now.
 print_table() {
   local failed=" $1 " live="$2" t cur n snap g5 g5r gw gwr at until st sc oldest=0 mark
@@ -650,7 +665,15 @@ print_table() {
     never) usecolor=0 ;;
     *) if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then usecolor=1; fi ;;
   esac
-  if [ "$usecolor" = 1 ]; then G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; Z=$'\033[0m'; fi
+  local BG_ALT="" ALL_RST=""
+  if [ "$usecolor" = 1 ]; then
+    G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; Z=$'\033[39m'
+    ALL_RST=$'\033[0m'
+    case "${COLORFGBG:-}" in
+      *";15"|"0;"*) BG_ALT=$'\033[48;5;254m' ;;
+      *) BG_ALT=$'\033[48;5;236m' ;;
+    esac
+  fi
   pct() { # $1 = % left: <=10 red, <=40 yellow, otherwise green
     local c="$G"
     if [ "$1" -le 10 ]; then c="$R"; elif [ "$1" -le 40 ]; then c="$Y"; fi
@@ -662,34 +685,110 @@ print_table() {
     else printf '%s  %-19s' "$(pct "$1")" "$(fmt_time "$2")"; fi
   }
   # Gemini 4 Argon columns appear only when at least one account reports that limit
-  local show_a5 show_aw show_c5 show_cw hdr sep
+  local show_a5 show_aw show_c5 show_cw
   show_a5="$(jq -r '[.quota[]? | select(.a5 != null)] | length' "$STATE")"
   show_aw="$(jq -r '[.quota[]? | select(.aw != null)] | length' "$STATE")"
   show_c5="$(jq -r '[.quota[]? | select(.c5 != null)] | length' "$STATE")"
   show_cw="$(jq -r '[.quota[]? | select(.cw != null)] | length' "$STATE")"
-  hdr="$(printf '  %-14s | %-25s | %-25s' "ACCOUNT" "GEMINI 5H" "GEMINI WEEK")"
-  sep="  $(printf '%*s' 15 '' | tr ' ' '-')+$(printf '%*s' 27 '' | tr ' ' '-')+$(printf '%*s' 27 '' | tr ' ' '-')"
+
+  local tw; tw="$(term_width)"
+  local claude_hidden=0 argon_hidden=0
+  local status_dash=45 status_pad=43
+
+  if [ "$tw" -gt 0 ]; then
+    local def_s=45 min_s=16
+    local num_extra=0
+    [ "$show_a5" -gt 0 ] && num_extra=$((num_extra + 1))
+    [ "$show_aw" -gt 0 ] && num_extra=$((num_extra + 1))
+    [ "$show_c5" -gt 0 ] && num_extra=$((num_extra + 1))
+    [ "$show_cw" -gt 0 ] && num_extra=$((num_extra + 1))
+
+    local needed=$((77 + num_extra * 28 + def_s))
+    local min_needed=$((77 + num_extra * 28 + min_s))
+
+    if [ "$tw" -ge "$needed" ]; then
+      status_dash=$def_s
+    elif [ "$tw" -ge "$min_needed" ]; then
+      status_dash=$((tw - 77 - num_extra * 28))
+    else
+      # Not enough space with all extra columns. Hide Claude columns first!
+      if [ "$show_c5" -gt 0 ] || [ "$show_cw" -gt 0 ]; then
+        claude_hidden=1
+        [ "$show_c5" -gt 0 ] && num_extra=$((num_extra - 1))
+        [ "$show_cw" -gt 0 ] && num_extra=$((num_extra - 1))
+        show_c5=0; show_cw=0
+      fi
+      needed=$((77 + num_extra * 28 + def_s))
+      min_needed=$((77 + num_extra * 28 + min_s))
+      if [ "$tw" -ge "$needed" ]; then
+        status_dash=$def_s
+      elif [ "$tw" -ge "$min_needed" ]; then
+        status_dash=$((tw - 77 - num_extra * 28))
+      else
+        # Still not enough space. Hide Argon columns too!
+        if [ "$show_a5" -gt 0 ] || [ "$show_aw" -gt 0 ]; then
+          argon_hidden=1
+          num_extra=0
+          show_a5=0; show_aw=0
+        fi
+        needed=$((77 + def_s))
+        min_needed=$((77 + min_s))
+        if [ "$tw" -ge "$needed" ]; then
+          status_dash=$def_s
+        elif [ "$tw" -ge "$min_needed" ]; then
+          status_dash=$((tw - 77))
+        else
+          status_dash=$min_s
+        fi
+      fi
+    fi
+    status_pad=$((status_dash - 2))
+  fi
+
+  local top mid bot hdr
+  top="┌$(table_dash 18)┬$(table_dash 27)┬$(table_dash 27)"
+  mid="├$(table_dash 18)┼$(table_dash 27)┼$(table_dash 27)"
+  bot="└$(table_dash 18)┴$(table_dash 27)┴$(table_dash 27)"
+  hdr="$(printf '│ %-16s │ %-25s │ %-25s' "ACCOUNT" "GEMINI 5H" "GEMINI WEEK")"
+
   if [ "$show_a5" -gt 0 ]; then
-    hdr+="$(printf ' | %-25s' "ARGON 5H")"
-    sep+="+$(printf '%*s' 27 '' | tr ' ' '-')"
+    top+="┬$(table_dash 27)"
+    mid+="┼$(table_dash 27)"
+    bot+="┴$(table_dash 27)"
+    hdr+="$(printf ' │ %-25s' "ARGON 5H")"
   fi
   if [ "$show_aw" -gt 0 ]; then
-    hdr+="$(printf ' | %-25s' "ARGON WEEK")"
-    sep+="+$(printf '%*s' 27 '' | tr ' ' '-')"
+    top+="┬$(table_dash 27)"
+    mid+="┼$(table_dash 27)"
+    bot+="┴$(table_dash 27)"
+    hdr+="$(printf ' │ %-25s' "ARGON WEEK")"
   fi
   if [ "$show_c5" -gt 0 ]; then
-    hdr+="$(printf ' | %-25s' "CLAUDE 5H")"
-    sep+="+$(printf '%*s' 27 '' | tr ' ' '-')"
+    top+="┬$(table_dash 27)"
+    mid+="┼$(table_dash 27)"
+    bot+="┴$(table_dash 27)"
+    hdr+="$(printf ' │ %-25s' "CLAUDE 5H")"
   fi
   if [ "$show_cw" -gt 0 ]; then
-    hdr+="$(printf ' | %-25s' "CLAUDE WEEK")"
-    sep+="+$(printf '%*s' 27 '' | tr ' ' '-')"
+    top+="┬$(table_dash 27)"
+    mid+="┼$(table_dash 27)"
+    bot+="┴$(table_dash 27)"
+    hdr+="$(printf ' │ %-25s' "CLAUDE WEEK")"
   fi
-  local full_hdr="$hdr | STATUS"
-  sep+="+$(printf '%*s' 20 '' | tr ' ' '-')"
-  echo "$full_hdr"
-  echo "$sep"
+
+  top+="┬$(table_dash "$status_dash")┐"
+  mid+="┼$(table_dash "$status_dash")┤"
+  bot+="┴$(table_dash "$status_dash")┘"
+  hdr+="$(printf ' │ %-*s │' "$status_pad" "STATUS")"
+
+  echo "$top"
+  echo "$hdr"
+  echo "$mid"
+  local row_idx=0
   while read -r n; do
+    local row_bg=""
+    if [ $((row_idx % 2)) -eq 1 ]; then row_bg="$BG_ALT"; fi
+    row_idx=$((row_idx + 1))
     g5=""; g5r=0; gw=""; gwr=0; at=0
     snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [.g5,.g5r,.gw,.gwr,.at] | @tsv' "$STATE")"
     if [ -n "$snap" ]; then IFS=$'\t' read -r g5 g5r gw gwr at <<<"$snap"; fi
@@ -709,15 +808,26 @@ print_table() {
     [ "${c5:-}" = "-" ] && c5=""; [ "${cw:-}" = "-" ] && cw=""
     IFS=$'\t' read -r a5 a5r aw awr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.a5 // "-"),(.a5r // 0),(.aw // "-"),(.awr // 0)] | @tsv' "$STATE")"
     [ "${a5:-}" = "-" ] && a5=""; [ "${aw:-}" = "-" ] && aw=""
-    if [ "$show_a5" -gt 0 ]; then extra+=" | $(cell "$a5" "${a5r:-0}")"; fi
-    if [ "$show_aw" -gt 0 ]; then extra+=" | $(cell "$aw" "${awr:-0}")"; fi
-    if [ "$show_c5" -gt 0 ]; then extra+=" | $(cell "$c5" "${c5r:-0}")"; fi
-    if [ "$show_cw" -gt 0 ]; then extra+=" | $(cell "$cw" "${cwr:-0}")"; fi
-    printf '%s %-14s | %s | %s%s | %s%s%s\n' "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$extra" "$sc" "$st" "$Z"
-    echo "$sep"
+    if [ "$show_a5" -gt 0 ]; then extra+=" │ $(cell "$a5" "${a5r:-0}")"; fi
+    if [ "$show_aw" -gt 0 ]; then extra+=" │ $(cell "$aw" "${awr:-0}")"; fi
+    if [ "$show_c5" -gt 0 ]; then extra+=" │ $(cell "$c5" "${c5r:-0}")"; fi
+    if [ "$show_cw" -gt 0 ]; then extra+=" │ $(cell "$cw" "${cwr:-0}")"; fi
+    local st_disp="$st"
+    if [ "${#st}" -gt "$status_pad" ]; then
+      st_disp="${st:0:$((status_pad - 1))}…"
+    fi
+    printf '%s│ %s %-14s │ %s │ %s%s │ %s%-*s%s │%s\n' "$row_bg" "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$extra" "$sc" "$status_pad" "$st_disp" "$Z" "$ALL_RST"
   done < <(rows_by_week_reset "$failed")
+  echo "$bot"
+  if [ "$claude_hidden" -eq 1 ] && [ "$argon_hidden" -eq 1 ]; then
+    echo "(Note: Argon and Claude columns hidden to fit terminal width ${tw}. Use 'agyr list -w' to show all)"
+  elif [ "$claude_hidden" -eq 1 ]; then
+    echo "(Note: Claude columns hidden to fit terminal width ${tw}. Use 'agyr list -w' to show all)"
+  elif [ "$argon_hidden" -eq 1 ]; then
+    echo "(Note: Argon columns hidden to fit terminal width ${tw}. Use 'agyr list -w' to show all)"
+  fi
   if [ -n "$LIVE" ] && [ -z "$cur" ]; then
-    echo "${Y}! The login in use matches no slot (just logged in to another account?). Run 'agyr save <name>' to store it; 'agyr use' will not overwrite any slot.${Z}"
+    echo "${Y}! The login in use matches no slot (just logged in to another account?). Run 'agyr save <name>' to store it; 'agyr use' will not overwrite any slot.${ALL_RST:-$Z}"
   fi
   if [ "$live" = 1 ]; then
     echo "Measured at $(fmt_time "$t")   (* = selected account)"
@@ -733,11 +843,16 @@ print_table() {
 cmd_list() {
   need_jq; init_state
   local cached=0
-  case "${1:-}" in
-    -c|--cached) cached=1 ;;
-    "") ;;
-    *) die "usage: agyr list [-c|--cached]" 2 ;;
-  esac
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -c|--cached) cached=1 ;;
+      -w|--wide) export AGYR_WIDE=1 ;;
+      -cw|-wc) cached=1; export AGYR_WIDE=1 ;;
+      "") ;;
+      *) die "usage: agyr list [-c|--cached] [-w|--wide]" 2 ;;
+    esac
+    shift
+  done
   local -a names=()
   mapfile -t names < <(slots)
   if [ "${#names[@]}" -eq 0 ]; then
@@ -839,8 +954,15 @@ print_test_table() {
   local argon_val argon_rst claude_val claude_rst
   local a_before a_after a_b_iso a_b_epoch
   local c_before c_after c_b_iso c_b_epoch
-  local G="" Y="" R="" Z=""
-  if use_color; then G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; Z=$'\033[0m'; fi
+  local G="" Y="" R="" Z="" BG_ALT="" ALL_RST=""
+  if use_color; then
+    G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; Z=$'\033[39m'
+    ALL_RST=$'\033[0m'
+    case "${COLORFGBG:-}" in
+      *";15"|"0;"*) BG_ALT=$'\033[48;5;254m' ;;
+      *) BG_ALT=$'\033[48;5;236m' ;;
+    esac
+  fi
 
   local has_argon=0 has_argon_5h=0
   for n in "${!TEST_TRY[@]}"; do
@@ -852,23 +974,83 @@ print_test_table() {
     fi
   done
 
+  local tw; tw="$(term_width)"
+  local show_test_claude=1 show_test_argon=1
+  local hi_dash=48 hi_pad=46
+  local rst_dash=37 rst_pad=35
+
+  if [ "$has_argon" -eq 1 ]; then
+    if [ "$tw" -gt 0 ]; then
+      if [ "$tw" -lt 228 ]; then show_test_claude=0; fi
+      if [ "$tw" -lt 175 ]; then show_test_argon=0; fi
+      if [ "$tw" -lt 122 ]; then
+        local avail=$((tw - 1 - 18 - 1 - 14 - 1 - 2))
+        [ "$avail" -lt 36 ] && avail=36
+        hi_dash=$((avail * 55 / 100))
+        rst_dash=$((avail - hi_dash))
+        [ "$hi_dash" -lt 18 ] && hi_dash=18
+        [ "$rst_dash" -lt 18 ] && rst_dash=18
+        hi_pad=$((hi_dash - 2))
+        rst_pad=$((rst_dash - 2))
+      fi
+    fi
+  else
+    if [ "$tw" -gt 0 ] && [ "$tw" -lt 122 ]; then
+      local avail=$((tw - 1 - 18 - 1 - 14 - 1 - 2))
+      [ "$avail" -lt 36 ] && avail=36
+      hi_dash=$((avail * 55 / 100))
+      rst_dash=$((avail - hi_dash))
+      [ "$hi_dash" -lt 18 ] && hi_dash=18
+      [ "$rst_dash" -lt 18 ] && rst_dash=18
+      hi_pad=$((hi_dash - 2))
+      rst_pad=$((rst_dash - 2))
+    fi
+  fi
+
   local argon_hdr="ARGON WEEK"
   if [ "$has_argon_5h" -eq 1 ]; then argon_hdr="ARGON 5H"; fi
-  local test_hdr test_sep
-  if [ "$has_argon" -eq 1 ]; then
-    test_hdr="$(printf '  %-14s | %-46s | %-12s | %-35s | %-12s | %-35s | %-12s | %s' "ACCOUNT" "HI" "GEMINI 5H" "RESETS" "$argon_hdr" "ARGON RESETS" "CLAUDE 5H" "CLAUDE RESETS")"
-    test_sep="  $(printf '%*s' 15 '' | tr ' ' '-')+$(printf '%*s' 48 '' | tr ' ' '-')+$(printf '%*s' 14 '' | tr ' ' '-')+$(printf '%*s' 37 '' | tr ' ' '-')+$(printf '%*s' 14 '' | tr ' ' '-')+$(printf '%*s' 37 '' | tr ' ' '-')+$(printf '%*s' 14 '' | tr ' ' '-')+$(printf '%*s' 35 '' | tr ' ' '-')"
-  else
-    test_hdr="$(printf '  %-14s | %-46s | %-12s | %s' "ACCOUNT" "HI" "GEMINI 5H" "RESETS")"
-    test_sep="  $(printf '%*s' 15 '' | tr ' ' '-')+$(printf '%*s' 48 '' | tr ' ' '-')+$(printf '%*s' 14 '' | tr ' ' '-')+$(printf '%*s' 35 '' | tr ' ' '-')"
-  fi
-  echo "$test_hdr"
-  echo "$test_sep"
+  local top mid bot test_hdr
+  top="┌$(table_dash 18)┬$(table_dash "$hi_dash")┬$(table_dash 14)┬$(table_dash "$rst_dash")"
+  mid="├$(table_dash 18)┼$(table_dash "$hi_dash")┼$(table_dash 14)┼$(table_dash "$rst_dash")"
+  bot="└$(table_dash 18)┴$(table_dash "$hi_dash")┴$(table_dash 14)┴$(table_dash "$rst_dash")"
+  test_hdr="$(printf '│ %-16s │ %-*s │ %-12s │ %-*s' "ACCOUNT" "$hi_pad" "HI" "GEMINI 5H" "$rst_pad" "RESETS")"
 
+  if [ "$has_argon" -eq 1 ] && [ "$show_test_argon" -eq 1 ]; then
+    top+="┬$(table_dash 14)┬$(table_dash 37)"
+    mid+="┼$(table_dash 14)┼$(table_dash 37)"
+    bot+="┴$(table_dash 14)┴$(table_dash 37)"
+    test_hdr+="$(printf ' │ %-12s │ %-35s' "$argon_hdr" "ARGON RESETS")"
+  fi
+  if [ "$has_argon" -eq 1 ] && [ "$show_test_claude" -eq 1 ]; then
+    top+="┬$(table_dash 14)┬$(table_dash 37)"
+    mid+="┼$(table_dash 14)┼$(table_dash 37)"
+    bot+="┴$(table_dash 14)┴$(table_dash 37)"
+    test_hdr+="$(printf ' │ %-12s │ %-35s' "CLAUDE 5H" "CLAUDE RESETS")"
+  fi
+  top+="┐"
+  mid+="┤"
+  bot+="┘"
+  test_hdr+=" │"
+  echo "$top"
+  echo "$test_hdr"
+  echo "$mid"
+
+  local row_idx=0
   while read -r n; do
+    local row_bg=""
+    if [ $((row_idx % 2)) -eq 1 ]; then row_bg="$BG_ALT"; fi
+    row_idx=$((row_idx + 1))
     if [ -n "${TEST_SKIP[$n]:-}" ]; then
-      printf '  %-14s | %s%s%s\n' "$n" "$Y" "skipped (${TEST_SKIP[$n]})" "$Z"
-      echo "$test_sep"
+      local skip_txt="skipped (${TEST_SKIP[$n]})"
+      [ "${#skip_txt}" -gt "$hi_pad" ] && skip_txt="${skip_txt:0:$((hi_pad - 1))}…"
+      local extra=""
+      if [ "$has_argon" -eq 1 ] && [ "$show_test_argon" -eq 1 ]; then
+        extra+="$(printf ' │ %-12s │ %-35s' "-" "-")"
+      fi
+      if [ "$has_argon" -eq 1 ] && [ "$show_test_claude" -eq 1 ]; then
+        extra+="$(printf ' │ %-12s │ %-35s' "-" "-")"
+      fi
+      printf '%s│ %-16s │ %s%-*s%s │ %-12s │ %-*s%s │%s\n' "$row_bg" "  $n" "$Y" "$hi_pad" "$skip_txt" "$Z" "-" "$rst_pad" "-" "$extra" "$ALL_RST"
       continue
     fi
     [ -n "${TEST_TRY[$n]:-}" ] || continue
@@ -933,6 +1115,8 @@ print_test_table() {
       diff=$((g5r - b_epoch)); if [ "$diff" -lt 0 ]; then diff=$((-diff)); fi
       if [ "$diff" -gt 120 ]; then reset="$reset (was $(date -d "@$b_epoch" '+%I:%M %p'))"; fi
     fi
+    local reset_disp="$reset"
+    [ "${#reset}" -gt "$rst_pad" ] && reset_disp="${reset:0:$((rst_pad - 1))}…"
 
     if [ "$has_argon" -eq 1 ]; then
       argon_val="-" argon_rst="-" claude_val="-" claude_rst="-"
@@ -977,12 +1161,24 @@ print_test_table() {
           if [ "$diff" -gt 120 ]; then claude_rst="$claude_rst (was $(date -d "@$c_b_epoch" '+%I:%M %p'))"; fi
         fi
       fi
-      printf '  %-14s | %s%-46s%s | %-12s | %-35s | %-12s | %-35s | %-12s | %s\n' "$n" "$hcol" "$txt" "$Z" "${before:-?}>${after:-?}" "$reset" "$argon_val" "$argon_rst" "$claude_val" "$claude_rst"
-    else
-      printf '  %-14s | %s%-46s%s | %-12s | %s\n' "$n" "$hcol" "$txt" "$Z" "${before:-?}>${after:-?}" "$reset"
     fi
-    echo "$test_sep"
+    local extra=""
+    if [ "$has_argon" -eq 1 ] && [ "$show_test_argon" -eq 1 ]; then
+      extra+="$(printf ' │ %-12s │ %-35s' "${argon_val:-?}" "${argon_rst:--}")"
+    fi
+    if [ "$has_argon" -eq 1 ] && [ "$show_test_claude" -eq 1 ]; then
+      extra+="$(printf ' │ %-12s │ %-35s' "${claude_val:-?}" "${claude_rst:--}")"
+    fi
+    printf '%s│ %-16s │ %s%-*s%s │ %-12s │ %-*s%s │%s\n' "$row_bg" "  $n" "$hcol" "$hi_pad" "$txt" "$Z" "${before:-?}>${after:-?}" "$rst_pad" "$reset_disp" "$extra" "$ALL_RST"
   done < <(slots)
+  echo "$bot"
+  if [ "$has_argon" -eq 1 ]; then
+    if [ "$show_test_claude" -eq 0 ] && [ "$show_test_argon" -eq 0 ]; then
+      echo "(Note: Argon and Claude columns hidden to fit terminal width ${tw}. Use 'agyr test -w' to show all)"
+    elif [ "$show_test_claude" -eq 0 ]; then
+      echo "(Note: Claude columns hidden to fit terminal width ${tw}. Use 'agyr test -w' to show all)"
+    fi
+  fi
   echo "Measured at $(fmt_time "$(now)")   (GEMINI 5H = before>after; RESETS = end of the account's current 5-hour window; \"(was ...)\" = it moved because of the Hi)"
 }
 
@@ -991,7 +1187,14 @@ cmd_test() {
   need_jq; init_state
   command -v "$AGY_BIN" >/dev/null || die "agy not found ($AGY_BIN)"
   local a n t until
-  local -a all=() names=()
+  local -a all=() names=() args=()
+  for a in "$@"; do
+    case "$a" in
+      -w|--wide) export AGYR_WIDE=1 ;;
+      *) args+=("$a") ;;
+    esac
+  done
+  set -- "${args[@]}"
   for a in "$@"; do
     valid_name "$a"
     [ -f "$ACCTS/$a.token" ] || die "no slot '$a' (see: agyr list)"
@@ -1138,7 +1341,7 @@ A running agy keeps its old token: reopen agy after switching ('agy -c' continue
 EOF
       ;;
     list|ls) cat <<'EOF'
-Usage: agyr list [-c|--cached]        (alias: ls)
+Usage: agyr list [-c|--cached] [-w|--wide]        (alias: ls)
 
 Measure the real quota of every saved account with 'agy -p /quota' (no model call, 0 tokens) and print one table row per
 account. The accounts are measured in parallel, each in a throwaway HOME holding a copy of its token, so the token in use
@@ -1160,6 +1363,7 @@ Colours: green above 40%, yellow 11-40%, red 10% or less. Only on a terminal (se
 
 Options:
   -c, --cached   do not call agy; print the data saved by the last measurement
+  -w, --wide     disable responsive table; always print all columns at full width
 
 Exit code: 0 ok, 1 some account could not be measured.
 EOF
@@ -1245,7 +1449,7 @@ does not start with '-' is read as an agyr command (use 'agyr run <word>' to pas
 EOF
       ;;
     test) cat <<'EOF'
-Usage: agyr test [<name>...]
+Usage: agyr test [-w|--wide] [<name>...]
 
 Send "Hi" to every account (or only the named ones) and show what it did: this is ONE REAL REQUEST per account, so it uses a
 little real quota (an agy run costs a baseline of roughly 20k tokens even for a one-word prompt).
@@ -1262,6 +1466,10 @@ also receive "Hi" on gemini-4-argon-low and claude-sonnet-5-5-low. The table sho
 other on Windows), the login in use is never touched, and the saved quota data is updated.
 
 Without names, accounts that are on cooldown (out of quota) are skipped. A named account is always tried.
+
+Options:
+  -w, --wide     disable responsive table; always print all columns at full width
+
 Exit code: 0 if every tried account answered, 1 if some did not.
 Environment: AGYR_TEST_TIMEOUT (seconds an account may take, default 120)
 EOF

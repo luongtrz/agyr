@@ -839,7 +839,7 @@ echo "== list: weekly limit used up (the 5-hour line is 'disabled', not a failur
 setup
 export FAKE_WEEKLY_HIT_TOKENS="tok-acc2"
 out="$("$ACCT" list 2>&1)"; rc=$?
-row2="$(grep '^  acc2' <<<"$out")"
+row2="$(grep '  acc2 ' <<<"$out")"
 eq "weekly limit used up: exit 0, not a measuring failure" "0" "$rc"
 hasnt "weekly limit used up: not reported as 'measure failed'" "measure failed" "$out"
 has "weekly limit used up: status says so, with the time left" "weekly limit reached, 72h00m left" "$row2"
@@ -848,19 +848,19 @@ has "weekly limit used up: the weekly column shows 0%" "0%" "$row2"
 eq "weekly limit used up: cooldown until the weekly reset (1000000 + 3 days)" "$((1000000 + 259200))" "$(cd_of acc2)"
 eq "weekly limit used up: the snapshot marks the 5-hour limit as disabled (-1)" "-1" "$(jq -r .quota.acc2.g5 "$AGY_HOME/accounts/state.json")"
 eq "weekly limit used up: next skips the account" "acc3" "$("$ACCT" next)"
-has "the other accounts are measured as usual" "60%" "$(grep '^\* acc1' <<<"$out")"
+has "the other accounts are measured as usual" "60%" "$(grep '\* acc1' <<<"$out")"
 out="$("$ACCT" list -c)"
-has "list -c: same status from the saved data" "weekly limit reached" "$(grep '^  acc2' <<<"$out")"
-hasnt "list -c: not stale" "stale" "$(grep '^  acc2' <<<"$out")"
+has "list -c: same status from the saved data" "weekly limit reached" "$(grep '  acc2 ' <<<"$out")"
+hasnt "list -c: not stale" "stale" "$(grep '  acc2 ' <<<"$out")"
 out="$(AGYR_COLOR=always "$ACCT" list -c)"
 has "the weekly-limit status is red" "${ESC:-$'\033'}[31mweekly limit reached" "$out"
 # the rest of the line keeps its alignment: same width as an ordinary row
-eq "weekly limit used up: the row is as wide as the others up to the status" "$(grep '^  acc3' <<<"$("$ACCT" list -c)" | cut -c1-70 | wc -c | tr -d ' ')" "$(grep '^  acc2' <<<"$("$ACCT" list -c)" | cut -c1-70 | wc -c | tr -d ' ')"
+eq "weekly limit used up: the row is as wide as the others up to the status" "$(grep '  acc3 ' <<<"$("$ACCT" list -c)" | cut -c1-70 | wc -c | tr -d ' ')" "$(grep '  acc2 ' <<<"$("$ACCT" list -c)" | cut -c1-70 | wc -c | tr -d ' ')"
 # agyr test on such an account never prints the marker
 export FAKE_HI_ERROR_TOKENS="tok-acc2"
 out="$("$ACCT" test acc2 2>/dev/null)"
 hasnt "test: the -1 marker never reaches the screen" "-1%" "$out"
-has "test: the 5-hour limit of that account is shown as off" "off" "$(grep '^  acc2' <<<"$out")"
+has "test: the 5-hour limit of that account is shown as off" "off" "$(grep '  acc2 ' <<<"$out")"
 unset FAKE_HI_ERROR_TOKENS
 # the limit comes back: the next measurement replaces the snapshot and clears the cooldown
 unset FAKE_WEEKLY_HIT_TOKENS
@@ -875,7 +875,7 @@ export FAKE_DEAD_TOKENS="tok-acc3"
 unset FAKE_DEAD_TOKENS
 
 echo "== list: rows ordered by the weekly reset time"
-order_of() { grep -oE '^[ *] +acc[0-9]' <<<"$1" | tr -d ' *' | tr '\n' ' '; }
+order_of() { grep -oE '[│ ]*[ *] +acc[0-9]' <<<"$1" | tr -d '│ *' | tr '\n' ' '; }
 setup
 export FAKE_WEEK_ORDER=1
 out="$("$ACCT" list 2>/dev/null)"
@@ -908,8 +908,8 @@ eq "list: equal weekly resets are ordered by name" "acc1 acc2 acc3 " "$(order_of
 setup
 export FAKE_WEEK_ORDER=1
 "$ACCT" list >/dev/null 2>&1
-eq "list: the table has one row per account plus the header" "4" "$("$ACCT" list -c | grep -cE '^[ *] +(ACCOUNT|acc[0-9])')"
-has "list: separator line between rows" "  ---" "$("$ACCT" list -c)"
+eq "list: the table has one row per account plus the header" "4" "$("$ACCT" list -c | grep -cE '[│ ]*(ACCOUNT|acc[0-9])')"
+has "list: header separator" "├" "$("$ACCT" list -c)"
 unset FAKE_WEEK_ORDER
 has "help list: says how the rows are ordered" "ordered by when the weekly limit resets" "$("$ACCT" help list)"
 
@@ -929,7 +929,7 @@ has "test: acc2 5h before>after" "70%>69%" "$out"
 has "test: acc3 5h before>after" "80%>79%" "$out"
 has "test: shows the reset time" "12/01/1970 09:46 PM" "$out"
 eq "test: exactly one Hi per account" "3" "$(hi_count)"
-has "test: separator line between rows" "  ---" "$out"
+has "test: header separator" "├" "$out"
 eq "test: each Hi uses its own account's login, not the keyring's" "tok-acc1 tok-acc2 tok-acc3 " "$(hi_lines | cut -d'|' -f1 | sort | tr '\n' ' ')"
 eq "test: every Hi uses gemini-3.8-flash-high" "3" "$(hi_lines | grep -c -- '--model gemini-3.8-flash-high')"
 hasnt "test: Hi never gets --dangerously-skip-permissions (no tools needed)" "--dangerously-skip-permissions" "$(hi_lines)"
@@ -971,12 +971,12 @@ eq "test: refused names start no agy" "$n0" "$(lines)"
 # the reset time before the Hi is shown when the Hi moved it
 setup
 out="$("$ACCT" test acc1 2>/dev/null)"
-hasnt "test: no '(was ...)' on the account's row when the reset time did not move" "(was" "$(grep '^  acc1' <<<"$out")"
+hasnt "test: no '(was ...)' on the account's row when the reset time did not move" "(was" "$(grep '  acc1 ' <<<"$out")"
 setup
 export FAKE_HI_SHIFT=1
 out="$("$ACCT" test acc1 2>/dev/null)"
-has "test: the new reset time is shown (09:46 PM + 10 min)" "09:56 PM" "$(grep '^  acc1' <<<"$out")"
-has "test: and the time before it, because the Hi moved it" "(was 09:46 PM)" "$(grep '^  acc1' <<<"$out")"
+has "test: the new reset time is shown (09:46 PM + 10 min)" "09:56 PM" "$(grep '  acc1 ' <<<"$out")"
+has "test: and the time before it, because the Hi moved it" "(was 09:46 PM)" "$(grep '  acc1 ' <<<"$out")"
 unset FAKE_HI_SHIFT
 
 # an account whose Hi fails
@@ -1732,9 +1732,9 @@ has "test with argon: ARGON WEEK column in header" "ARGON WEEK" "$out"
 has "test with argon: ARGON RESETS column in header" "ARGON RESETS" "$out"
 has "test with argon: CLAUDE 5H column in header" "CLAUDE 5H" "$out"
 has "test with argon: CLAUDE RESETS column in header" "CLAUDE RESETS" "$out"
-row1="$(grep '^  acc1' <<<"$out")"
-row2="$(grep '^  acc2' <<<"$out")"
-row3="$(grep '^  acc3' <<<"$out")"
+row1="$(grep '  acc1 ' <<<"$out")"
+row2="$(grep '  acc2 ' <<<"$out")"
+row3="$(grep '  acc3 ' <<<"$out")"
 has "test with argon: acc2 Argon before>after (45%>44%)" "45%>44%" "$row2"
 has "test with argon: acc2 Claude 5H before>after (100%>99%)" "100%>99%" "$row2"
 has "test with argon: acc1 shows - for Argon" " - " "$row1"
@@ -1744,6 +1744,43 @@ setup
 out="$(FAKE_ARGON_TOKENS="tok-acc2" FAKE_ARGON_5H=1 AGYR_COLOR=never "$ACCT" test 2>/dev/null)"; rc=$?
 eq "test with argon 5h: exit 0" "0" "$rc"
 has "test with argon 5h: ARGON 5H column in header" "ARGON 5H" "$out"
-has "test with argon 5h: acc2 Argon 5H before>after (65%>64%)" "65%>64%" "$(grep '^  acc2' <<<"$out")"
+has "test with argon 5h: acc2 Argon 5H before>after (65%>64%)" "65%>64%" "$(grep '  acc2 ' <<<"$out")"
 has "help test: mentions gemini-4-argon-low" "gemini-4-argon-low" "$("$ACCT" help test)"
 has "help test: mentions claude-sonnet-5-5-low" "claude-sonnet-5-5-low" "$("$ACCT" help test)"
+
+echo "== responsive terminal width (-w / --wide)"
+setup
+FAKE_ARGON_TOKENS="tok-acc2" "$ACCT" list >/dev/null 2>&1
+# At 120 columns: Argon and Claude are hidden
+out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=120 "$ACCT" list -c)"
+hasnt "responsive 120: CLAUDE hidden" "CLAUDE" "$out"
+hasnt "responsive 120: ARGON hidden" "ARGON" "$out"
+has "responsive 120: has STATUS" "STATUS" "$out"
+has "responsive 120: notes hidden columns" "Note: Argon and Claude columns hidden to fit terminal width 120" "$out"
+
+# With -w: forced full width
+out="$("$ACCT" list -c -w)"
+has "responsive -w: CLAUDE shown" "CLAUDE" "$out"
+has "responsive -w: ARGON shown" "ARGON" "$out"
+hasnt "responsive -w: no hidden note" "columns hidden" "$out"
+
+# At 150 columns: Claude hidden, Argon kept
+out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=150 "$ACCT" list -c)"
+hasnt "responsive 150: CLAUDE hidden" "CLAUDE" "$out"
+has "responsive 150: ARGON shown" "ARGON" "$out"
+has "responsive 150: notes Claude hidden" "Note: Claude columns hidden to fit terminal width 150" "$out"
+
+# agyr test responsive
+setup
+out="$(FAKE_ARGON_TOKENS="tok-acc2" AGYR_COLOR=never AGYR_RESPONSIVE=1 AGYR_COLUMNS=120 "$ACCT" test 2>/dev/null)"
+hasnt "test responsive 120: CLAUDE hidden" "CLAUDE" "$out"
+hasnt "test responsive 120: ARGON hidden" "ARGON" "$out"
+has "test responsive 120: notes hidden columns" "Note: Argon and Claude columns hidden to fit terminal width 120" "$out"
+
+out="$(FAKE_ARGON_TOKENS="tok-acc2" AGYR_COLOR=never AGYR_RESPONSIVE=1 AGYR_COLUMNS=120 "$ACCT" test -w 2>/dev/null)"
+has "test responsive -w: CLAUDE shown" "CLAUDE" "$out"
+has "test responsive -w: ARGON shown" "ARGON" "$out"
+hasnt "test responsive -w: no hidden note" "columns hidden" "$out"
+
+has "help list: mentions -w" "-w, --wide" "$("$ACCT" help list)"
+has "help test: mentions -w" "-w, --wide" "$("$ACCT" help test)"
