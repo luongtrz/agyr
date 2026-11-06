@@ -43,13 +43,16 @@ for a in "$@"; do
     # digit taken from "rt-accN" in a JSON token, otherwise from the token's last character
     if [[ "$tok" =~ rt-acc([0-9]) ]]; then n="${BASH_REMATCH[1]}"; else n="${tok: -1}"; fi
     [[ "$n" =~ ^[0-9]$ ]] || n=0
-    p5=$((50 + n * 10)); pw=$((40 + n * 10))
-    for z in ${FAKE_ZERO_TOKENS:-}; do [ "$z" = "$tok" ] && p5=0; done
-    [[ "${FAKE_P5:-}" =~ ^[0-9]+$ ]] && p5="$FAKE_P5"
-    for z in ${FAKE_LOW_TOKENS:-}; do [ "$z" = "$tok" ] && p5=5; done
-    # every earlier 'agy -p Hi' call of this token used 1% of the 5h quota (agyr test)
-    used="$(grep -cF -- "$tok|-p Hi " "$FAKE_ARGS_LOG" 2>/dev/null || true)"
+    p5_base=$((50 + n * 10)); pw=$((40 + n * 10))
+    for z in ${FAKE_ZERO_TOKENS:-}; do [ "$z" = "$tok" ] && p5_base=0; done
+    [[ "${FAKE_P5:-}" =~ ^[0-9]+$ ]] && p5_base="$FAKE_P5"
+    for z in ${FAKE_LOW_TOKENS:-}; do [ "$z" = "$tok" ] && p5_base=5; done
+    p5="$p5_base"
+    # every earlier 'agy -p Hi' call of this token with gemini-3.8-flash-high used 1% of the 5h quota (agyr test)
+    used="$(grep -F -- "$tok|-p Hi " "$FAKE_ARGS_LOG" 2>/dev/null | grep -cF -- "--model gemini-3.8-flash-high" || true)"
     p5=$((p5 - ${used:-0})); [ "$p5" -ge 0 ] || p5=0
+    used_argon="$(grep -F -- "$tok|-p Hi " "$FAKE_ARGS_LOG" 2>/dev/null | grep -cF -- "--model gemini-4-argon-low" || true)"
+    used_claude="$(grep -F -- "$tok|-p Hi " "$FAKE_ARGS_LOG" 2>/dev/null | grep -cF -- "--model claude-sonnet-5-5-low" || true)"
     # FAKE_REFRESH=1: agy "refreshes the token itself" by rewriting the token file in its own HOME
     # (a JSON login keeps its refresh_token and only gets a new access_token, like the real thing)
     if [ "${FAKE_REFRESH:-0}" = 1 ]; then
@@ -69,11 +72,19 @@ for a in "$@"; do
     p5txt="$p5%"; r5gem="$r5"
     # FAKE_WEEKLY_HIT_TOKENS: the weekly limit is used up; like the real agy the 5-hour line then says "disabled" and has no reset time
     for z in ${FAKE_WEEKLY_HIT_TOKENS:-}; do if [ "$z" = "$tok" ]; then pw=0; p5txt="disabled"; r5gem=""; fi; done
-    resp="$(printf 'Gemini Models\tWeekly Limit Remaining\t%s%%\t%s\nGemini Models\tFive Hour Limit Remaining\t%s\t%s\nClaude and GPT models\tWeekly Limit Remaining\t100%%\t%s\nClaude and GPT models\tFive Hour Limit Remaining\t100%%\t%s\n' "$pw" "$rw" "$p5txt" "$r5gem" "$rw" "$r5")"
+    pc5=$((100 - ${used_claude:-0})); [ "$pc5" -ge 0 ] || pc5=0
+    shift_claude=0; if [ "${FAKE_HI_SHIFT:-0}" = 1 ] && [ "${used_claude:-0}" -gt 0 ]; then shift_claude=600; fi
+    r5_claude="$(date -u -d "@$((now + 3600 + shift_claude))" +%Y-%m-%dT%H:%M:%SZ)"
+    resp="$(printf 'Gemini Models\tWeekly Limit Remaining\t%s%%\t%s\nGemini Models\tFive Hour Limit Remaining\t%s\t%s\nClaude and GPT models\tWeekly Limit Remaining\t100%%\t%s\nClaude and GPT models\tFive Hour Limit Remaining\t%s%%\t%s\n' "$pw" "$rw" "$p5txt" "$r5gem" "$rw" "$pc5" "$r5_claude")"
+    shift_argon=0; if [ "${FAKE_HI_SHIFT:-0}" = 1 ] && [ "${used_argon:-0}" -gt 0 ]; then shift_argon=600; fi
+    r_aw="$(date -u -d "@$((now + wk + shift_argon))" +%Y-%m-%dT%H:%M:%SZ)"
+    r_a5="$(date -u -d "@$((now + 3600 + shift_argon))" +%Y-%m-%dT%H:%M:%SZ)"
+    paw=$((pw - 15 - ${used_argon:-0})); [ "$paw" -ge 0 ] || paw=0
+    pa5=$((p5_base - 5 - ${used_argon:-0})); [ "$pa5" -ge 0 ] || pa5=0
     for z in ${FAKE_ARGON_TOKENS:-}; do
       if [ "$z" = "$tok" ]; then
-        resp+="$(printf '\nGemini 4 Argon\tGemini 4 Argon Weekly Limit\t%s%%\t%s\n' "$((pw - 15))" "$rw")"
-        if [ "${FAKE_ARGON_5H:-0}" = 1 ]; then resp+="$(printf '\nGemini 4 Argon\tGemini 4 Argon Five Hour Limit\t%s%%\t%s' "$((p5 - 5))" "$r5")"; fi
+        resp+="$(printf '\nGemini 4 Argon\tGemini 4 Argon Weekly Limit\t%s%%\t%s\n' "$paw" "$r_aw")"
+        if [ "${FAKE_ARGON_5H:-0}" = 1 ]; then resp+="$(printf '\nGemini 4 Argon\tGemini 4 Argon Five Hour Limit\t%s%%\t%s' "$pa5" "$r_a5")"; fi
       fi
     done
     "${JQ[@]}" -nc --arg r "$resp" '{event:"result",result:{status:"SUCCESS",response:$r,num_turns:0}}'

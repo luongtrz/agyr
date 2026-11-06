@@ -728,17 +728,17 @@ cmd_run() {
 # One real request per account (~ the cost of the smallest possible agy run), so it uses a little quota. Purpose: the 5-hour
 # window of an account starts counting down from its first request, so this starts every account's window now.
 
-# hi_call <HOME for agy> <AGY_HOME for agy>: run 'agy -p Hi' in an empty temp directory, no tools needed, detached from the
+# hi_call <HOME for agy> <AGY_HOME for agy> [model]: run 'agy -p Hi' in an empty temp directory, no tools needed, detached from the
 # terminal. Prints one line  STATUS<US>reply<US>error  (US = unit separator; reply/error on one line, cut at 200 chars)
 # or nothing when agy produced no result at all (then returns 1).
 hi_call() {
-  local home="$1" agyhome="$2" tmp res
+  local home="$1" agyhome="$2" model="${3:-gemini-3.8-flash-high}" tmp res
   tmp="$(mktemp -d)"
   local -a cap=()
   # timeout runs INSIDE setsid (PLATFORM_DETACH_WAIT): it then leads its own process group and kills agy and whatever agy started
   if command -v timeout >/dev/null; then cap=(timeout "${AGYR_TEST_TIMEOUT:-120}"); fi
   res="$(cd "$tmp" && env HOME="$home" AGY_HOME="$agyhome" "${PLATFORM_ENV_KEYRING[@]}" \
-    "${PLATFORM_DETACH_WAIT[@]}" "${cap[@]}" "$AGY_BIN" -p Hi --add-dir "$tmp" --model gemini-3.8-flash-high --print-timeout 90s \
+    "${PLATFORM_DETACH_WAIT[@]}" "${cap[@]}" "$AGY_BIN" -p Hi --add-dir "$tmp" --model "$model" --print-timeout 90s \
     --output-format stream-json </dev/null 2>/dev/null |
     grep '^{' | jq -r 'select(.event=="result") | .result
       | "\(.status)\u001f\((.response // "") | gsub("[\\t\\r\\n]+"; " ") | .[0:200])\u001f\((.error // "") | gsub("[\\t\\r\\n]+"; " ") | .[0:200])"' 2>/dev/null |
@@ -753,17 +753,34 @@ test_probe() {
   local home="$1" agyhome="$2" name="$3" t0 res
   quota_fetch "$home" "$agyhome" >"$TEST_DIR/$name.before" 2>/dev/null || : >"$TEST_DIR/$name.before"
   t0="$(date +%s)"
-  res="$(hi_call "$home" "$agyhome")" || res="NO_RESULT"$'\x1f'$'\x1f'
+  res="$(hi_call "$home" "$agyhome" gemini-3.8-flash-high)" || res="NO_RESULT"$'\x1f'$'\x1f'
   printf '%s\x1f%s\n' "$res" "$(($(date +%s) - t0))" >"$TEST_DIR/$name.hi"
+  if grep -q '^Gemini 4 Argon	' "$TEST_DIR/$name.before" 2>/dev/null; then
+    t0="$(date +%s)"
+    res="$(hi_call "$home" "$agyhome" gemini-4-argon-low)" || res="NO_RESULT"$'\x1f'$'\x1f'
+    printf '%s\x1f%s\n' "$res" "$(($(date +%s) - t0))" >"$TEST_DIR/$name.hi.argon"
+    t0="$(date +%s)"
+    res="$(hi_call "$home" "$agyhome" claude-sonnet-5-5-low)" || res="NO_RESULT"$'\x1f'$'\x1f'
+    printf '%s\x1f%s\n' "$res" "$(($(date +%s) - t0))" >"$TEST_DIR/$name.hi.claude"
+  fi
   quota_fetch "$home" "$agyhome"
 }
 
 # the ingest for 'agyr test': store the quota; the account counts as failed unless it answered "Hi" and its quota was readable
 test_ingest() {
   local name="$1" raw="$2" st
-  st="$(cut -d$'\x1f' -f1 "$TEST_DIR/$name.hi" 2>/dev/null)"
   quota_ingest "$name" "$raw" || return 1
-  [ "$st" = SUCCESS ]
+  st="$(cut -d$'\x1f' -f1 "$TEST_DIR/$name.hi" 2>/dev/null)"
+  [ "$st" = SUCCESS ] || return 1
+  if [ -f "$TEST_DIR/$name.hi.argon" ]; then
+    st="$(cut -d$'\x1f' -f1 "$TEST_DIR/$name.hi.argon" 2>/dev/null)"
+    [ "$st" = SUCCESS ] || return 1
+  fi
+  if [ -f "$TEST_DIR/$name.hi.claude" ]; then
+    st="$(cut -d$'\x1f' -f1 "$TEST_DIR/$name.hi.claude" 2>/dev/null)"
+    [ "$st" = SUCCESS ] || return 1
+  fi
+  return 0
 }
 
 use_color() {
@@ -773,9 +790,32 @@ use_color() {
 # table for 'agyr test'; every account of this run has its files in $TEST_DIR
 print_test_table() {
   local n st resp err secs txt hcol before after snap g5 g5r reset b_iso b_epoch diff
+  local ast aresp aerr asecs cst cresp cerr csecs has_acct_argon
+  local a5 a5r aw awr c5 c5r
+  local argon_val argon_rst claude_val claude_rst
+  local a_before a_after a_b_iso a_b_epoch
+  local c_before c_after c_b_iso c_b_epoch
   local G="" Y="" R="" Z=""
   if use_color; then G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; Z=$'\033[0m'; fi
-  printf '  %-14s %-46s %-12s %s\n' "ACCOUNT" "HI" "GEMINI 5H" "RESETS"
+
+  local has_argon=0 has_argon_5h=0
+  for n in "${!TEST_TRY[@]}"; do
+    if [ -f "$TEST_DIR/$n.hi.argon" ] || grep -q '^Gemini 4 Argon	' "$TEST_DIR/$n.before" 2>/dev/null; then
+      has_argon=1
+      if [ "$(jq -r --arg n "$n" '.quota[$n] | select(.a5 != null) | 1' "$STATE" 2>/dev/null)" = 1 ]; then
+        has_argon_5h=1
+      fi
+    fi
+  done
+
+  local argon_hdr="ARGON WEEK"
+  if [ "$has_argon_5h" -eq 1 ]; then argon_hdr="ARGON 5H"; fi
+  if [ "$has_argon" -eq 1 ]; then
+    printf '  %-14s %-46s %-12s %-35s %-12s %-35s %-12s %s\n' "ACCOUNT" "HI" "GEMINI 5H" "RESETS" "$argon_hdr" "ARGON RESETS" "CLAUDE 5H" "CLAUDE RESETS"
+  else
+    printf '  %-14s %-46s %-12s %s\n' "ACCOUNT" "HI" "GEMINI 5H" "RESETS"
+  fi
+
   while read -r n; do
     if [ -n "${TEST_SKIP[$n]:-}" ]; then
       printf '  %-14s %s%s%s\n' "$n" "$Y" "skipped (${TEST_SKIP[$n]})" "$Z"
@@ -784,28 +824,113 @@ print_test_table() {
     [ -n "${TEST_TRY[$n]:-}" ] || continue
     st="" resp="" err="" secs=""
     IFS=$'\x1f' read -r st resp err secs <"$TEST_DIR/$n.hi" || true
-    if [ "$st" = SUCCESS ]; then
-      txt="ok in ${secs}s"; [ -z "$resp" ] || txt="$txt: \"${resp:0:24}\""; hcol="$G"
-    elif [ "$st" = NO_RESULT ] || [ -z "$st" ]; then
-      txt="failed: agy gave no answer (${secs:-?}s)"; hcol="$R"
+
+    ast="" aresp="" aerr="" asecs=""
+    cst="" cresp="" cerr="" csecs=""
+    has_acct_argon=0
+    if [ -f "$TEST_DIR/$n.hi.argon" ]; then
+      has_acct_argon=1
+      IFS=$'\x1f' read -r ast aresp aerr asecs <"$TEST_DIR/$n.hi.argon" || true
+    fi
+    if [ -f "$TEST_DIR/$n.hi.claude" ]; then
+      IFS=$'\x1f' read -r cst cresp cerr csecs <"$TEST_DIR/$n.hi.claude" || true
+    fi
+
+    if [ "$has_acct_argon" -eq 0 ]; then
+      if [ "$st" = SUCCESS ]; then
+        txt="ok in ${secs}s"; [ -z "$resp" ] || txt="$txt: \"${resp:0:24}\""; hcol="$G"
+      elif [ "$st" = NO_RESULT ] || [ -z "$st" ]; then
+        txt="failed: agy gave no answer (${secs:-?}s)"; hcol="$R"
+      else
+        txt="failed: ${err:-$st}"; hcol="$R"
+      fi
     else
-      txt="failed: ${err:-$st}"; hcol="$R"
+      if [ "$st" = NO_RESULT ] || [ -z "$st" ]; then
+        txt="failed (gemini): agy gave no answer (${secs:-?}s)"; hcol="$R"
+      elif [ "$st" != SUCCESS ]; then
+        txt="failed (gemini): ${err:-$st}"; hcol="$R"
+      elif [ "$ast" = NO_RESULT ] || [ -z "$ast" ]; then
+        txt="failed (argon): agy gave no answer (${asecs:-?}s)"; hcol="$R"
+      elif [ "$ast" != SUCCESS ]; then
+        txt="failed (argon): ${aerr:-$ast}"; hcol="$R"
+      elif [ "$cst" = NO_RESULT ] || [ -z "$cst" ]; then
+        txt="failed (claude): agy gave no answer (${csecs:-?}s)"; hcol="$R"
+      elif [ "$cst" != SUCCESS ]; then
+        txt="failed (claude): ${cerr:-$cst}"; hcol="$R"
+      else
+        txt="ok in ${secs}s"; [ -z "$resp" ] || txt="$txt: \"${resp:0:24}\""; hcol="$G"
+      fi
     fi
     [ "${#txt}" -le 46 ] || txt="${txt:0:43}..."
+
     before="$(awk -F'\t' '$1=="Gemini Models" && $2 ~ /Five Hour/ {print $3; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
-    snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [.g5,.g5r] | @tsv' "$STATE")"
-    g5="" g5r=""; if [ -n "$snap" ]; then IFS=$'\t' read -r g5 g5r <<<"$snap"; fi
+    snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [(.g5 // "-"), (.g5r // 0), (.a5 // "-"), (.a5r // 0), (.aw // "-"), (.awr // 0), (.c5 // "-"), (.c5r // 0)] | @tsv' "$STATE" 2>/dev/null)"
+    g5="" g5r="" a5="" a5r="" aw="" awr="" c5="" c5r=""
+    if [ -n "$snap" ]; then
+      IFS=$'\t' read -r g5 g5r a5 a5r aw awr c5 c5r <<<"$snap"
+    fi
+    [ "${g5:-}" = "-" ] && g5=""
+    [ "${a5:-}" = "-" ] && a5=""
+    [ "${aw:-}" = "-" ] && aw=""
+    [ "${c5:-}" = "-" ] && c5=""
     after="${g5:+$g5%}"; if [ "$g5" = -1 ]; then after=off; fi
     if [ "$before" = disabled ]; then before=off; fi
     reset="-"; [ -z "$g5r" ] || [ "$g5r" = 0 ] || reset="$(fmt_time "$g5r")"
     # did the reset time move? (that is what shows that the request started a new 5-hour window)
     b_iso="$(awk -F'\t' '$1=="Gemini Models" && $2 ~ /Five Hour/ {print $4; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
     b_epoch=""; if [ -n "$b_iso" ]; then b_epoch="$(date -d "$b_iso" +%s 2>/dev/null)" || b_epoch=""; fi
-    if [ -n "$b_epoch" ] && [ -n "$g5r" ]; then
+    if [ -n "$b_epoch" ] && [ -n "$g5r" ] && [ "$g5r" != 0 ]; then
       diff=$((g5r - b_epoch)); if [ "$diff" -lt 0 ]; then diff=$((-diff)); fi
       if [ "$diff" -gt 120 ]; then reset="$reset (was $(date -d "@$b_epoch" '+%I:%M %p'))"; fi
     fi
-    printf '  %-14s %s%-46s%s %-12s %s\n' "$n" "$hcol" "$txt" "$Z" "${before:-?}>${after:-?}" "$reset"
+
+    if [ "$has_argon" -eq 1 ]; then
+      argon_val="-" argon_rst="-" claude_val="-" claude_rst="-"
+      if [ "$has_acct_argon" -eq 1 ]; then
+        # Argon
+        if [ "$has_argon_5h" -eq 1 ]; then
+          a_before="$(awk -F'\t' '$1=="Gemini 4 Argon" && $2 ~ /Five Hour/ {print $3; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
+          a_after="${a5:+$a5%}"; if [ "$a5" = -1 ]; then a_after=off; fi
+          if [ "$a_before" = disabled ]; then a_before=off; fi
+          argon_val="${a_before:-?}>${a_after:-?}"
+          [ -n "$a5r" ] && [ "$a5r" != 0 ] && argon_rst="$(fmt_time "$a5r")"
+          a_b_iso="$(awk -F'\t' '$1=="Gemini 4 Argon" && $2 ~ /Five Hour/ {print $4; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
+          a_b_epoch=""; if [ -n "$a_b_iso" ]; then a_b_epoch="$(date -d "$a_b_iso" +%s 2>/dev/null)" || a_b_epoch=""; fi
+          if [ -n "$a_b_epoch" ] && [ -n "$a5r" ] && [ "$a5r" != 0 ]; then
+            diff=$((a5r - a_b_epoch)); if [ "$diff" -lt 0 ]; then diff=$((-diff)); fi
+            if [ "$diff" -gt 120 ]; then argon_rst="$argon_rst (was $(date -d "@$a_b_epoch" '+%I:%M %p'))"; fi
+          fi
+        else
+          a_before="$(awk -F'\t' '$1=="Gemini 4 Argon" && $2 ~ /Weekly/ {print $3; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
+          a_after="${aw:+$aw%}"; if [ "$aw" = -1 ]; then a_after=off; fi
+          if [ "$a_before" = disabled ]; then a_before=off; fi
+          argon_val="${a_before:-?}>${a_after:-?}"
+          [ -n "$awr" ] && [ "$awr" != 0 ] && argon_rst="$(fmt_time "$awr")"
+          a_b_iso="$(awk -F'\t' '$1=="Gemini 4 Argon" && $2 ~ /Weekly/ {print $4; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
+          a_b_epoch=""; if [ -n "$a_b_iso" ]; then a_b_epoch="$(date -d "$a_b_iso" +%s 2>/dev/null)" || a_b_epoch=""; fi
+          if [ -n "$a_b_epoch" ] && [ -n "$awr" ] && [ "$awr" != 0 ]; then
+            diff=$((awr - a_b_epoch)); if [ "$diff" -lt 0 ]; then diff=$((-diff)); fi
+            if [ "$diff" -gt 120 ]; then argon_rst="$argon_rst (was $(date -d "@$a_b_epoch" '+%I:%M %p'))"; fi
+          fi
+        fi
+
+        # Claude
+        c_before="$(awk -F'\t' '$1=="Claude and GPT models" && $2 ~ /Five Hour/ {print $3; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
+        c_after="${c5:+$c5%}"; if [ "$c5" = -1 ]; then c_after=off; fi
+        if [ "$c_before" = disabled ]; then c_before=off; fi
+        claude_val="${c_before:-?}>${c_after:-?}"
+        [ -n "$c5r" ] && [ "$c5r" != 0 ] && claude_rst="$(fmt_time "$c5r")"
+        c_b_iso="$(awk -F'\t' '$1=="Claude and GPT models" && $2 ~ /Five Hour/ {print $4; exit}' "$TEST_DIR/$n.before" 2>/dev/null)"
+        c_b_epoch=""; if [ -n "$c_b_iso" ]; then c_b_epoch="$(date -d "$c_b_iso" +%s 2>/dev/null)" || c_b_epoch=""; fi
+        if [ -n "$c_b_epoch" ] && [ -n "$c5r" ] && [ "$c5r" != 0 ]; then
+          diff=$((c5r - c_b_epoch)); if [ "$diff" -lt 0 ]; then diff=$((-diff)); fi
+          if [ "$diff" -gt 120 ]; then claude_rst="$claude_rst (was $(date -d "@$c_b_epoch" '+%I:%M %p'))"; fi
+        fi
+      fi
+      printf '  %-14s %s%-46s%s %-12s %-35s %-12s %-35s %-12s %s\n' "$n" "$hcol" "$txt" "$Z" "${before:-?}>${after:-?}" "$reset" "$argon_val" "$argon_rst" "$claude_val" "$claude_rst"
+    else
+      printf '  %-14s %s%-46s%s %-12s %s\n' "$n" "$hcol" "$txt" "$Z" "${before:-?}>${after:-?}" "$reset"
+    fi
   done < <(slots)
   echo "Measured at $(fmt_time "$(now)")   (GEMINI 5H = before>after; RESETS = end of the account's current 5-hour window; \"(was ...)\" = it moved because of the Hi)"
 }
@@ -1069,7 +1194,8 @@ shows the reset time after the call and, when the call moved it, "(was hh:mm)" w
 account that had not been used, the Hi did not start a new window.
 
 For each account it measures the quota (0 tokens), sends "Hi" with 'agy -p Hi' (model gemini-3.8-flash-high, no tools,
-empty temporary directory, nothing of yours is read), then measures again. The table shows the reply (or the error), the
+empty temporary directory, nothing of yours is read), then measures again. Accounts that have Gemini 4 Argon in their quota
+also receive "Hi" on gemini-4-argon-low and claude-sonnet-5-5-low. The table shows the reply (or the error), the
 5-hour % before>after and the reset time. The accounts are handled like in 'agyr list' (in parallel on Linux, one after the
 other on Windows), the login in use is never touched, and the saved quota data is updated.
 

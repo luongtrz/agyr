@@ -31,7 +31,7 @@ bash platforms/linux/install.sh        # Linux: creates symlinks in ~/.local/bin
 bash platforms/windows/install.sh      # Windows: creates Git Bash + .cmd wrappers in ~/.local/bin
 ```
 
-The install scripts only create symlinks or wrappers; they never sign in or read token files. After installation, `agyr help` should work and `bash test/run.sh` should report `816 pass, 0 fail` without needing any login. For installing the `agy` skill and orchestrator rules, see [docs/agent-setup.md](agent-setup.md).
+The install scripts only create symlinks or wrappers; they never sign in or read token files. After installation, `agyr help` should work and `bash test/run.sh` should report `844 pass, 0 fail` without needing any login. For installing the `agy` skill and orchestrator rules, see [docs/agent-setup.md](agent-setup.md).
 
 ### Repository layout
 
@@ -156,7 +156,7 @@ Sending "Hi" to 3 account(s): one real request each, so it uses a little quota..
 Measured at 05/10/2026 02:19 PM   (GEMINI 5H = before>after; RESETS = end of the account's current 5-hour window; "(was ...)" = it moved because of the Hi)
 ```
 
-Each account has its quota measured (0 tokens), receives one `agy -p Hi` request (`--model gemini-3.8-flash-high`, no tools, empty temp directory), and is measured again. The table shows the response or error, the 5-hour quota before and after, and the reset time (with `(was ...)` if the request shifted the reset window).
+Each account has its quota measured (0 tokens), receives one `agy -p Hi` request (`--model gemini-3.8-flash-high`, no tools, empty temp directory), and is measured again. Accounts that report `Gemini 4 Argon` in their quota also receive "Hi" on `gemini-4-argon-low` and `claude-sonnet-5-5-low`. The table shows the response or error, the 5-hour quota before and after, and the reset time (with `(was ...)` if the request shifted the reset window); when at least one tested account has Argon, Argon and Claude before>after and reset columns are added to the table.
 
 - **Spends real quota:** one request per account (~20k baseline context tokens, <1% of the 5-hour limit).
 - **Purpose:** trigger the 5-hour countdown window across accounts simultaneously. Note that the hypothesis "the 5-hour window starts on the first request" is unverified in official documentation; check whether `RESETS` prints `(was ...)` on a 100% account to see if the window moved.
@@ -302,7 +302,7 @@ bash test/run.sh linux        # Linux suite
 bash test/run.sh windows      # Windows suite
 ```
 
-Runs 816 checks using fake tokens and `test/fake-agy` (emulating `init`, `429`, and `/quota` output) without touching real credentials. The `wincred` suite runs on all platforms against `test/fake-cred`. On Windows, two checks (POSIX `600`/`700` file modes and `pgrep`) are intentionally skipped.
+Runs 844 checks using fake tokens and `test/fake-agy` (emulating `init`, `429`, and `/quota` output) without touching real credentials. The `wincred` suite runs on all platforms against `test/fake-cred`. On Windows, two checks (POSIX `600`/`700` file modes and `pgrep`) are intentionally skipped.
 
 ## Known limitations
 
