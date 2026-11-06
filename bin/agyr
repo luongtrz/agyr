@@ -662,18 +662,31 @@ print_table() {
     else printf '%s  %-19s' "$(pct "$1")" "$(fmt_time "$2")"; fi
   }
   # Gemini 4 Argon columns appear only when at least one account reports that limit
-  local show_a5 show_aw show_c5 show_cw hdr
+  local show_a5 show_aw show_c5 show_cw hdr sep
   show_a5="$(jq -r '[.quota[]? | select(.a5 != null)] | length' "$STATE")"
   show_aw="$(jq -r '[.quota[]? | select(.aw != null)] | length' "$STATE")"
   show_c5="$(jq -r '[.quota[]? | select(.c5 != null)] | length' "$STATE")"
   show_cw="$(jq -r '[.quota[]? | select(.cw != null)] | length' "$STATE")"
-  hdr="$(printf '  %-14s %-25s   %-25s' "ACCOUNT" "GEMINI 5H" "GEMINI WEEK")"
-  if [ "$show_a5" -gt 0 ]; then hdr+="$(printf '   %-25s' "ARGON 5H")"; fi
-  if [ "$show_aw" -gt 0 ]; then hdr+="$(printf '   %-25s' "ARGON WEEK")"; fi
-  if [ "$show_c5" -gt 0 ]; then hdr+="$(printf '   %-25s' "CLAUDE 5H")"; fi
-  if [ "$show_cw" -gt 0 ]; then hdr+="$(printf '   %-25s' "CLAUDE WEEK")"; fi
-  local full_hdr="$hdr   STATUS"
-  local sep="  $(printf '%*s' $((${#full_hdr} - 2)) '' | tr ' ' '-')"
+  hdr="$(printf '  %-14s | %-25s | %-25s' "ACCOUNT" "GEMINI 5H" "GEMINI WEEK")"
+  sep="  $(printf '%*s' 15 '' | tr ' ' '-')+$(printf '%*s' 27 '' | tr ' ' '-')+$(printf '%*s' 27 '' | tr ' ' '-')"
+  if [ "$show_a5" -gt 0 ]; then
+    hdr+="$(printf ' | %-25s' "ARGON 5H")"
+    sep+="+$(printf '%*s' 27 '' | tr ' ' '-')"
+  fi
+  if [ "$show_aw" -gt 0 ]; then
+    hdr+="$(printf ' | %-25s' "ARGON WEEK")"
+    sep+="+$(printf '%*s' 27 '' | tr ' ' '-')"
+  fi
+  if [ "$show_c5" -gt 0 ]; then
+    hdr+="$(printf ' | %-25s' "CLAUDE 5H")"
+    sep+="+$(printf '%*s' 27 '' | tr ' ' '-')"
+  fi
+  if [ "$show_cw" -gt 0 ]; then
+    hdr+="$(printf ' | %-25s' "CLAUDE WEEK")"
+    sep+="+$(printf '%*s' 27 '' | tr ' ' '-')"
+  fi
+  local full_hdr="$hdr | STATUS"
+  sep+="+$(printf '%*s' 20 '' | tr ' ' '-')"
   echo "$full_hdr"
   echo "$sep"
   while read -r n; do
@@ -696,11 +709,11 @@ print_table() {
     [ "${c5:-}" = "-" ] && c5=""; [ "${cw:-}" = "-" ] && cw=""
     IFS=$'\t' read -r a5 a5r aw awr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.a5 // "-"),(.a5r // 0),(.aw // "-"),(.awr // 0)] | @tsv' "$STATE")"
     [ "${a5:-}" = "-" ] && a5=""; [ "${aw:-}" = "-" ] && aw=""
-    if [ "$show_a5" -gt 0 ]; then extra+="   $(cell "$a5" "${a5r:-0}")"; fi
-    if [ "$show_aw" -gt 0 ]; then extra+="   $(cell "$aw" "${awr:-0}")"; fi
-    if [ "$show_c5" -gt 0 ]; then extra+="   $(cell "$c5" "${c5r:-0}")"; fi
-    if [ "$show_cw" -gt 0 ]; then extra+="   $(cell "$cw" "${cwr:-0}")"; fi
-    printf '%s %-14s %s   %s%s   %s%s%s\n' "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$extra" "$sc" "$st" "$Z"
+    if [ "$show_a5" -gt 0 ]; then extra+=" | $(cell "$a5" "${a5r:-0}")"; fi
+    if [ "$show_aw" -gt 0 ]; then extra+=" | $(cell "$aw" "${awr:-0}")"; fi
+    if [ "$show_c5" -gt 0 ]; then extra+=" | $(cell "$c5" "${c5r:-0}")"; fi
+    if [ "$show_cw" -gt 0 ]; then extra+=" | $(cell "$cw" "${cwr:-0}")"; fi
+    printf '%s %-14s | %s | %s%s | %s%s%s\n' "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$extra" "$sc" "$st" "$Z"
     echo "$sep"
   done < <(rows_by_week_reset "$failed")
   if [ -n "$LIVE" ] && [ -z "$cur" ]; then
@@ -841,19 +854,20 @@ print_test_table() {
 
   local argon_hdr="ARGON WEEK"
   if [ "$has_argon_5h" -eq 1 ]; then argon_hdr="ARGON 5H"; fi
-  local test_hdr
+  local test_hdr test_sep
   if [ "$has_argon" -eq 1 ]; then
-    test_hdr="$(printf '  %-14s %-46s %-12s %-35s %-12s %-35s %-12s %s' "ACCOUNT" "HI" "GEMINI 5H" "RESETS" "$argon_hdr" "ARGON RESETS" "CLAUDE 5H" "CLAUDE RESETS")"
+    test_hdr="$(printf '  %-14s | %-46s | %-12s | %-35s | %-12s | %-35s | %-12s | %s' "ACCOUNT" "HI" "GEMINI 5H" "RESETS" "$argon_hdr" "ARGON RESETS" "CLAUDE 5H" "CLAUDE RESETS")"
+    test_sep="  $(printf '%*s' 15 '' | tr ' ' '-')+$(printf '%*s' 48 '' | tr ' ' '-')+$(printf '%*s' 14 '' | tr ' ' '-')+$(printf '%*s' 37 '' | tr ' ' '-')+$(printf '%*s' 14 '' | tr ' ' '-')+$(printf '%*s' 37 '' | tr ' ' '-')+$(printf '%*s' 14 '' | tr ' ' '-')+$(printf '%*s' 35 '' | tr ' ' '-')"
   else
-    test_hdr="$(printf '  %-14s %-46s %-12s %s' "ACCOUNT" "HI" "GEMINI 5H" "RESETS")"
+    test_hdr="$(printf '  %-14s | %-46s | %-12s | %s' "ACCOUNT" "HI" "GEMINI 5H" "RESETS")"
+    test_sep="  $(printf '%*s' 15 '' | tr ' ' '-')+$(printf '%*s' 48 '' | tr ' ' '-')+$(printf '%*s' 14 '' | tr ' ' '-')+$(printf '%*s' 35 '' | tr ' ' '-')"
   fi
-  local test_sep="  $(printf '%*s' $((${#test_hdr} - 2)) '' | tr ' ' '-')"
   echo "$test_hdr"
   echo "$test_sep"
 
   while read -r n; do
     if [ -n "${TEST_SKIP[$n]:-}" ]; then
-      printf '  %-14s %s%s%s\n' "$n" "$Y" "skipped (${TEST_SKIP[$n]})" "$Z"
+      printf '  %-14s | %s%s%s\n' "$n" "$Y" "skipped (${TEST_SKIP[$n]})" "$Z"
       echo "$test_sep"
       continue
     fi
@@ -963,9 +977,9 @@ print_test_table() {
           if [ "$diff" -gt 120 ]; then claude_rst="$claude_rst (was $(date -d "@$c_b_epoch" '+%I:%M %p'))"; fi
         fi
       fi
-      printf '  %-14s %s%-46s%s %-12s %-35s %-12s %-35s %-12s %s\n' "$n" "$hcol" "$txt" "$Z" "${before:-?}>${after:-?}" "$reset" "$argon_val" "$argon_rst" "$claude_val" "$claude_rst"
+      printf '  %-14s | %s%-46s%s | %-12s | %-35s | %-12s | %-35s | %-12s | %s\n' "$n" "$hcol" "$txt" "$Z" "${before:-?}>${after:-?}" "$reset" "$argon_val" "$argon_rst" "$claude_val" "$claude_rst"
     else
-      printf '  %-14s %s%-46s%s %-12s %s\n' "$n" "$hcol" "$txt" "$Z" "${before:-?}>${after:-?}" "$reset"
+      printf '  %-14s | %s%-46s%s | %-12s | %s\n' "$n" "$hcol" "$txt" "$Z" "${before:-?}>${after:-?}" "$reset"
     fi
     echo "$test_sep"
   done < <(slots)
