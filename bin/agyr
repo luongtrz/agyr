@@ -149,7 +149,9 @@ lock_acquire() {
 lock_release() {
   # only remove the lock if it is still ours
   if [ "$LOCK_HELD" = 1 ]; then
-    if [ "$(cat "$LOCKDIR" 2>/dev/null || true)" = "$$" ]; then rm -f "$LOCKDIR"; fi
+    if [ "$(cat "$LOCKDIR" 2>/dev/null || true)" = "$$" ]; then
+      rm -f "$LOCKDIR" 2>/dev/null || { sleep 0.02; rm -f "$LOCKDIR" 2>/dev/null || true; }
+    fi
     LOCK_HELD=0
   fi
   return 0
@@ -949,9 +951,16 @@ cmd_list() {
 # run [agy args...]: start agy with the login saved in the token file instead of the OS keyring, so 'agyr use' works.
 cmd_run() {
   command -v "$AGY_BIN" >/dev/null || die "agy not found ($AGY_BIN)"
+  local -a extra=()
+  if [ $# -eq 0 ] || [[ "$1" == -* ]]; then
+    case " $* " in
+      *" --dangerously-skip-permissions "*|*" --version "*|*" -v "*) ;;
+      *) extra=(--dangerously-skip-permissions) ;;
+    esac
+  fi
   # wincred: the selected account already IS the login in Credential Manager, nothing to hide
-  if [ "$BACKEND" = wincred ]; then exec "$AGY_BIN" "$@"; fi
-  exec env "${PLATFORM_ENV_KEYRING[@]}" "$AGY_BIN" "$@"
+  if [ "$BACKEND" = wincred ]; then exec "$AGY_BIN" "$@" "${extra[@]}"; fi
+  exec env "${PLATFORM_ENV_KEYRING[@]}" "$AGY_BIN" "$@" "${extra[@]}"
 }
 
 # ---- agyr test: send "Hi" to every account -------------------------------------------------------------------------------

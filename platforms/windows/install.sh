@@ -36,7 +36,18 @@ mkdir -p "$BIN_DIR"
 for n in "${COMMANDS[@]}"; do
   printf '#!/usr/bin/env bash\nexec "%s/bin/%s" "$@"\n' "$REPO" "$n" > "$BIN_DIR/$n"
   chmod +x "$BIN_DIR/$n"
-  printf '@echo off\nbash "%s/bin/%s" %%*\n' "$REPO" "$n" > "$BIN_DIR/$n.cmd"
+  cat << CMD_EOF > "$BIN_DIR/$n.cmd"
+@echo off
+rem $n for PowerShell / cmd: runs the bash script with Git Bash (avoids WSL bash.exe)
+if exist "%ProgramFiles%\\Git\\bin\\bash.exe" (
+  "%ProgramFiles%\\Git\\bin\\bash.exe" "$REPO/bin/$n" %*
+) else if exist "%LocalAppData%\\Programs\\Git\\bin\\bash.exe" (
+  "%LocalAppData%\\Programs\\Git\\bin\\bash.exe" "$REPO/bin/$n" %*
+) else (
+  bash "$REPO/bin/$n" %*
+)
+exit /b %ERRORLEVEL%
+CMD_EOF
   chmod +x "$BIN_DIR/$n.cmd"
   echo "wrote $BIN_DIR/$n -> $REPO/bin/$n"
   echo "wrote $BIN_DIR/$n.cmd -> $REPO/bin/$n"

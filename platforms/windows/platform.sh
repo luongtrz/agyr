@@ -2,7 +2,7 @@
 #
 # The login is ONE Windows Credential Manager entry (gemini:antigravity) that agy reads and that 'agyr use' overwrites, so
 # agy needs no keyring trick here: the D-Bus bypass is Linux-only. The helper scripts in this folder read and write it.
-PLATFORM_ENV_KEYRING=()
+PLATFORM_ENV_KEYRING=(DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent)
 # Git Bash rewrites arguments that look like POSIX paths (a prompt such as "/quota ..." or "/tmp/x ...") before they reach
 # the native agy.exe. These environment assignments switch that off for one call:
 #   quota calls (agyr): /quota must stay the command, not become C:/Program Files/Git/quota (every account "failed")

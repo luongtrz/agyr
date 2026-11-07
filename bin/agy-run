@@ -132,7 +132,7 @@ run_attempt() {
 }
 
 stop_agy() { # kill the whole process group (Windows: the whole process tree, see platform_kill_tree), then reap it
-  if [ "$BACKEND" = wincred ] && platform_kill_tree "$PID"; then return 0; fi
+  if declare -F platform_kill_tree >/dev/null && platform_kill_tree "$PID"; then return 0; fi
   kill -TERM -- "-$PID" 2>/dev/null || kill -TERM "$PID" 2>/dev/null
   sleep 0.2
   kill -KILL -- "-$PID" 2>/dev/null

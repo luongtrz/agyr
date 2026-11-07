@@ -194,6 +194,7 @@ REPO_ABS="$(cd "$HERE/.." && pwd)"
 if bash "$HERE/../platforms/windows/install.sh" "$INST_WIN/win" >/dev/null 2>&1; then pass "platforms/windows/install.sh writes the wrappers"; else fail "platforms/windows/install.sh writes the wrappers"; fi
 has "windows wrapper points at this clone's bin/agyr" "exec \"$REPO_ABS/bin/agyr\"" "$(cat "$INST_WIN/win/agyr")"
 has "windows .cmd wrapper points at this clone's bin/agyr" "$REPO_ABS/bin/agyr" "$(cat "$INST_WIN/win/agyr.cmd")"
+has "windows .cmd wrapper invokes Git Bash explicitly" "Git\\bin\\bash.exe" "$(cat "$INST_WIN/win/agyr.cmd")"
 has "windows wrapper answers help" "agyr" "$("$INST_WIN/win/agyr" help 2>&1 | head -1)"
 mkdir -p "$INST_WIN/guard-wincmd" && echo mine >"$INST_WIN/guard-wincmd/agyr.cmd"
 if bash "$HERE/../platforms/windows/install.sh" "$INST_WIN/guard-wincmd" >/dev/null 2>&1; then fail "platforms/windows/install.sh refuses to replace an unrelated agyr.cmd"; else pass "platforms/windows/install.sh refuses to replace an unrelated agyr.cmd"; fi

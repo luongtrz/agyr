@@ -59,7 +59,11 @@ echo "== platforms/linux/install.sh (into temp bin dirs, never the real ~/.local
 INST_LIN="$(mktemp -d)"; TMPS+=("$INST_LIN")
 REPO_ABS="$(cd "$HERE/.." && pwd)"
 if bash "$HERE/../platforms/linux/install.sh" "$INST_LIN/lin" >/dev/null 2>&1; then pass "platforms/linux/install.sh runs"; else fail "platforms/linux/install.sh runs"; fi
-eq "platforms/linux/install.sh links agyr to bin/agyr" "$REPO_ABS/bin/agyr" "$(readlink -f "$INST_LIN/lin/agyr")"
+if [ "$ON_WINDOWS" = 1 ]; then
+  echo "  skip symlink target check: Git Bash ln -s copies files unless Developer Mode symlinks are enabled"
+else
+  eq "platforms/linux/install.sh links agyr to bin/agyr" "$REPO_ABS/bin/agyr" "$(readlink -f "$INST_LIN/lin/agyr")"
+fi
 has "linked agyr answers help" "agyr" "$("$INST_LIN/lin/agyr" help 2>&1 | head -1)"
 mkdir -p "$INST_LIN/guard" && echo mine >"$INST_LIN/guard/agyr"
 if bash "$HERE/../platforms/linux/install.sh" "$INST_LIN/guard" >/dev/null 2>&1; then fail "platforms/linux/install.sh refuses to replace a regular file"; else pass "platforms/linux/install.sh refuses to replace a regular file"; fi

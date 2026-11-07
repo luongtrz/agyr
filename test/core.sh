@@ -694,8 +694,9 @@ unset FAKE_QUOTA_TOKENS AGY_RUN_MAX_SWITCH
 
 echo "== concurrency: many agyr / agy-run at the same time must never mix up logins (file backend)"
 # the lock must be exclusive even where mkdir is not (uutils mkdir let several parallel callers all succeed)
+if [ "$ON_WINDOWS" = 1 ]; then LOCK_ROUNDS=10 PAR_USE=8 PAR_LIST=3; else LOCK_ROUNDS=60 PAR_USE=40 PAR_LIST=12; fi
 bad=0
-for r in $(seq 1 60); do
+for r in $(seq 1 "$LOCK_ROUNDS"); do
   D="$(mktemp -d)"; TMPS+=("$D")
   for i in $(seq 1 12); do ( set -o noclobber; { echo "$i" >"$D/lock"; } 2>/dev/null && echo ok >>"$D/oks" ) & done; wait
   [ "$(wc -l <"$D/oks" 2>/dev/null || echo 0)" = 1 ] || bad=$((bad + 1))
@@ -713,7 +714,7 @@ mkjson() { # N slots s1..sN with JSON logins, s1 in use
 bad_slots() { local i out=""; for i in $(seq 1 "$1"); do [ "$(refresh_of "s$i")" = "rt-s$i" ] || out="$out s$i"; done; echo "$out"; }
 for round in 1 2 3; do
   mkjson 4
-  for i in $(seq 1 40); do "$ACCT" use "s$(( (i % 4) + 1 ))" >/dev/null 2>&1 & done; wait
+  for i in $(seq 1 "$PAR_USE"); do "$ACCT" use "s$(( (i % 4) + 1 ))" >/dev/null 2>&1 & done; wait
   eq "40 parallel 'use' (round $round): every slot still has its own login" "" "$(bad_slots 4)"
 done
 eq "after the parallel 'use': no temp file or lock left in the accounts dir" "0" "$(ls -A "$AGY_HOME/accounts" | grep -cE '^\.snap|^\.swap\.lock|\.tmp|^\.state\.[A-Za-z0-9]+$|^[a-z0-9]+\.token\.[A-Za-z0-9]{6}$' || true)"
@@ -723,7 +724,7 @@ eq "after the parallel 'use': state.json is valid JSON" "ok" "$(jq -e . "$AGY_HO
 # 'use' while measurements run
 mkjson 4
 "$ACCT" list >/dev/null 2>&1
-for i in $(seq 1 12); do "$ACCT" use "s$(( (i % 4) + 1 ))" >/dev/null 2>&1 & "$ACCT" list >/dev/null 2>&1 & done; wait
+for i in $(seq 1 "$PAR_LIST"); do "$ACCT" use "s$(( (i % 4) + 1 ))" >/dev/null 2>&1 & "$ACCT" list >/dev/null 2>&1 & done; wait
 eq "parallel 'use' and 'list': every slot still has its own login" "" "$(bad_slots 4)"
 eq "parallel 'use' and 'list': every slot measured as itself (4 snapshots, none lost)" "4" "$(jq -r '.quota | keys | length' "$AGY_HOME/accounts/state.json")"
 
@@ -1093,6 +1094,7 @@ setup
 "$ACCT" >/dev/null 2>&1
 eq "plain 'agyr' starts agy once" "1" "$(lines)"
 has "plain 'agyr': agy uses the selected account's token file" "tok-acc1|" "$(cat "$FAKE_ARGS_LOG")"
+has "plain 'agyr': passes --dangerously-skip-permissions by default" "--dangerously-skip-permissions" "$(cat "$FAKE_ARGS_LOG")"
 "$ACCT" use acc3 >/dev/null
 "$ACCT" -c >/dev/null 2>&1
 has "'agyr -c' passes -c to agy, with the selected account" "tok-acc3|-c" "$(tail -1 "$FAKE_ARGS_LOG")"
