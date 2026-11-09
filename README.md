@@ -8,11 +8,11 @@ Rotate seamlessly between multiple Google accounts for `agy` (Antigravity CLI / 
 
 ## 3 Core USPs (Unique Selling Points)
 
-- 🔒 **100% Local & Privacy-First**
+- **100% Local & Privacy-First**
   No external servers, no cloud middleman. Your OAuth tokens stay strictly on your local disk (`chmod 600`) or native OS credential store (Windows Credential Manager / Linux secret store). `agyr` never reads or sends your credentials anywhere.
-- 🛡️ **Zero-Ban Risk**
+- **Zero-Ban Risk**
   No reverse-engineered proxy server, no datacenter IP blacklists, and no TLS/HTTP fingerprint anomalies. `agyr` invokes the official `agy` binary directly with genuine client authentication.
-- ⚡ **Seamless Auto-Rotation on 429**
+- **Seamless Auto-Rotation on 429**
   Instantly detects 429 quota exhaustion, sets a precise cooldown based on Google's reset header, picks the ready account whose weekly limit resets soonest, and resumes the exact same conversation with `agy --conversation` without losing context.
 
 ![Auto-rotation demo](docs/assets/auto-rotate-demo.svg)
