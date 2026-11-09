@@ -10,8 +10,8 @@ Rotate seamlessly between multiple Google accounts for `agy` (Antigravity CLI / 
 
 - **100% Local & Privacy-First**
   No external servers, no cloud middleman. Your OAuth tokens stay strictly on your local disk (`chmod 600`) or native OS credential store (Windows Credential Manager / Linux secret store). `agyr` never reads or sends your credentials anywhere.
-- **Zero-Ban Risk**
-  No reverse-engineered proxy server, no datacenter IP blacklists, and no TLS/HTTP fingerprint anomalies. `agyr` invokes the official `agy` binary directly with genuine client authentication.
+- **Official Binary, No Proxy**
+  No reverse-engineered proxy server in the request path. `agyr` invokes the official `agy` binary directly with genuine client authentication, so Google sees the normal `agy` client.
 - **Seamless Auto-Rotation on 429**
   Instantly detects 429 quota exhaustion, sets a precise cooldown based on Google's reset header, picks the ready account whose weekly limit resets soonest, and resumes the exact same conversation with `agy --conversation` without losing context.
 
@@ -24,7 +24,7 @@ Rotate seamlessly between multiple Google accounts for `agy` (Antigravity CLI / 
 | Feature | `agyr` (Native CLI Swapper) | Proxy Routers (e.g. `9router`) |
 |:---|:---|:---|
 | **Architecture** | **Direct local CLI execution** via official `agy` binary | Local/remote reverse HTTP/SOCKS proxy daemon |
-| **Account Ban Risk** | **Zero** — Uses authentic Google CLI binary &amp; TLS fingerprints | **High** — Fake TLS fingerprints, cloud/datacenter IP flags |
+| **Request Origin** | **Official client** — Requests come from the authentic Google CLI binary with its normal TLS fingerprint | **Varies** — Proxy-generated TLS signatures and shared or datacenter IPs, depending on deployment |
 | **Credential Privacy** | **100% Local** — Tokens stay `chmod 600` on your machine | Tokens intercepted or relayed through proxy daemon |
 | **Antigravity CLI Updates** | **Immediate** — Compatible with official `agy` updates instantly | Frequently breaks whenever Google updates API schemas or SSE |
 | **429 Failover &amp; Resume** | **Native resume** — Automatically resumes conversation context | Drops session or requires expensive prompt replay |
