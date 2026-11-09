@@ -10,6 +10,7 @@ import Platforms from './components/Platforms';
 import Faq from './components/Faq';
 import CtaBanner from './components/CtaBanner';
 import Footer from './components/Footer';
+import BackToTop from './components/BackToTop';
 
 export default function App() {
   return (
@@ -28,6 +29,7 @@ export default function App() {
         <CtaBanner />
       </main>
       <Footer />
+      <BackToTop />
     </>
   );
 }

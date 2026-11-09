@@ -23,16 +23,6 @@ function highlightCodeLine(line: string, lineIndex: number): ReactNode {
 
   // If the line is entirely a comment
   if (trimmed.startsWith('#')) {
-    if (trimmed.includes('✓')) {
-      const parts = line.split('✓');
-      return (
-        <span key={lineIndex} className="text-dim italic">
-          {parts[0]}
-          <span className="not-italic font-semibold text-emerald">✓</span>
-          {parts.slice(1).join('✓')}
-        </span>
-      );
-    }
     return (
       <span key={lineIndex} className="text-dim italic">
         {line}
