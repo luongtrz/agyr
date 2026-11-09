@@ -40,18 +40,18 @@ Requires `bash`, `git`, and `jq`.
 ### One-Line Install (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/luongtrz/rotate-agy/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/luongtrz/agyr/main/install.sh | bash
 ```
 
 To install into a custom directory (e.g., `~/bin`):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/luongtrz/rotate-agy/main/install.sh | bash -s -- ~/bin
+curl -fsSL https://raw.githubusercontent.com/luongtrz/agyr/main/install.sh | bash -s -- ~/bin
 ```
 
 ### Manual Clone
 
 ```bash
-git clone https://github.com/luongtrz/rotate-agy.git ~/tools/agy-acct
+git clone https://github.com/luongtrz/agyr.git ~/tools/agy-acct
 
 # Unified auto-detect installer (recommended):
 bash ~/tools/agy-acct/install.sh

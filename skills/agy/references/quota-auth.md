@@ -20,7 +20,7 @@ Error strings that mean logged out / quota:
 
 ## The pool (user, 2026-10-01: 429 is rotated automatically, no user action)
 
-- Tool: `~/tools/agy-acct` (GitHub repo `luongtrz/rotate-agy`, README there). `agyr` and `agy-run` are symlinked into `~/.local/bin`. One token slot per account in `~/.gemini/antigravity-cli/accounts/`.
+- Tool: `~/tools/agy-acct` (GitHub repo `luongtrz/agyr`, README there). `agyr` and `agy-run` are symlinked into `~/.local/bin`. One token slot per account in `~/.gemini/antigravity-cli/accounts/`.
 - On `Individual quota reached`, `agy-run` kills agy at once, records the cooldown from `Resets in …`, switches to the next ready account and resumes the same conversation.
 - Logging accounts in and saving their slots is the user's own operation; Claude neither runs nor explains it.
 - **Duplicate slots:** `agyr save` does not check whether that login is already saved under another name (e.g. two slots holding the same login show identical numbers in `agyr list` and the same email in the agy banner, so the pool silently has one account less). If two rows of `agyr list` are identical, tell the user; they fix it themselves (don't touch the token file or run account commands while an `agy-run` is using it).

@@ -2,7 +2,7 @@
 # Unified install script for agyr, agy-run, and agy-task.
 # Auto-detects the operating system and delegates to the platform-specific installer.
 # Supports local checkout execution and piped one-liner installation:
-#   curl -fsSL https://raw.githubusercontent.com/luongtrz/rotate-agy/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/luongtrz/agyr/main/install.sh | bash
 #
 # Usage: ./install.sh [BIN_DIR]        (default: ~/.local/bin)
 set -euo pipefail
@@ -30,7 +30,7 @@ else
   fi
 
   REPO="${AGYR_INSTALL_DIR:-$HOME/tools/agy-acct}"
-  REPO_URL="${AGYR_REPO_URL:-https://github.com/luongtrz/rotate-agy.git}"
+  REPO_URL="${AGYR_REPO_URL:-https://github.com/luongtrz/agyr.git}"
 
   if [ -d "$REPO/.git" ]; then
     echo "Updating existing agyr clone in $REPO..."

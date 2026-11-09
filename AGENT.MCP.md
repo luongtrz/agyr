@@ -6,7 +6,7 @@ Read this file when a user asks you to install agyr on a machine. You are an AI 
 
 agyr switches between several Google accounts for the official `agy` CLI (Antigravity). When one account runs out of quota, `agy-run` moves the same task to the next ready account and resumes the same conversation. It also shows the real quota of each account.
 
-- Repository: https://github.com/luongtrz/rotate-agy (public, MIT).
+- Repository: https://github.com/luongtrz/agyr (public, MIT).
 - Commands it installs: `agyr`, `agy-run`, `agy-task`.
 - Google login is interactive (browser). Only the user can log in. Your job is to install, verify, and hand the logins back to the user.
 
@@ -52,7 +52,7 @@ if [ -d "$REPO/.git" ]; then
   git -C "$REPO" status --short            # must print nothing; if it lists files, stop and ask the user
   git -C "$REPO" pull --ff-only
 else
-  git clone https://github.com/luongtrz/rotate-agy.git "$REPO"
+  git clone https://github.com/luongtrz/agyr.git "$REPO"
 fi
 git -C "$REPO" log --oneline -1
 ```
