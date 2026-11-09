@@ -108,55 +108,36 @@ For complete setup instructions, see:
 
 ---
 
-## Hướng dẫn Tiếng Việt
+## Getting Started (Adding Accounts)
 
-`agyr` là công cụ dòng lệnh (CLI) giúp quản lý và xoay vòng nhiều tài khoản Google cho `agy` (Google Antigravity CLI). Khi một tài khoản chạm giới hạn (lỗi `429 Quota Exceeded`), `agyr` tự động phát hiện, đưa tài khoản đó vào thời gian chờ (cooldown) và chuyển sang tài khoản sẵn sàng tiếp theo mà không làm gián đoạn công việc của bạn.
-
-### Điểm nổi bật
-- **An toàn tuyệt đối:** Gọi trực tiếp binary `agy` chính thức từ Google, không dùng proxy trung gian nên không bao giờ bị khóa tài khoản (Zero-Ban Risk).
-- **Bảo mật 100%:** Token OAuth được lưu an toàn trên máy cục bộ với quyền `chmod 600` hoặc Windows Credential Manager.
-- **Tự động khôi phục phiên:** Khi đổi tài khoản, `agy-run` tự động phục hồi đúng session ID (`--conversation`) để tiếp tục ngữ cảnh đang làm việc.
-
-### Cài đặt nhanh 1 dòng lệnh
-
-Mở terminal (Linux hoặc Git Bash trên Windows) và chạy:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/luongtrz/rotate-agy/main/install.sh | bash
-```
-
-*(Yêu cầu máy đã cài sẵn `git` và `jq`).*
-
-### Các bước thêm tài khoản Google
-
-1. **Đăng nhập và lưu tài khoản đầu tiên:**
+1. **Sign in and save your first Google account:**
    ```bash
-   agyr              # Mở trình duyệt để đăng nhập tài khoản Google thứ 1
-   agyr save acc1    # Lưu tài khoản vừa đăng nhập vào slot 'acc1'
+   agyr              # Opens your browser to sign in to Google account #1
+   agyr save acc1    # Saves the current login into slot 'acc1'
    ```
 
-2. **Thêm tài khoản thứ hai (và các tài khoản tiếp theo):**
+2. **Add a second account (and any additional accounts):**
    ```bash
-   agyr forget       # Xóa phiên đăng nhập hiện tại trên máy (slot acc1 vẫn an toàn)
-   agyr              # Trình duyệt mở ra, đăng nhập tài khoản Google thứ 2
-   agyr save acc2    # Lưu vào slot 'acc2'
+   agyr forget       # Clears the active local login (slot 'acc1' stays safe)
+   agyr              # Opens your browser to sign in to Google account #2
+   agyr save acc2    # Saves the login into slot 'acc2'
    ```
 
-3. **Kiểm tra trạng thái hạn ngạch (quota):**
+3. **Inspect real-time quota status across all slots:**
    ```bash
-   agyr list         # Xem bảng quota trực quan: xanh (đầy), vàng (trung bình), đỏ (sắp hết/cooldown)
+   agyr list         # Live quota table: green (high), yellow (medium), red (low/cooldown)
    ```
 
-4. **Chuyển đổi tài khoản thủ công:**
+4. **Switch accounts manually (for interactive sessions):**
    ```bash
-   agyr use acc1     # Chuyển sang dùng acc1
-   agyr use acc2     # Chuyển sang dùng acc2
+   agyr use acc1     # Switch to acc1
+   agyr use acc2     # Switch to acc2
    ```
 
-5. **Chạy tác vụ tự động:**
+5. **Run automated tasks with seamless 429 failover:**
    ```bash
-   # Tự động chuyển tài khoản khi gặp lỗi 429 và tiếp tục phiên làm việc:
-   agy-run --add-dir . --prompt "Viết unit test cho auth service"
+   # Automatically rotates accounts on 429 and resumes the same conversation:
+   agy-run --add-dir . --prompt "Write unit tests for the auth service"
    ```
 
 ---
