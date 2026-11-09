@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import SectionHeading from './SectionHeading';
 import Reveal from './Reveal';
+import { SUPPORT_URL, REPO_URL } from '../lib/site';
 import './rest/rest.css';
 
 interface FaqItemData {
@@ -83,6 +84,35 @@ const FAQ_ITEMS: FaqItemData[] = [
           agy-task
         </code>{' '}
         in isolated git worktrees.
+      </p>
+    ),
+  },
+  {
+    id: 'faq-5',
+    question: 'Is agyr completely free? How can I support independent development?',
+    answer: (
+      <p>
+        Yes! <strong className="font-semibold text-ink">agyr is 100% free and open-source</strong> under the MIT
+        license with zero commercial tiers, no premium paywalls, and no telemetry. If agyr saves you hours of coding
+        downtime and boosts your productivity, starring the project on{' '}
+        <a
+          href={REPO_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-emerald font-medium underline hover:text-emerald-300"
+        >
+          GitHub
+        </a>{' '}
+        or buying a coffee on{' '}
+        <a
+          href={SUPPORT_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-amber font-medium underline hover:text-amber-300"
+        >
+          Ko-fi
+        </a>{' '}
+        helps fuel continuous maintenance, testing harnesses, and new features.
       </p>
     ),
   },

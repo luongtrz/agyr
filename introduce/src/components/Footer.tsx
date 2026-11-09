@@ -181,9 +181,12 @@ export default function Footer() {
                     href={SUPPORT_URL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="break-words transition hover:text-amber"
+                    className="inline-flex items-center gap-1.5 break-words font-medium text-amber transition hover:text-amber-300"
                   >
-                    Support on Ko-fi
+                    <svg className="h-3.5 w-3.5 fill-current text-amber" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                    </svg>
+                    <span>Support on Ko-fi</span>
                   </a>
                 </li>
               </ul>
@@ -193,7 +196,7 @@ export default function Footer() {
 
         {/* Footer Bottom */}
         <div className="mt-12 flex flex-col items-center justify-between gap-4 border-t border-white/10 pt-8 text-xs text-dim sm:flex-row sm:flex-wrap">
-          <p className="break-words text-center sm:text-left">© 2026 Luân Trương. Released under the MIT License.</p>
+          <p className="break-words text-center sm:text-left">© 2026 Trần Lượng. Released under the MIT License.</p>
           <p className="text-center sm:text-right break-words">
             Antigravity CLI (
             <code className="rounded border border-white/10 bg-white/5 px-1 py-0.5 font-mono text-[11px] text-ink/80">
