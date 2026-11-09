@@ -147,6 +147,7 @@ For complete setup instructions, see:
 - [docs/reference.md](docs/reference.md): In-depth technical architecture, full command specifications, Linux and Windows platform backends, environment variables, known limitations.
 - [docs/agent-setup.md](docs/agent-setup.md): Complete guide to installing `skills/agy` and configuring AI orchestrators.
 - [AGENT.MCP.md](AGENT.MCP.md): Guide for AI agents installing and verifying `agyr`.
+- [agyr.luongtrz.id.vn](https://agyr.luongtrz.id.vn/): Project website ([source](https://github.com/luongtrz/rotate-agy-site)).
 
 ---
 
