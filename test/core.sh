@@ -1704,10 +1704,12 @@ hasnt "claude: no CLAUDE column when no account has Argon" "CLAUDE" "$out"
 eq "claude: not stored without Argon (acc1)" "null" "$(jq -r '.quota.acc1.cw' "$AGY_HOME/accounts/state.json")"
 setup
 out="$(FAKE_ARGON_TOKENS="tok-acc2" AGYR_COLOR=never "$ACCT" list 2>&1)"
-has "claude: CLAUDE WEEK column appears with an Argon account" "CLAUDE WEEK" "$out"
-has "claude: CLAUDE 5H column appears" "CLAUDE 5H" "$out"
+hasnt "claude: no CLAUDE column by default in agyr list" "CLAUDE" "$out"
 eq "claude: stored for the Argon account (acc2 cw=100)" "100" "$(jq -r '.quota.acc2.cw' "$AGY_HOME/accounts/state.json")"
 eq "claude: not stored for the non-Argon account (acc1)" "null" "$(jq -r '.quota.acc1.cw' "$AGY_HOME/accounts/state.json")"
+out="$(FAKE_ARGON_TOKENS="tok-acc2" AGYR_COLOR=never "$ACCT" list --claude 2>&1)"
+has "claude: CLAUDE WEEK column appears with --claude" "CLAUDE WEEK" "$out"
+has "claude: CLAUDE 5H column appears with --claude" "CLAUDE 5H" "$out"
 
 echo "== test: Gemini 4 Argon and Claude Hi calls"
 setup
@@ -1754,20 +1756,20 @@ echo "== responsive terminal width (-w / --wide)"
 setup
 FAKE_ARGON_TOKENS="tok-acc2" "$ACCT" list >/dev/null 2>&1
 # At 120 columns: Argon and Claude are hidden
-out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=120 "$ACCT" list -c)"
+out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=120 "$ACCT" list -c --claude)"
 hasnt "responsive 120: CLAUDE hidden" "CLAUDE" "$out"
 hasnt "responsive 120: ARGON hidden" "ARGON" "$out"
 has "responsive 120: has STATUS" "STATUS" "$out"
 has "responsive 120: notes hidden columns" "Note: Argon and Claude columns hidden to fit terminal width 120" "$out"
 
 # With -w: forced full width
-out="$("$ACCT" list -c -w)"
+out="$("$ACCT" list -c -w --claude)"
 has "responsive -w: CLAUDE shown" "CLAUDE" "$out"
 has "responsive -w: ARGON shown" "ARGON" "$out"
 hasnt "responsive -w: no hidden note" "columns hidden" "$out"
 
 # At 150 columns: Claude hidden, Argon kept
-out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=150 "$ACCT" list -c)"
+out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=150 "$ACCT" list -c --claude)"
 hasnt "responsive 150: CLAUDE hidden" "CLAUDE" "$out"
 has "responsive 150: ARGON shown" "ARGON" "$out"
 has "responsive 150: notes Claude hidden" "Note: Claude columns hidden to fit terminal width 150" "$out"
@@ -1785,6 +1787,7 @@ has "test responsive -w: ARGON shown" "ARGON" "$out"
 hasnt "test responsive -w: no hidden note" "columns hidden" "$out"
 
 has "help list: mentions -w" "-w, --wide" "$("$ACCT" help list)"
+has "help list: mentions --claude" "--claude" "$("$ACCT" help list)"
 has "help test: mentions -w" "-w, --wide" "$("$ACCT" help test)"
 
 echo "== swapui"

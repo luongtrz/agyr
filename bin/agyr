@@ -757,11 +757,14 @@ print_table() {
     else printf '%s  %-19s' "$(pct "$1")" "$(fmt_time "$2")"; fi
   }
   # Gemini 4 Argon columns appear only when at least one account reports that limit
-  local show_a5 show_aw show_c5 show_cw
+  # Claude columns appear only when --claude is passed
+  local show_a5 show_aw show_c5=0 show_cw=0
   show_a5="$(jq -r '[.quota[]? | select(.a5 != null)] | length' "$STATE")"
   show_aw="$(jq -r '[.quota[]? | select(.aw != null)] | length' "$STATE")"
-  show_c5="$(jq -r '[.quota[]? | select(.c5 != null)] | length' "$STATE")"
-  show_cw="$(jq -r '[.quota[]? | select(.cw != null)] | length' "$STATE")"
+  if [ -n "${AGYR_CLAUDE:-}" ]; then
+    show_c5="$(jq -r '[.quota[]? | select(.c5 != null)] | length' "$STATE")"
+    show_cw="$(jq -r '[.quota[]? | select(.cw != null)] | length' "$STATE")"
+  fi
 
   local is_tty=0; [ -t 1 ] && is_tty=1
   local tw; tw="$(term_width "$is_tty")"
@@ -915,17 +918,23 @@ print_table() {
 # -c only prints the saved data and does not call agy.
 cmd_list() {
   need_jq; init_state
-  local cached=0
+  local cached=0 show_claude=0
   while [ $# -gt 0 ]; do
     case "$1" in
       -c|--cached) cached=1 ;;
       -w|--wide) export AGYR_WIDE=1 ;;
+      --claude) show_claude=1 ;;
       -cw|-wc) cached=1; export AGYR_WIDE=1 ;;
       "") ;;
-      *) die "usage: agyr list [-c|--cached] [-w|--wide]" 2 ;;
+      *) die "usage: agyr list [-c|--cached] [-w|--wide] [--claude]" 2 ;;
     esac
     shift
   done
+  if [ "$show_claude" = 1 ]; then
+    export AGYR_CLAUDE=1
+  else
+    unset AGYR_CLAUDE
+  fi
   local -a names=()
   mapfile -t names < <(slots)
   if [ "${#names[@]}" -eq 0 ]; then
@@ -1350,7 +1359,7 @@ Usage: agyr <command> [args]        (agyr help <command> for the details of one 
        agyr [agy arguments]         start agy with the selected account (same as 'agyr run'): 'agyr', 'agyr -c', 'agyr -p "..."'
 
 Commands:
-  list [-c]                Measure every account's quota and show a table (* = selected account)
+  list [-c] [--claude]     Measure every account's quota and show a table (* = selected account)
   save <name>              Save the current login as slot <name>
   use <name>               Switch to slot <name>
   swapui <n1> <n2>         Swap UI display order of two accounts in 'agyr list' (--reset to restore)
@@ -1432,7 +1441,7 @@ Use --reset (or 'reset') to clear custom UI ordering and restore default weekly 
 EOF
       ;;
     list|ls) cat <<'EOF'
-Usage: agyr list [-c|--cached] [-w|--wide]        (alias: ls)
+Usage: agyr list [-c|--cached] [-w|--wide] [--claude]        (alias: ls)
 
 Measure the real quota of every saved account with 'agy -p /quota' (no model call, 0 tokens) and print one table row per
 account. The accounts are measured in parallel, each in a throwaway HOME holding a copy of its token, so the token in use
@@ -1455,6 +1464,7 @@ Colours: green above 40%, yellow 11-40%, red 10% or less. Only on a terminal (se
 Options:
   -c, --cached   do not call agy; print the data saved by the last measurement
   -w, --wide     disable responsive table; always print all columns at full width
+  --claude       show Claude and GPT quota columns (hidden by default)
 
 Exit code: 0 ok, 1 some account could not be measured.
 EOF

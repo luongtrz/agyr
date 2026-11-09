@@ -99,6 +99,7 @@ agyr list                       # verify all slots are alive and report quota
 ```bash
 agyr list                     # measure real quota of all accounts and print table (* = selected account)
 agyr list -c                  # print cached numbers without calling agy (fast)
+agyr list --claude            # include Claude and GPT quota columns (hidden by default)
 agyr use <name>               # switch account
 agyr rotate                   # interactive agy ran out of quota: cool down current account + switch to ready account with soonest weekly reset
 agyr cooldown <name> 4h13m    # mark an account on cooldown manually (also accepts "… Resets in 4h13m27s")
