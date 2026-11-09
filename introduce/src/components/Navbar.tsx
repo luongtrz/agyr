@@ -146,9 +146,9 @@ export default function Navbar() {
         <a
           href="#top"
           aria-label="agyr home"
-          className="group flex items-center gap-2.5 text-ink no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald rounded-lg"
+          className="group flex min-w-0 shrink-0 items-center gap-2.5 text-ink no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald rounded-lg"
         >
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-emerald/30 bg-emerald/10 text-emerald transition-all duration-200 group-hover:scale-105 group-hover:border-emerald/50 group-hover:shadow-[0_0_14px_rgba(34,197,94,0.35)]">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-emerald/30 bg-emerald/10 text-emerald transition-all duration-200 group-hover:scale-105 group-hover:border-emerald/50 group-hover:shadow-[0_0_14px_rgba(34,197,94,0.35)]">
             <svg
               width="20"
               height="20"
@@ -166,7 +166,7 @@ export default function Navbar() {
             </svg>
           </span>
           <span className="font-mono text-xl font-extrabold tracking-tight text-white">agyr</span>
-          <span className="rounded-full border border-cyan/30 bg-cyan/10 px-2 py-0.5 font-mono text-[10px] font-semibold tracking-wide text-cyan">
+          <span className="shrink-0 rounded-full border border-cyan/30 bg-cyan/10 px-2 py-0.5 font-mono text-[10px] font-semibold tracking-wide text-cyan">
             v1.5
           </span>
         </a>
@@ -211,12 +211,12 @@ export default function Navbar() {
         </nav>
 
         {/* Actions: GitHub Star CTA & Mobile Menu Toggle */}
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3">
           <a
             href={REPO_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="hidden sm:inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3.5 py-1.5 text-xs font-semibold text-ink transition-all duration-200 hover:border-white/25 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald"
+            className="hidden sm:inline-flex shrink-0 items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3.5 py-1.5 text-xs font-semibold text-ink transition-all duration-200 hover:border-white/25 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald"
           >
             <svg
               width="16"
@@ -224,6 +224,7 @@ export default function Navbar() {
               viewBox="0 0 24 24"
               fill="currentColor"
               aria-hidden="true"
+              className="shrink-0"
             >
               <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
             </svg>
@@ -237,7 +238,7 @@ export default function Navbar() {
             aria-label="Toggle navigation menu"
             aria-expanded={mobileMenuOpen}
             aria-controls="mobile-nav-menu"
-            className="flex h-9 w-9 flex-col items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 text-ink transition hover:border-white/20 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald lg:hidden"
+            className="flex h-9 w-9 shrink-0 flex-col items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 text-ink transition hover:border-white/20 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald lg:hidden"
           >
             <span
               className={`h-0.5 w-5 rounded-full bg-slate-200 transition-transform duration-200 ${
@@ -264,7 +265,7 @@ export default function Navbar() {
           id="mobile-nav-menu"
           className="border-b border-white/10 bg-surface/95 px-4 pt-3 pb-6 backdrop-blur-2xl lg:hidden"
         >
-          <nav className="flex flex-col gap-2" aria-label="Mobile navigation">
+          <nav className="flex flex-col gap-2 w-full" aria-label="Mobile navigation">
             {NAV_ITEMS.map((item) => {
               const isActive = activeSection === item.id;
               return (
@@ -272,7 +273,7 @@ export default function Navbar() {
                   key={item.id}
                   href={item.href}
                   onClick={() => setMobileMenuOpen(false)}
-                  className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
+                  className={`block w-full rounded-lg px-3 py-2 text-sm font-medium transition ${
                     isActive
                       ? 'border border-emerald/30 bg-emerald/10 text-white font-semibold'
                       : 'text-muted hover:bg-white/5 hover:text-white'
@@ -283,13 +284,13 @@ export default function Navbar() {
               );
             })}
 
-            <div className="mt-2 pt-2 border-t border-white/10">
+            <div className="mt-2 pt-2 border-t border-white/10 w-full">
               <a
                 href={REPO_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 py-2.5 text-xs font-semibold text-ink transition hover:bg-white/10 hover:text-white"
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/5 py-2.5 text-xs font-semibold text-ink transition hover:bg-white/10 hover:text-white"
               >
                 <svg
                   width="16"

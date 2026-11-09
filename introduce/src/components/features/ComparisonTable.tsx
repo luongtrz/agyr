@@ -10,14 +10,14 @@ export function ComparisonTable() {
           Features sticky header visual weight & highlighted recommended column
           ==================================================================== */}
       <div className="hidden md:block">
-        <div className="overflow-x-auto rounded-2xl border border-white/10 bg-surface/80 backdrop-blur-md shadow-2xl">
-          <table className="w-full text-left border-collapse text-sm">
+        <div className="rounded-2xl border border-white/10 bg-surface/80 backdrop-blur-md shadow-2xl overflow-hidden">
+          <table className="w-full table-fixed text-left border-collapse text-sm">
             <thead>
               <tr className="border-b border-white/10">
                 {/* Criteria Column Header */}
                 <th
                   scope="col"
-                  className="w-[28%] p-5 lg:p-6 font-bold text-ink bg-slate-900/60 align-bottom"
+                  className="w-[28%] p-4 lg:p-6 font-bold text-ink bg-slate-900/60 align-bottom break-words"
                 >
                   <span className="text-sm lg:text-base">Evaluation Criteria</span>
                 </th>
@@ -25,12 +25,12 @@ export function ComparisonTable() {
                 {/* agyr Column Header (Recommended & Highlighted) */}
                 <th
                   scope="col"
-                  className="w-[38%] p-5 lg:p-6 font-bold text-ink comparison-agyr-header border-l-2 border-r-2 border-emerald/50 align-bottom"
+                  className="w-[38%] p-4 lg:p-6 font-bold text-ink comparison-agyr-header border-l-2 border-r-2 border-emerald/50 align-bottom break-words"
                 >
                   <div className="flex flex-col gap-2 items-start">
                     <span className="comparison-brand-pill inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider bg-gradient-to-r from-emerald/30 to-cyan/25 text-emerald border border-emerald/60">
                       <svg
-                        className="w-3 h-3 text-emerald"
+                        className="w-3 h-3 text-emerald shrink-0"
                         viewBox="0 0 24 24"
                         fill="none"
                         stroke="currentColor"
@@ -55,7 +55,7 @@ export function ComparisonTable() {
                 {/* Proxy Routers Column Header */}
                 <th
                   scope="col"
-                  className="w-[34%] p-5 lg:p-6 font-bold text-slate-300 bg-slate-900/60 align-bottom"
+                  className="w-[34%] p-4 lg:p-6 font-bold text-slate-300 bg-slate-900/60 align-bottom break-words"
                 >
                   <div className="text-base lg:text-lg text-slate-300 leading-tight">
                     <strong className="text-ink">Proxy Routers</strong>{' '}
@@ -72,7 +72,7 @@ export function ComparisonTable() {
                 return (
                   <tr key={row.id} className="hover:bg-white/[0.02] transition-colors">
                     {/* Criterion Title & Subtitle */}
-                    <th scope="row" className="p-5 lg:p-6 align-top font-normal">
+                    <th scope="row" className="p-4 lg:p-6 align-top font-normal break-words">
                       <strong className="block text-ink font-semibold text-sm lg:text-base mb-1">
                         {row.title}
                       </strong>
@@ -83,20 +83,20 @@ export function ComparisonTable() {
 
                     {/* agyr Data Cell */}
                     <td
-                      className={`p-5 lg:p-6 align-top comparison-agyr-cell border-l-2 border-r-2 border-emerald/45 text-slate-100 ${
+                      className={`p-4 lg:p-6 align-top comparison-agyr-cell border-l-2 border-r-2 border-emerald/45 text-slate-100 break-words ${
                         isLast ? 'border-b-2 border-emerald/45' : ''
                       }`}
                     >
                       <StatusBadge variant={row.agyr.badgeVariant} text={row.agyr.badgeText} />
-                      <p className="text-xs lg:text-[0.92rem] text-slate-200 leading-relaxed mt-1">
+                      <p className="text-xs lg:text-[0.92rem] text-slate-200 leading-relaxed mt-1 break-words">
                         {row.agyr.description}
                       </p>
                     </td>
 
                     {/* Proxy Routers Data Cell */}
-                    <td className="p-5 lg:p-6 align-top text-muted">
+                    <td className="p-4 lg:p-6 align-top text-muted break-words">
                       <StatusBadge variant={row.proxy.badgeVariant} text={row.proxy.badgeText} />
-                      <p className="text-xs lg:text-[0.92rem] text-slate-400 leading-relaxed mt-1">
+                      <p className="text-xs lg:text-[0.92rem] text-slate-400 leading-relaxed mt-1 break-words">
                         {row.proxy.description}
                       </p>
                     </td>
@@ -127,12 +127,12 @@ export function ComparisonTable() {
 
             {/* agyr (Native CLI Swapper) Subcard */}
             <div className="rounded-xl border border-emerald/45 bg-emerald/5 p-3.5 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 min-w-0">
                   <span className="font-bold text-sm text-emerald">agyr</span>
-                  <span className="text-[11px] text-slate-400">(Native CLI Swapper)</span>
+                  <span className="text-[11px] text-slate-400 break-words">(Native CLI Swapper)</span>
                 </div>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald/20 text-emerald border border-emerald/50">
+                <span className="inline-flex shrink-0 items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald/20 text-emerald border border-emerald/50">
                   <svg
                     className="w-2.5 h-2.5 text-emerald"
                     viewBox="0 0 24 24"
