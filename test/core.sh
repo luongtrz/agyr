@@ -1398,6 +1398,10 @@ R="$(task_repo)"
 echo "task" > "$R/task.txt"
 mkdir -p "$R/.worktrees"
 git -C "$R" worktree add "$R/.worktrees/wt-sub" -b wt-sub >/dev/null 2>&1
+echo "sub branch work" >> "$R/.worktrees/wt-sub/file.txt"
+git -C "$R/.worktrees/wt-sub" commit -am "wt-sub commit" >/dev/null
+sub_sha="$(git -C "$R/.worktrees/wt-sub" rev-parse --short HEAD)"
+main_sha="$(git -C "$R" rev-parse --short HEAD)"
 (
   cd "$R/.worktrees/wt-sub"
   "$TASK" run --name linked-wt --task "$R/task.txt" >/dev/null 2>"$R/linked-wt.err"
@@ -1406,6 +1410,7 @@ rc=$?
 eq "invoked from inside linked worktree -> exit 0" "0" "$rc"
 eq "invoked from inside linked worktree: worktree in main repo" "yes" "$([ -d "$R/.worktrees/agy-linked-wt" ] && echo yes || echo no)"
 eq "invoked from inside linked worktree: sessions in main repo" "yes" "$([ -d "$R/.agy-sessions" ] && echo yes || echo no)"
+eq "invoked from inside linked worktree: base defaults to linked wt HEAD, not main" "$sub_sha" "$(git -C "$R/.worktrees/agy-linked-wt" rev-parse --short HEAD)"
 
 # Baseline: setup modification not blamed on agy
 R="$(task_repo)"

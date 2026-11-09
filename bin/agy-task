@@ -373,7 +373,16 @@ fi
 mkdir -p "$SESSIONS_DIR"
 
 # Step 2: Create worktree
-BASE_SHA="$(git -C "$MAIN_REPO" rev-parse --short "$BASE_REF" 2>/dev/null)" || die "invalid base ref: $BASE_REF" 2
+# When BASE_REF is "HEAD" (default), resolve it from the directory where agy-task was invoked ($REPO_ARG),
+# NOT from $MAIN_REPO. If invoked from a linked worktree, HEAD in $REPO_ARG reflects that worktree's commit,
+# preventing tasks from accidentally branching off an unrelated branch checked out in $MAIN_REPO.
+if [ "$BASE_REF" = "HEAD" ]; then
+  BASE_SHA="$(git -C "$REPO_ARG" rev-parse --short HEAD 2>/dev/null)" || \
+  BASE_SHA="$(git -C "$MAIN_REPO" rev-parse --short HEAD 2>/dev/null)" || die "invalid base ref: $BASE_REF" 2
+  BASE_REF="$BASE_SHA"
+else
+  BASE_SHA="$(git -C "$MAIN_REPO" rev-parse --short "$BASE_REF" 2>/dev/null)" || die "invalid base ref: $BASE_REF" 2
+fi
 
 if [ ! -e "$WORKTREE_DIR" ]; then
   mkdir -p "$MAIN_REPO/.worktrees"
