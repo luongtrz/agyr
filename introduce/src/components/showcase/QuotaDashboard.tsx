@@ -21,21 +21,57 @@ function QuotaCell({ entry }: { entry: QuotaEntry }) {
         ? 'text-amber'
         : 'text-danger';
 
-  const pctStr = `${entry.percentage}%`.padStart(4, ' ');
-
   return (
-    <div className="inline-flex items-baseline gap-2">
+    <div className="flex flex-col items-start gap-0.5 min-w-0">
       <span
         className={`quota-pct-badge font-bold ${colorClass}`}
         style={{ '--q-w': `${entry.percentage}%` } as React.CSSProperties}
       >
-        <span className="whitespace-pre">{pctStr}</span>
+        <span>{entry.percentage}%</span>
       </span>
       {entry.resetTime && (
-        <span className="text-[11px] whitespace-nowrap text-dim">
+        <span className="text-[10px] leading-tight text-dim break-words lg:text-[11px]">
           {entry.resetTime}
         </span>
       )}
+    </div>
+  );
+}
+
+function MobileQuotaRow({ label, entry }: { label: string; entry: QuotaEntry }) {
+  if (entry.percentage === null) {
+    return (
+      <div className="flex items-center justify-between gap-2 py-1 text-xs">
+        <span className="text-dim shrink-0">{label}</span>
+        <span className="text-dim font-bold">-</span>
+      </div>
+    );
+  }
+
+  const level = getQuotaLevel(entry.percentage);
+  const colorClass =
+    level === 'green'
+      ? 'text-emerald'
+      : level === 'yellow'
+        ? 'text-amber'
+        : 'text-danger';
+
+  return (
+    <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 py-1 text-xs">
+      <span className="text-dim shrink-0">{label}</span>
+      <div className="flex flex-wrap items-baseline justify-end gap-x-2 gap-y-0.5 text-right min-w-0">
+        <span
+          className={`quota-pct-badge font-bold ${colorClass}`}
+          style={{ '--q-w': `${entry.percentage}%` } as React.CSSProperties}
+        >
+          <span>{entry.percentage}%</span>
+        </span>
+        {entry.resetTime && (
+          <span className="text-[11px] text-dim break-words">
+            {entry.resetTime}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -47,13 +83,13 @@ function StatusBadge({ status }: { status: AccountStatus }) {
   return (
     <span className={`inline-flex items-center gap-1.5 font-semibold ${colorClass}`}>
       <span
-        className={`h-1.5 w-1.5 rounded-full ${
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
           isReady
             ? 'bg-emerald shadow-[0_0_6px_var(--color-emerald)]'
             : 'bg-danger shadow-[0_0_6px_var(--color-danger)]'
         }`}
       />
-      <span className="whitespace-nowrap">{status.label}</span>
+      <span className="break-words">{status.label}</span>
     </span>
   );
 }
@@ -96,30 +132,30 @@ export default function QuotaDashboard({ isActive = true }: { isActive?: boolean
   }, [isComplete, viewMode]);
 
   const viewTools = (
-    <div className="view-toggle-group flex items-center rounded-md border border-white/10 bg-black/40 p-0.5">
+    <div className="view-toggle-group inline-flex max-w-full flex-wrap items-center gap-1 rounded-md border border-white/10 bg-black/40 p-0.5">
       <button
         type="button"
         onClick={() => setViewMode('standard')}
-        className={`rounded px-2.5 py-1 text-xs font-semibold transition ${
+        className={`max-w-full rounded px-2 sm:px-2.5 py-1 text-xs font-semibold transition break-words text-left sm:text-center ${
           viewMode === 'standard'
             ? 'bg-white/10 text-white shadow-sm'
             : 'text-dim hover:text-white'
         }`}
         aria-pressed={viewMode === 'standard'}
       >
-        Standard View (<code className="text-[11px]">agyr list</code>)
+        Standard View (<code className="text-[11px] break-all sm:break-normal">agyr list</code>)
       </button>
       <button
         type="button"
         onClick={() => setViewMode('claude')}
-        className={`rounded px-2.5 py-1 text-xs font-semibold transition ${
+        className={`max-w-full rounded px-2 sm:px-2.5 py-1 text-xs font-semibold transition break-words text-left sm:text-center ${
           viewMode === 'claude'
             ? 'bg-white/10 text-white shadow-sm'
             : 'text-dim hover:text-white'
         }`}
         aria-pressed={viewMode === 'claude'}
       >
-        Extended View (<code className="text-[11px]">agyr list --claude</code>)
+        Extended View (<code className="text-[11px] break-all sm:break-normal">agyr list --claude</code>)
       </button>
     </div>
   );
@@ -140,7 +176,7 @@ export default function QuotaDashboard({ isActive = true }: { isActive?: boolean
         <span className="text-dim">:</span>
         <span className="font-semibold text-cyan">~/projects</span>
         <span className="text-dim">$ </span>
-        <span className="ml-1.5 font-semibold text-ink">{displayedText}</span>
+        <span className="ml-1.5 font-semibold text-ink whitespace-pre-wrap break-words">{displayedText}</span>
         {isTyping && (
           <span className="ml-0.5 inline-block font-bold text-emerald animate-pulse" aria-hidden="true">
             ▋
@@ -148,39 +184,120 @@ export default function QuotaDashboard({ isActive = true }: { isActive?: boolean
         )}
       </div>
 
-      {/* Semantic Table with responsive scroll and fixed column alignment */}
-      <div className="my-2 overflow-x-auto rounded border border-slate-800/80 bg-[#070b13] shadow-inner">
+      {/* Mobile Stacked Row-Cards (< 768px) */}
+      <div
+        className="my-2 space-y-2.5 md:hidden"
+        role="region"
+        aria-label="Accounts Quota Summary"
+      >
+        {ACCOUNTS_DATA.map((row, index) => {
+          const isRevealed = index < revealedCount;
+          return (
+            <div
+              key={row.id}
+              className={`rounded-lg border p-3 font-mono text-xs transition-all duration-300 ${
+                isRevealed ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
+              } ${
+                row.isActive
+                  ? 'border-cyan/50 bg-cyan/[0.08] shadow-[0_0_12px_rgba(56,189,248,0.1)]'
+                  : 'border-slate-800/80 bg-[#070b13]/90'
+              }`}
+            >
+              {/* First line: Account name + Status */}
+              <div className="flex items-center justify-between gap-2 border-b border-slate-800/60 pb-2">
+                <div className="flex items-center gap-1.5 font-bold min-w-0">
+                  {row.isActive ? (
+                    <span className="active-account-marker text-cyan shrink-0" aria-hidden="true">
+                      *
+                    </span>
+                  ) : (
+                    <span className="w-2 shrink-0" aria-hidden="true" />
+                  )}
+                  <span className={`break-words ${row.isActive ? 'text-ink' : 'text-slate-200'}`}>
+                    {row.name}
+                  </span>
+                </div>
+                <StatusBadge status={row.status} />
+              </div>
+
+              {/* Labeled lines */}
+              <div className="mt-2 space-y-1 divide-y divide-slate-800/40">
+                <MobileQuotaRow label="Gemini 5h" entry={row.gemini5h} />
+                <MobileQuotaRow label="Gemini Week" entry={row.geminiWeek} />
+                {viewMode === 'standard' ? (
+                  <MobileQuotaRow label="Argon Week" entry={row.argonWeek} />
+                ) : (
+                  <>
+                    <MobileQuotaRow label="Claude 5h" entry={row.claude5h} />
+                    <MobileQuotaRow label="Claude Week" entry={row.claudeWeek} />
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Semantic Table with responsive layout (>= 768px) */}
+      <div className="my-2 hidden md:block overflow-hidden rounded border border-slate-800/80 bg-[#070b13] shadow-inner">
         <table
-          className={`w-full ${
-            viewMode === 'claude' ? 'min-w-[880px]' : 'min-w-[720px]'
-          } border-collapse font-mono text-xs leading-relaxed text-left sm:text-[13px]`}
+          className="w-full table-fixed border-collapse font-mono text-[11px] leading-relaxed text-left md:text-xs lg:text-[13px]"
         >
           <thead>
             <tr className="border-b border-slate-700/80 bg-white/[0.03] text-slate-300">
-              <th scope="col" className="w-[18%] border-r border-slate-800/80 px-3.5 py-2.5 font-bold tracking-wider">
+              <th
+                scope="col"
+                className={`${
+                  viewMode === 'claude' ? 'w-[16%]' : 'w-[18%]'
+                } border-r border-slate-800/80 px-2 py-2 md:px-2 md:py-2 lg:px-3.5 lg:py-2.5 font-bold tracking-wider break-words text-[11px] md:text-xs`}
+              >
                 ACCOUNT
               </th>
-              <th scope="col" className="w-[24%] border-r border-slate-800/80 px-3.5 py-2.5 font-bold tracking-wider">
+              <th
+                scope="col"
+                className={`${
+                  viewMode === 'claude' ? 'w-[17%]' : 'w-[23%]'
+                } border-r border-slate-800/80 px-2 py-2 md:px-2 md:py-2 lg:px-3.5 lg:py-2.5 font-bold tracking-wider break-words text-[11px] md:text-xs`}
+              >
                 GEMINI 5H
               </th>
-              <th scope="col" className="w-[24%] border-r border-slate-800/80 px-3.5 py-2.5 font-bold tracking-wider">
+              <th
+                scope="col"
+                className={`${
+                  viewMode === 'claude' ? 'w-[17%]' : 'w-[23%]'
+                } border-r border-slate-800/80 px-2 py-2 md:px-2 md:py-2 lg:px-3.5 lg:py-2.5 font-bold tracking-wider break-words text-[11px] md:text-xs`}
+              >
                 GEMINI WEEK
               </th>
               {viewMode === 'standard' ? (
-                <th scope="col" className="w-[20%] border-r border-slate-800/80 px-3.5 py-2.5 font-bold tracking-wider">
+                <th
+                  scope="col"
+                  className="w-[22%] border-r border-slate-800/80 px-2 py-2 md:px-2 md:py-2 lg:px-3.5 lg:py-2.5 font-bold tracking-wider break-words text-[11px] md:text-xs"
+                >
                   ARGON WEEK
                 </th>
               ) : (
                 <>
-                  <th scope="col" className="w-[16%] border-r border-slate-800/80 px-3.5 py-2.5 font-bold tracking-wider">
+                  <th
+                    scope="col"
+                    className="w-[17%] border-r border-slate-800/80 px-2 py-2 md:px-2 md:py-2 lg:px-3.5 lg:py-2.5 font-bold tracking-wider break-words text-[11px] md:text-xs"
+                  >
                     CLAUDE 5H
                   </th>
-                  <th scope="col" className="w-[16%] border-r border-slate-800/80 px-3.5 py-2.5 font-bold tracking-wider">
+                  <th
+                    scope="col"
+                    className="w-[17%] border-r border-slate-800/80 px-2 py-2 md:px-2 md:py-2 lg:px-3.5 lg:py-2.5 font-bold tracking-wider break-words text-[11px] md:text-xs"
+                  >
                     CLAUDE WEEK
                   </th>
                 </>
               )}
-              <th scope="col" className="w-[14%] px-3.5 py-2.5 font-bold tracking-wider">
+              <th
+                scope="col"
+                className={`${
+                  viewMode === 'claude' ? 'w-[16%]' : 'w-[14%]'
+                } px-2 py-2 md:px-2 md:py-2 lg:px-3.5 lg:py-2.5 font-bold tracking-wider break-words text-[11px] md:text-xs`}
+              >
                 STATUS
               </th>
             </tr>
@@ -202,47 +319,49 @@ export default function QuotaDashboard({ isActive = true }: { isActive?: boolean
                   } hover:bg-white/[0.04]`}
                 >
                   {/* Account Name & Marker */}
-                  <td className="whitespace-nowrap border-r border-slate-800/60 px-3.5 py-2">
-                    {row.isActive ? (
-                      <span className="active-account-marker mr-1.5 inline-block font-extrabold text-cyan">
-                        *
+                  <td className="border-r border-slate-800/60 px-2 py-1.5 md:px-2 md:py-1.5 lg:px-3.5 lg:py-2 break-words">
+                    <div className="flex items-center min-w-0">
+                      {row.isActive ? (
+                        <span className="active-account-marker mr-1.5 inline-block font-extrabold text-cyan shrink-0">
+                          *
+                        </span>
+                      ) : (
+                        <span className="mr-1.5 inline-block w-2.5 shrink-0" />
+                      )}
+                      <span className={`break-words ${row.isActive ? 'font-bold text-ink' : 'text-slate-300'}`}>
+                        {row.name}
                       </span>
-                    ) : (
-                      <span className="mr-1.5 inline-block w-2.5" />
-                    )}
-                    <span className={row.isActive ? 'font-bold text-ink' : 'text-slate-300'}>
-                      {row.name}
-                    </span>
+                    </div>
                   </td>
 
                   {/* Gemini 5H */}
-                  <td className="whitespace-nowrap border-r border-slate-800/60 px-3.5 py-2">
+                  <td className="border-r border-slate-800/60 px-2 py-1.5 md:px-2 md:py-1.5 lg:px-3.5 lg:py-2 break-words">
                     <QuotaCell entry={row.gemini5h} />
                   </td>
 
                   {/* Gemini Week */}
-                  <td className="whitespace-nowrap border-r border-slate-800/60 px-3.5 py-2">
+                  <td className="border-r border-slate-800/60 px-2 py-1.5 md:px-2 md:py-1.5 lg:px-3.5 lg:py-2 break-words">
                     <QuotaCell entry={row.geminiWeek} />
                   </td>
 
                   {/* Argon Week or Claude Quotas */}
                   {viewMode === 'standard' ? (
-                    <td className="whitespace-nowrap border-r border-slate-800/60 px-3.5 py-2">
+                    <td className="border-r border-slate-800/60 px-2 py-1.5 md:px-2 md:py-1.5 lg:px-3.5 lg:py-2 break-words">
                       <QuotaCell entry={row.argonWeek} />
                     </td>
                   ) : (
                     <>
-                      <td className="whitespace-nowrap border-r border-slate-800/60 px-3.5 py-2">
+                      <td className="border-r border-slate-800/60 px-2 py-1.5 md:px-2 md:py-1.5 lg:px-3.5 lg:py-2 break-words">
                         <QuotaCell entry={row.claude5h} />
                       </td>
-                      <td className="whitespace-nowrap border-r border-slate-800/60 px-3.5 py-2">
+                      <td className="border-r border-slate-800/60 px-2 py-1.5 md:px-2 md:py-1.5 lg:px-3.5 lg:py-2 break-words">
                         <QuotaCell entry={row.claudeWeek} />
                       </td>
                     </>
                   )}
 
                   {/* Status */}
-                  <td className="whitespace-nowrap px-3.5 py-2">
+                  <td className="px-2 py-1.5 md:px-2 md:py-1.5 lg:px-3.5 lg:py-2 break-words">
                     <StatusBadge status={row.status} />
                   </td>
                 </tr>
@@ -252,7 +371,7 @@ export default function QuotaDashboard({ isActive = true }: { isActive?: boolean
         </table>
       </div>
 
-      <div className="mt-2.5 text-xs text-dim">
+      <div className="mt-2.5 text-xs text-dim break-words">
         Measured in parallel across 5 accounts in 12s · (* = selected account)
       </div>
     </TerminalChrome>

@@ -126,12 +126,12 @@ export default function FailoverDemo({ isActive = true }: { isActive?: boolean }
     >
       <div className="space-y-1.5 font-mono text-xs leading-relaxed sm:text-sm">
         {/* Command line */}
-        <div className="flex flex-wrap items-center">
+        <div className="flex flex-wrap items-center whitespace-pre-wrap break-words">
           <span className="font-semibold text-emerald">user@devbox</span>
           <span className="text-dim">:</span>
           <span className="font-semibold text-cyan">~/projects/auth-svc</span>
           <span className="text-dim">$ </span>
-          <span className="ml-1.5 font-semibold text-ink">{displayedText}</span>
+          <span className="ml-1.5 font-semibold text-ink whitespace-pre-wrap break-words">{displayedText}</span>
           {isTyping && (
             <span className="ml-0.5 inline-block font-bold text-emerald animate-pulse" aria-hidden="true">
               ▋
@@ -141,7 +141,7 @@ export default function FailoverDemo({ isActive = true }: { isActive?: boolean }
 
         {/* Step 1: Initial slot run */}
         <div
-          className={`transition-all duration-300 ${
+          className={`whitespace-pre-wrap break-words transition-all duration-300 ${
             visibleStep >= 1 ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
           }`}
         >
@@ -153,7 +153,7 @@ export default function FailoverDemo({ isActive = true }: { isActive?: boolean }
 
         {/* Step 2: agy running */}
         <div
-          className={`transition-all duration-300 ${
+          className={`whitespace-pre-wrap break-words transition-all duration-300 ${
             visibleStep >= 2 ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
           }`}
         >
@@ -162,7 +162,7 @@ export default function FailoverDemo({ isActive = true }: { isActive?: boolean }
 
         {/* Step 3: 429 Hit with Red Alert Flash */}
         <div
-          className={`transition-all duration-300 ${
+          className={`whitespace-pre-wrap break-words transition-all duration-300 ${
             visibleStep >= 3
               ? 'term-line-429 translate-y-0 px-2 py-0.5 opacity-100'
               : 'translate-y-1 opacity-0'
@@ -176,7 +176,7 @@ export default function FailoverDemo({ isActive = true }: { isActive?: boolean }
 
         {/* Step 4: Cooldown & Switch with Green Pulse */}
         <div
-          className={`transition-all duration-300 ${
+          className={`whitespace-pre-wrap break-words transition-all duration-300 ${
             visibleStep >= 4
               ? 'term-line-switch translate-y-0 px-2 py-0.5 opacity-100'
               : 'translate-y-1 opacity-0'
@@ -190,20 +190,20 @@ export default function FailoverDemo({ isActive = true }: { isActive?: boolean }
 
         {/* Step 5: Resume session */}
         <div
-          className={`transition-all duration-300 ${
+          className={`whitespace-pre-wrap break-words transition-all duration-300 ${
             visibleStep >= 5 ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
           }`}
         >
           <span className="font-bold text-cyan">[agy-run]</span>{' '}
           <span className="text-slate-200">resuming conversation </span>
-          <span className="font-semibold text-violet">9c4e1a80-bf82-49da-8b29-9e8c45e69e41</span>{' '}
+          <span className="font-semibold text-violet break-all">9c4e1a80-bf82-49da-8b29-9e8c45e69e41</span>{' '}
           <span className="text-slate-200">on account </span>
           <span className="font-bold text-emerald">'work-2'</span>
         </div>
 
         {/* Step 6: Victory OK */}
         <div
-          className={`transition-all duration-300 ${
+          className={`whitespace-pre-wrap break-words transition-all duration-300 ${
             visibleStep >= 6
               ? 'term-line-ok translate-y-0 px-2 py-0.5 opacity-100'
               : 'translate-y-1 opacity-0'
@@ -218,7 +218,7 @@ export default function FailoverDemo({ isActive = true }: { isActive?: boolean }
 
         {/* Step 7: Completed Prompt */}
         <div
-          className={`pt-1 transition-all duration-300 ${
+          className={`whitespace-pre-wrap break-words pt-1 transition-all duration-300 ${
             visibleStep >= 7 ? 'translate-y-0 opacity-100' : 'translate-y-1 opacity-0'
           }`}
         >

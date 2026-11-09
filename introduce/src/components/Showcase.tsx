@@ -40,7 +40,7 @@ export default function Showcase() {
             aria-selected={activeTab === 'list'}
             aria-controls="panel-showcase-list"
             onClick={() => setActiveTab('list')}
-            className={`inline-flex items-center gap-2.5 rounded-lg border px-4 py-2.5 text-xs font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald sm:text-sm ${
+            className={`inline-flex max-w-full items-center gap-2.5 rounded-lg border px-4 py-2.5 text-xs font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald sm:text-sm ${
               activeTab === 'list'
                 ? 'border-emerald/40 bg-emerald/10 text-white shadow-lg shadow-emerald/5'
                 : 'border-white/10 bg-white/[0.04] text-muted hover:border-white/20 hover:bg-white/[0.08] hover:text-white'
@@ -60,7 +60,7 @@ export default function Showcase() {
               <line x1="3" y1="9" x2="21" y2="9" />
               <line x1="9" y1="21" x2="9" y2="9" />
             </svg>
-            <span>
+            <span className="break-words">
               1. Real-time Quota Dashboard (
               <code className="rounded bg-black/40 px-1 py-0.5 font-mono text-[11px] text-emerald">
                 agyr list
@@ -77,7 +77,7 @@ export default function Showcase() {
             aria-selected={activeTab === 'rotate'}
             aria-controls="panel-showcase-rotate"
             onClick={() => setActiveTab('rotate')}
-            className={`inline-flex items-center gap-2.5 rounded-lg border px-4 py-2.5 text-xs font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan sm:text-sm ${
+            className={`inline-flex max-w-full items-center gap-2.5 rounded-lg border px-4 py-2.5 text-xs font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan sm:text-sm ${
               activeTab === 'rotate'
                 ? 'border-cyan/40 bg-cyan/10 text-white shadow-lg shadow-cyan/5'
                 : 'border-white/10 bg-white/[0.04] text-muted hover:border-white/20 hover:bg-white/[0.08] hover:text-white'
@@ -97,7 +97,7 @@ export default function Showcase() {
               <polyline points="1 20 1 14 7 14" />
               <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
             </svg>
-            <span>
+            <span className="break-words">
               2. Autonomous 429 Failover (
               <code className="rounded bg-black/40 px-1 py-0.5 font-mono text-[11px] text-cyan">
                 agy-run
@@ -131,14 +131,14 @@ export default function Showcase() {
         {/* Caption */}
         <Reveal delay={200}>
           <div className="mx-auto mt-6 max-w-3xl text-center text-xs leading-relaxed text-dim sm:text-sm">
-            <p>
+            <p className="break-words">
               <strong className="font-semibold text-slate-200">Zero Context Loss:</strong>{' '}
               When a 429 occurs,{' '}
               <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs text-cyan">
                 agy-run
               </code>{' '}
               extracts the reset countdown, switches slots, and passes{' '}
-              <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs text-cyan">
+              <code className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-xs text-cyan break-all">
                 --conversation &lt;id&gt;
               </code>{' '}
               so the replacement account continues immediately without reprocessing earlier tokens.
