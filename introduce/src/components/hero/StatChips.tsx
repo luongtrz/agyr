@@ -1,5 +1,5 @@
 interface StatChipsProps {
-  /** If 'gutters', renders floating chips in wide side gutters (min-[1360px]).
+  /** If 'gutters', renders floating chips in wide side gutters (min-[1700px]).
    * If 'inline', renders a responsive horizontal row for smaller screens. */
   variant: 'gutters' | 'inline';
 }
@@ -8,7 +8,7 @@ export default function StatChips({ variant }: StatChipsProps) {
   if (variant === 'gutters') {
     return (
       <div
-        className="pointer-events-none absolute inset-0 z-20 hidden min-[1360px]:block"
+        className="pointer-events-none absolute inset-0 z-20 hidden min-[1700px]:block"
         aria-hidden="true"
       >
         {/* Chip 1 — Upper Left Gutter */}
@@ -106,9 +106,9 @@ export default function StatChips({ variant }: StatChipsProps) {
     );
   }
 
-  // Inline row for smaller screens (under 1360px) below CTAs
+  // Inline row for smaller screens (under 1700px) below CTAs
   return (
-    <div className="my-8 flex min-[1360px]:hidden flex-wrap items-center justify-center gap-3">
+    <div className="my-8 flex min-[1700px]:hidden flex-wrap items-center justify-center gap-3">
       {/* Chip 1 */}
       <div
         title="Real-time 429 detection & automatic account rotation"

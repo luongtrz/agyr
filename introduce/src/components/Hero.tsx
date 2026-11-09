@@ -41,7 +41,7 @@ export default function Hero() {
       {/* Interactive Constellation Canvas of 5 Google Account Nodes */}
       <ConstellationCanvas />
 
-      {/* Floating Stat Chips in Side Gutters (on screens >= 1360px) */}
+      {/* Floating Stat Chips in Side Gutters (on screens >= 1700px) */}
       <StatChips variant="gutters" />
 
       {/* Main Hero Content Container */}
@@ -121,7 +121,7 @@ export default function Hero() {
           </a>
         </div>
 
-        {/* Responsive Stat Chips for Medium/Small Viewports (< 1360px) */}
+        {/* Responsive Stat Chips for Medium/Small Viewports (< 1700px) */}
         <StatChips variant="inline" />
 
         {/* 4 Metric Cards Strip Under Hero */}

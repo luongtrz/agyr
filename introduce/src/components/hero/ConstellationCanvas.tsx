@@ -73,29 +73,66 @@ export default function ConstellationCanvas() {
     let packets: Packet[] = [];
     let shockwaves: Shockwave[] = [];
 
-    const slotConfigs = [
-      { label: 'Slot #1', status: 'active' as const, color: '#22c55e', rx: 0.12, ry: 0.22 },
-      { label: 'Slot #2', status: 'ready' as const, color: '#38bdf8', rx: 0.28, ry: 0.11 },
-      { label: 'Slot #3', status: 'ready' as const, color: '#38bdf8', rx: 0.72, ry: 0.11 },
-      { label: 'Slot #4', status: 'cooldown' as const, color: '#f59e0b', rx: 0.88, ry: 0.22 },
-      { label: 'Slot #5', status: 'ready' as const, color: '#c084fc', rx: 0.50, ry: 0.06 },
+    const slotBaseConfigs = [
+      { label: 'Slot #1', status: 'active' as const, color: '#22c55e' },
+      { label: 'Slot #2', status: 'ready' as const, color: '#38bdf8' },
+      { label: 'Slot #3', status: 'ready' as const, color: '#38bdf8' },
+      { label: 'Slot #4', status: 'cooldown' as const, color: '#f59e0b' },
+      { label: 'Slot #5', status: 'ready' as const, color: '#c084fc' },
     ];
 
+    const getNodeLayout = (idx: number, w: number, h: number) => {
+      if (w < 768) {
+        // Mobile (< 768px): keep strictly inside top band (first ~80px of hero, well above headline ~190px)
+        const layouts = [
+          { rx: 0.10, y: Math.min(h * 0.07, 70) }, // Slot #1
+          { rx: 0.28, y: Math.min(h * 0.05, 48) }, // Slot #2
+          { rx: 0.72, y: Math.min(h * 0.05, 48) }, // Slot #3
+          { rx: 0.90, y: Math.min(h * 0.07, 70) }, // Slot #4
+          { rx: 0.50, y: Math.min(h * 0.03, 28) }, // Slot #5
+        ];
+        return layouts[idx];
+      } else if (w < 1280) {
+        // Tablet / Mid-viewports (768px - 1279px): arch across top band, completely above headline (starts ~224px)
+        const layouts = [
+          { rx: 0.09, y: Math.min(h * 0.11, 88) }, // Slot #1
+          { rx: 0.26, y: Math.min(h * 0.08, 62) }, // Slot #2
+          { rx: 0.74, y: Math.min(h * 0.08, 62) }, // Slot #3
+          { rx: 0.91, y: Math.min(h * 0.11, 88) }, // Slot #4
+          { rx: 0.50, y: Math.min(h * 0.05, 40) }, // Slot #5
+        ];
+        return layouts[idx];
+      } else {
+        // Desktop (>= 1280px): Slot #1 & #4 in side gutters, #2, #3, #5 in top arch
+        const layouts = [
+          { rx: 0.12, y: Math.min(h * 0.22, 145) }, // Slot #1
+          { rx: 0.28, y: Math.min(h * 0.11, 75) },  // Slot #2
+          { rx: 0.72, y: Math.min(h * 0.11, 75) },  // Slot #3
+          { rx: 0.88, y: Math.min(h * 0.22, 145) }, // Slot #4
+          { rx: 0.50, y: Math.min(h * 0.06, 40) },  // Slot #5
+        ];
+        return layouts[idx];
+      }
+    };
+
     const initNodes = () => {
-      accountNodes = slotConfigs.map((cfg, idx) => ({
-        label: cfg.label,
-        status: cfg.status,
-        color: cfg.color,
-        baseX: width * cfg.rx,
-        baseY: height * cfg.ry,
-        x: width * cfg.rx,
-        y: height * cfg.ry,
-        radius: idx === activeSlotIndex ? 9 : 6.5,
-        pulse: 0,
-        pulseSpeed: 0.04 + idx * 0.01,
-        vx: (Math.random() - 0.5) * 0.2,
-        vy: (Math.random() - 0.5) * 0.2,
-      }));
+      accountNodes = slotBaseConfigs.map((cfg, idx) => {
+        const layout = getNodeLayout(idx, width, height);
+        return {
+          label: cfg.label,
+          status: cfg.status,
+          color: cfg.color,
+          baseX: width * layout.rx,
+          baseY: layout.y,
+          x: width * layout.rx,
+          y: layout.y,
+          radius: idx === activeSlotIndex ? (width < 768 ? 7 : 9) : (width < 768 ? 5 : 6.5),
+          pulse: 0,
+          pulseSpeed: 0.04 + idx * 0.01,
+          vx: (Math.random() - 0.5) * 0.2,
+          vy: (Math.random() - 0.5) * 0.2,
+        };
+      });
 
       const particleCount = width < 600 ? 12 : 22;
       backgroundParticles = [];
@@ -138,10 +175,12 @@ export default function ConstellationCanvas() {
         ctx.fillStyle = node.color;
         ctx.fill();
 
-        ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
-        ctx.fillStyle = 'rgba(203, 213, 225, 0.45)';
-        ctx.textAlign = 'center';
-        ctx.fillText(node.label, node.x, node.y + node.radius + 14);
+        if (width >= 768) {
+          ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+          ctx.fillStyle = 'rgba(203, 213, 225, 0.45)';
+          ctx.textAlign = 'center';
+          ctx.fillText(node.label, node.x, node.y + node.radius + 14);
+        }
       });
     };
 
@@ -243,9 +282,19 @@ export default function ConstellationCanvas() {
 
         const dx = node.x - node.baseX;
         const dy = node.y - node.baseY;
-        if (Math.sqrt(dx * dx + dy * dy) > 22) {
+        const maxDrift = width < 768 ? 10 : 18;
+        if (Math.sqrt(dx * dx + dy * dy) > maxDrift) {
           node.vx *= -1;
           node.vy *= -1;
+        }
+
+        // Clamp Y to prevent any overlap with headline/content
+        if (width < 768 && node.y > 90) {
+          node.y = 90;
+          node.vy = -Math.abs(node.vy);
+        } else if (width < 1280 && node.y > 120) {
+          node.y = 120;
+          node.vy = -Math.abs(node.vy);
         }
 
         // Mouse repulsion
@@ -381,20 +430,22 @@ export default function ConstellationCanvas() {
         ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
         ctx.fill();
 
-        // Node Label (dim so it doesn't distract)
-        ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = isActive ? '#4ade80' : 'rgba(203, 213, 225, 0.45)';
-        ctx.fillText(node.label, node.x, node.y + radius + 14);
+        // Node Label (only rendered on wider viewports >= 768px to prevent overlap with text/ticker on mobile)
+        if (width >= 768) {
+          ctx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = isActive ? '#4ade80' : 'rgba(203, 213, 225, 0.45)';
+          ctx.fillText(node.label, node.x, node.y + radius + 14);
 
-        if (isActive) {
-          ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
-          ctx.fillStyle = '#22c55e';
-          ctx.fillText('● ACTIVE', node.x, node.y + radius + 25);
-        } else if (node.status === 'cooldown') {
-          ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
-          ctx.fillStyle = '#f59e0b';
-          ctx.fillText('COOLING', node.x, node.y + radius + 25);
+          if (isActive) {
+            ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
+            ctx.fillStyle = '#22c55e';
+            ctx.fillText('● ACTIVE', node.x, node.y + radius + 25);
+          } else if (node.status === 'cooldown') {
+            ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillText('COOLING', node.x, node.y + radius + 25);
+          }
         }
       });
 
@@ -506,7 +557,7 @@ export default function ConstellationCanvas() {
   return (
     <canvas
       ref={canvasRef}
-      className="hero-canvas pointer-events-none absolute inset-0 z-0 h-full w-full"
+      className="hero-canvas pointer-events-none absolute inset-0 z-0 h-full w-full opacity-40 md:opacity-100 transition-opacity duration-300"
       aria-hidden="true"
     />
   );

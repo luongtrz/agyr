@@ -75,14 +75,14 @@ export default function HeroTicker() {
     <div
       ref={containerRef}
       aria-label="agyr auto-failover simulation"
-      className="relative z-10 mx-auto mb-6 inline-flex max-w-[95%] items-center gap-2.5 rounded-full border border-cyan/25 bg-surface/85 px-3.5 py-1.5 font-mono text-xs text-muted shadow-lg shadow-black/40 backdrop-blur-md transition-all duration-300 hover:border-cyan/45 hover:shadow-cyan/10"
+      className="relative z-10 mx-auto mb-6 inline-flex max-w-[95%] items-center gap-2.5 rounded-2xl sm:rounded-full border border-cyan/25 bg-surface/85 px-3.5 py-1.5 font-mono text-xs text-muted shadow-lg shadow-black/40 backdrop-blur-md transition-all duration-300 hover:border-cyan/45 hover:shadow-cyan/10"
     >
-      <span className="ticker-pulse" aria-hidden="true" />
+      <span className="ticker-pulse shrink-0" aria-hidden="true" />
       <span className="shrink-0 rounded border border-cyan/30 bg-cyan/15 px-1.5 py-0.5 text-[10px] font-bold tracking-wide text-cyan uppercase">
         Live Engine
       </span>
       <span
-        className={`truncate text-slate-200 transition-all duration-250 ${
+        className={`text-left text-slate-200 transition-all duration-250 ${
           fadeState === 'out'
             ? '-translate-y-1 opacity-0'
             : 'translate-y-0 opacity-100'

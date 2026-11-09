@@ -67,17 +67,16 @@ export default function InstallBox() {
             <span className="ml-2 font-mono text-[11px] text-dim">bash — install.sh</span>
           </div>
 
-          {/* Terminal Command Line with Defect (b) Fix: horizontal scroll container */}
-          <div className="flex items-center justify-between gap-3 p-3.5 sm:p-4">
-            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-1">
-              <span className="font-mono font-bold text-emerald select-none">$</span>
-              <code className="font-mono text-xs sm:text-sm text-ink whitespace-nowrap">
-                {currentCmd}
+          {/* Terminal Command Line */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 p-3.5 sm:p-4">
+            <div className="flex min-w-0 flex-1 items-start gap-2 py-0.5">
+              <span className="font-mono font-bold text-emerald select-none leading-relaxed sm:leading-normal">$</span>
+              <code className="font-mono text-xs sm:text-sm text-ink whitespace-pre-wrap break-all leading-relaxed sm:leading-normal">
+                {currentCmd}<span className="cmd-cursor" aria-hidden="true" />
               </code>
-              <span className="cmd-cursor" aria-hidden="true" />
             </div>
 
-            <div className="shrink-0 pl-1">
+            <div className="flex justify-end shrink-0 sm:pl-2">
               <CopyButton text={currentCmd} />
             </div>
           </div>
