@@ -1,0 +1,268 @@
+/* ==========================================================================
+   Showcase Terminal Styles & Animations
+   ========================================================================== */
+
+/* Ambient backglow halo */
+.terminal-ambient-halo {
+  position: absolute;
+  inset: -15px -10px -25px -10px;
+  border-radius: 28px;
+  background: radial-gradient(
+    ellipse at 50% 20%,
+    var(--terminal-halo-color, rgba(34, 197, 94, 0.18)) 0%,
+    rgba(56, 189, 248, 0.08) 45%,
+    transparent 70%
+  );
+  filter: blur(45px);
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.75;
+  transition: background 0.8s ease, filter 0.8s ease, opacity 0.8s ease;
+  animation: haloAmbientPulse 8s ease-in-out infinite alternate;
+}
+
+@keyframes haloAmbientPulse {
+  0% {
+    opacity: 0.65;
+    transform: scale(0.98);
+  }
+  100% {
+    opacity: 0.85;
+    transform: scale(1.02);
+  }
+}
+
+/* Traffic light dots */
+.dot {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.45), 0 1px 2px rgba(0, 0, 0, 0.6);
+  transition: transform 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease;
+  cursor: default;
+}
+
+.dot-red { background-color: #ef4444; }
+.dot-yellow { background-color: #eab308; }
+.dot-green { background-color: #22c55e; }
+
+.dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-weight: 800;
+  color: rgba(0, 0, 0, 0.65);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  line-height: 1;
+}
+
+.terminal-dots:hover .dot::after {
+  opacity: 1;
+}
+
+.dot-red::after {
+  content: '✕';
+  font-size: 7px;
+}
+
+.dot-yellow::after {
+  content: '–';
+  font-size: 9px;
+  transform: translateY(-1px);
+}
+
+.dot-green::after {
+  content: '+';
+  font-size: 9px;
+}
+
+.dot-red:hover {
+  filter: brightness(1.2);
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
+}
+
+.dot-yellow:hover {
+  filter: brightness(1.2);
+  box-shadow: 0 0 8px rgba(234, 179, 8, 0.8);
+}
+
+.dot-green:hover {
+  filter: brightness(1.2);
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.8);
+}
+
+/* Live status pill pulsing dot */
+.term-status-dot {
+  animation: termStatusPulse 2s infinite ease-in-out;
+}
+
+@keyframes termStatusPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+}
+
+/* CRT Scanline & Glass Sheen Overlay */
+.terminal-crt-scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+  background:
+    linear-gradient(rgba(18, 24, 38, 0) 50%, rgba(0, 0, 0, 0.18) 50%),
+    radial-gradient(ellipse at 50% 0%, rgba(56, 189, 248, 0.05) 0%, transparent 65%);
+  background-size: 100% 3px, 100% 100%;
+  opacity: 0.55;
+}
+
+.terminal-glass-shine {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0) 100%);
+  pointer-events: none;
+  z-index: 6;
+}
+
+/* Active Account Marker Pulse */
+.active-account-marker {
+  display: inline-block;
+  text-shadow: 0 0 10px rgba(56, 189, 248, 0.9);
+  animation: markerPulse 2.2s infinite ease-in-out;
+}
+
+@keyframes markerPulse {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 2px var(--color-cyan, #38bdf8));
+  }
+  50% {
+    transform: scale(1.25);
+    filter: drop-shadow(0 0 8px var(--color-cyan, #38bdf8));
+  }
+}
+
+/* Quota percentage mini-meter bar underline */
+.quota-pct-badge {
+  position: relative;
+  display: inline-block;
+  padding-bottom: 2px;
+}
+
+.quota-pct-badge::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: var(--q-w, 100%);
+  background-color: currentColor;
+  box-shadow: 0 0 6px currentColor;
+  border-radius: 1px;
+  transition: width 0.75s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+/* 429 Red flash alert line */
+.term-line-429 {
+  animation: flashRedLine 2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  border-radius: 4px;
+}
+
+@keyframes flashRedLine {
+  0% {
+    background-color: rgba(239, 68, 68, 0.38);
+    box-shadow: inset 3px 0 0 #ef4444, 0 0 22px rgba(239, 68, 68, 0.35);
+  }
+  30% {
+    background-color: rgba(239, 68, 68, 0.22);
+    box-shadow: inset 3px 0 0 #ef4444, 0 0 14px rgba(239, 68, 68, 0.2);
+  }
+  100% {
+    background-color: rgba(239, 68, 68, 0.08);
+    box-shadow: inset 2px 0 0 rgba(239, 68, 68, 0.6);
+  }
+}
+
+/* Switching to next slot - green pulse */
+.term-line-switch {
+  animation: pulseGreenLine 2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  border-radius: 4px;
+}
+
+@keyframes pulseGreenLine {
+  0% {
+    background-color: rgba(34, 197, 94, 0.38);
+    box-shadow: inset 3px 0 0 #22c55e, 0 0 22px rgba(34, 197, 94, 0.35);
+  }
+  30% {
+    background-color: rgba(34, 197, 94, 0.2);
+    box-shadow: inset 3px 0 0 #22c55e, 0 0 14px rgba(34, 197, 94, 0.2);
+  }
+  100% {
+    background-color: rgba(34, 197, 94, 0.08);
+    box-shadow: inset 2px 0 0 rgba(34, 197, 94, 0.6);
+  }
+}
+
+/* RESULT=OK Victory glow */
+.term-line-ok {
+  animation: pulseOkLine 1.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  border-radius: 4px;
+}
+
+@keyframes pulseOkLine {
+  0% {
+    background-color: rgba(34, 197, 94, 0.22);
+    box-shadow: inset 2px 0 0 #22c55e;
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+}
+
+/* Replaying spin */
+.replaying-icon {
+  animation: spinReplay 0.75s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes spinReplay {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .terminal-ambient-halo,
+  .term-status-dot,
+  .active-account-marker,
+  .term-line-429,
+  .term-line-switch,
+  .term-line-ok,
+  .replaying-icon {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .quota-pct-badge::after {
+    transition: none !important;
+  }
+
+  .terminal-crt-scanlines {
+    display: none !important;
+  }
+}
