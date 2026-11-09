@@ -24,7 +24,7 @@ function highlightCodeLine(line: string, lineIndex: number): ReactNode {
   // If the line is entirely a comment
   if (trimmed.startsWith('#')) {
     return (
-      <span key={lineIndex} className="text-dim italic">
+      <span key={lineIndex} className="text-dim italic whitespace-pre-wrap break-words">
         {line}
       </span>
     );
@@ -47,7 +47,7 @@ function highlightCodeLine(line: string, lineIndex: number): ReactNode {
 
     if (comment) {
       elements.push(
-        <span key={match.index} className="text-dim italic">
+        <span key={match.index} className="text-dim italic whitespace-pre-wrap break-words">
           {comment}
         </span>,
       );
@@ -108,10 +108,10 @@ export default function CodeBlock({
 }: CodeBlockProps) {
   return (
     <div
-      className={`relative flex flex-col rounded-xl border border-white/10 bg-terminal shadow-lg overflow-hidden ${className}`}
+      className={`relative flex flex-col rounded-xl border border-white/10 bg-terminal shadow-lg overflow-hidden min-h-[240px] lg:min-h-[280px] ${className}`}
     >
       {/* Top action bar / reserved gutter (solves defect d: copy button never overlaps code text) */}
-      <div className="flex items-center justify-between border-b border-white/5 bg-terminal-header/80 px-3.5 py-1.5 select-none">
+      <div className="flex items-center justify-between border-b border-white/5 bg-terminal-header/80 px-3.5 py-1.5 select-none flex-none">
         <div className="flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full bg-danger/80" aria-hidden="true" />
           <span className="h-2.5 w-2.5 rounded-full bg-amber/80" aria-hidden="true" />
@@ -124,17 +124,25 @@ export default function CodeBlock({
       </div>
 
       {/* Code body with horizontal scroll */}
-      <div className="quickstart-code-scroll overflow-x-auto p-3.5">
+      <div className="quickstart-code-scroll overflow-hidden p-3.5 flex-1">
         <pre
-          className={`font-mono text-xs leading-relaxed text-ink/90 whitespace-pre ${preClassName}`}
+          className={`font-mono text-xs leading-relaxed text-ink/90 whitespace-pre-wrap break-words break-all w-full ${preClassName}`}
         >
           <code>
             {typeof code === 'string'
-              ? code.split('\n').map((line, idx) => (
-                  <div key={idx} className="min-h-[1.25rem]">
-                    {highlightCodeLine(line, idx)}
-                  </div>
-                ))
+              ? code.split('\n').map((line, idx) => {
+                  const isComment = line.trimStart().startsWith('#');
+                  return (
+                    <div
+                      key={idx}
+                      className={`min-h-[1.25rem] ${
+                        isComment ? 'whitespace-pre-wrap break-words' : ''
+                      }`}
+                    >
+                      {highlightCodeLine(line, idx)}
+                    </div>
+                  );
+                })
               : code}
           </code>
         </pre>

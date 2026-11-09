@@ -98,18 +98,15 @@ export default function QuickStart() {
             aria-hidden="true"
           />
 
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4 items-stretch">
             {STEPS.map((step, idx) => (
-              <Reveal key={step.number} delay={idx * 100} className="h-full">
+              <Reveal key={step.number} delay={idx * 100} className="h-full flex flex-col">
                 <div className="relative z-10 flex h-full flex-col rounded-2xl border border-white/10 bg-card p-5 sm:p-6 backdrop-blur-md transition duration-300 hover:-translate-y-1 hover:border-emerald/40 hover:shadow-[0_12px_30px_rgba(0,0,0,0.4)]">
                   {/* Step header with compact badge */}
-                  <div className="mb-4 flex items-center justify-between">
+                  <div className="mb-4 flex items-center">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-emerald/40 bg-emerald/10 font-mono text-sm font-bold text-emerald shadow-[0_0_14px_rgba(34,197,94,0.15)]">
                       {step.number}
                     </div>
-                    <span className="font-mono text-xs uppercase tracking-wider text-dim">
-                      Step {step.number}
-                    </span>
                   </div>
 
                   {/* Title & Description */}
@@ -121,8 +118,12 @@ export default function QuickStart() {
                   </p>
 
                   {/* Code Block pushed to bottom */}
-                  <div className="mt-auto">
-                    <CodeBlock code={step.code} copyText={step.copyText} />
+                  <div className="mt-auto w-full flex flex-col">
+                    <CodeBlock
+                      code={step.code}
+                      copyText={step.copyText}
+                      className="w-full min-h-[240px] lg:min-h-[280px]"
+                    />
                   </div>
                 </div>
               </Reveal>
