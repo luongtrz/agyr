@@ -176,12 +176,6 @@ bash test/run.sh windows      # Run Windows platform tests
 
 ---
 
-## Support
-
-`agyr` is free and open source under the MIT license: no paywall, no accounts, no telemetry. If it saves you time and you want to support development, you can [buy me a coffee](https://buymeacoffee.com/luongtrz). It is entirely optional; starring the repo and reporting issues help just as much.
-
----
-
 ## License
 
 MIT, see [LICENSE](LICENSE).
