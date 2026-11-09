@@ -1,0 +1,23 @@
+{
+  "name": "agyr — Antigravity CLI Account Swapper",
+  "short_name": "agyr",
+  "description": "Zero-Ban Google Account Auto-Rotation and Real-time Quota Monitor for Antigravity CLI",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#070a11",
+  "theme_color": "#070a11",
+  "icons": [
+    {
+      "src": "/assets/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/logo.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

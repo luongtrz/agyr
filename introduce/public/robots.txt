@@ -1,0 +1,6 @@
+# Robots.txt for agyr (https://agyr.luongtrz.id.vn)
+User-agent: *
+Allow: /
+
+# Sitemap
+Sitemap: https://agyr.luongtrz.id.vn/sitemap.xml
