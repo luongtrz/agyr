@@ -218,7 +218,7 @@ live_snapshot() {
 }
 
 # The account actually in use = the slot matching the real token file. Only when no slot matches do we fall back to the name
-# stored in state (state can be stale when you log in with agy by hand without saving).
+# stored in state (state can be stale when you log in with agyr by hand without saving).
 active_name() {
   local o
   o="$(real_owner)"
@@ -938,7 +938,7 @@ cmd_list() {
   local -a names=()
   mapfile -t names < <(slots)
   if [ "${#names[@]}" -eq 0 ]; then
-    echo "(no accounts yet; log in with 'agy', then run 'agyr save <name>')"
+    echo "(no accounts yet; log in with 'agyr', then run 'agyr save <name>')"
     return 0
   fi
   local failed="" live=0
@@ -1377,12 +1377,12 @@ Commands:
   help [command]           This overview, or the details of one command
 
 Typical use:
-  agyr save work           After logging in with 'agy': store that login as slot 'work' (once per account)
+  agyr save work           After logging in with 'agyr': store that login as slot 'work' (once per account)
   agyr list                Which account still has quota?
   agyr use other           Switch account, then reopen agy with 'agyr'
   agyr rotate              agy ran out of quota: cool this account down and switch, then run 'agyr -c'
 
-After every manual login with 'agy', run 'agyr save <name>' so the slot does not drift from the real account.
+After every manual login with 'agyr', run 'agyr save <name>' so the slot does not drift from the real account.
 EOF
   if [ "$BACKEND" = wincred ]; then
     cat <<'EOF'
@@ -1418,7 +1418,7 @@ Usage: agyr save <name>
 Save the login currently in use (the token file ~/.gemini/antigravity-cli/antigravity-oauth-token) as slot <name> and
 make <name> the active account. <name> may contain letters, digits, '-' and '_'.
 
-Run it once per account after logging in with 'agy', and again after every manual re-login.
+Run it once per account after logging in with 'agyr', and again after every manual re-login.
 EOF
       ;;
     use) cat <<'EOF'
