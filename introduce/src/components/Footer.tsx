@@ -183,7 +183,7 @@ export default function Footer() {
                     rel="noopener noreferrer"
                     className="break-words transition hover:text-amber"
                   >
-                    Buy Me a Coffee
+                    Support on Ko-fi
                   </a>
                 </li>
               </ul>
