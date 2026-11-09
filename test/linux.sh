@@ -68,3 +68,27 @@ has "linked agyr answers help" "agyr" "$("$INST_LIN/lin/agyr" help 2>&1 | head -
 mkdir -p "$INST_LIN/guard" && echo mine >"$INST_LIN/guard/agyr"
 if bash "$HERE/../platforms/linux/install.sh" "$INST_LIN/guard" >/dev/null 2>&1; then fail "platforms/linux/install.sh refuses to replace a regular file"; else pass "platforms/linux/install.sh refuses to replace a regular file"; fi
 eq "the regular file is left as it was" "mine" "$(cat "$INST_LIN/guard/agyr")"
+
+echo "== install.sh (unified root installer)"
+if bash "$HERE/../install.sh" "$INST_LIN/top" >/dev/null 2>&1; then pass "install.sh runs directly"; else fail "install.sh runs directly"; fi
+if [ "$ON_WINDOWS" = 1 ]; then
+  echo "  skip symlink target check: Git Bash ln -s copies files unless Developer Mode symlinks are enabled"
+else
+  eq "install.sh links agyr to bin/agyr" "$REPO_ABS/bin/agyr" "$(readlink -f "$INST_LIN/top/agyr")"
+fi
+has "install.sh (direct) linked agyr answers help" "agyr" "$("$INST_LIN/top/agyr" help 2>&1 | head -1)"
+
+if AGYR_INSTALL_DIR="$INST_LIN/cloned" AGYR_REPO_URL="$REPO_ABS" bash -s -- "$INST_LIN/piped" < "$HERE/../install.sh" >/dev/null 2>&1; then
+  pass "install.sh runs when piped via stdin"
+else
+  fail "install.sh runs when piped via stdin"
+fi
+eq "install.sh (piped) clones repo into AGYR_INSTALL_DIR" "yes" "$([ -d "$INST_LIN/cloned/.git" ] && echo yes || echo no)"
+has "install.sh (piped) linked agyr answers help" "agyr" "$("$INST_LIN/piped/agyr" help 2>&1 | head -1)"
+
+if AGYR_INSTALL_DIR="$INST_LIN/cloned" AGYR_REPO_URL="$REPO_ABS" bash -s -- "$INST_LIN/piped-update" < "$HERE/../install.sh" >/dev/null 2>&1; then
+  pass "install.sh (piped) updates existing clone"
+else
+  fail "install.sh (piped) updates existing clone"
+fi
+has "install.sh (piped update) linked agyr answers help" "agyr" "$("$INST_LIN/piped-update/agyr" help 2>&1 | head -1)"
