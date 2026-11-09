@@ -9,6 +9,7 @@ import CommandReference from './components/CommandReference';
 import Platforms from './components/Platforms';
 import Faq from './components/Faq';
 import CtaBanner from './components/CtaBanner';
+import SupportStrip from './components/SupportStrip';
 import Footer from './components/Footer';
 import BackToTop from './components/BackToTop';
 
@@ -27,6 +28,7 @@ export default function App() {
         <Platforms />
         <Faq />
         <CtaBanner />
+        <SupportStrip />
       </main>
       <Footer />
       <BackToTop />
