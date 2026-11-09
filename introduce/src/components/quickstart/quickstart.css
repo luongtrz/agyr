@@ -1,0 +1,22 @@
+/* Custom scrollbar and subtle transitions for quickstart & orchestration */
+.quickstart-code-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.quickstart-code-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.quickstart-code-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.quickstart-code-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+
+.quickstart-code-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
