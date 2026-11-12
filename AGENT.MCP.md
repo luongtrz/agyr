@@ -17,7 +17,7 @@ Using several accounts this way may conflict with Google's terms of service. Say
 1. Never read, print, `cat`, `grep`, open or copy these: `~/.gemini/antigravity-cli/antigravity-oauth-token`, any file under `~/.gemini/antigravity-cli/accounts/`, and the Windows Credential Manager entry `gemini:antigravity`. Allowed: `test -f`, `stat -c %Y` (modification time), and listing file names.
 2. Do not log in to Google. Do not run `agyr save`, `forget`, `rename`, `use`, `rotate`, `cooldown`, `clear` or `test` unless the user asks for that action in this conversation. `agyr test` sends real requests and spends quota.
 3. Never start agy for this pool with a bare `agy`. Use `agyr` (plain, `agyr -c`, or `agyr run ...`), `agy-run` or `agy-task`. On Linux they hide the GNOME keyring, which is what makes account switching work.
-4. Do not overwrite, move or delete any file outside the clone and the three commands you install. That includes agent instruction files, existing skills such as `~/.claude/skills/agy` and `~/.agents/skills/agy-codex`, and any existing file in the bin directory. Show the diff and ask first.
+4. Do not overwrite, move or delete any file outside the clone and the three commands you install. That includes `~/.claude/CLAUDE.md`, an existing `~/.claude/skills/agy`, and any existing file in the bin directory. Show the diff and ask first.
 5. Do not commit, push, change git remotes, or edit the user's shell profile.
 6. Do not uninstall, and do not delete `~/.gemini/antigravity-cli/accounts/`, unless the user asks in this conversation.
 7. If a step opens a browser or asks for a password, stop and hand it to the user.
@@ -57,7 +57,7 @@ fi
 git -C "$REPO" log --oneline -1
 ```
 
-The repository has these folders: `bin/` (the three commands), `install.sh` (unified installer), `platforms/linux/` and `platforms/windows/` (platform code and install scripts), `skills/agy/` (skill for Claude Code / Antigravity / Gemini), `skills/agy-codex/` (Codex skill), `templates/`, `docs/`, `test/`.
+The repository has these folders: `bin/` (the three commands), `install.sh` (unified installer), `platforms/linux/` and `platforms/windows/` (platform code and install scripts), `skills/agy/` (orchestrator skill for Claude Code / Antigravity / Gemini), `templates/`, `docs/`, `test/`.
 
 ## 4. Install the commands
 
@@ -132,25 +132,14 @@ After the user confirms the saves, you may run `agyr list -c`. It prints the sav
 
 ## 7. Optional: the `agy` skill
 
-Install the matching skill only if the user wants it (see [docs/agent-setup.md](docs/agent-setup.md)): Codex uses `skills/agy-codex/`; Claude Code, Antigravity, and Gemini CLI use `skills/agy/`. The skill tells the orchestrator how to hand work to agy through `agy-task` and `agy-run`.
+Install this only if the user runs Claude Code, Antigravity, or Gemini CLI on this machine and wants the `agy` skill (see [docs/agent-setup.md](docs/agent-setup.md)). The skill tells the orchestrator how to hand work to agy through `agy-task` and `agy-run`.
 
 ```bash
-TARGET_AGENT=codex
-case "$TARGET_AGENT" in
-  codex)
-    SKILL_SOURCE="$REPO/skills/agy-codex"
-    SKILL="$HOME/.agents/skills/agy-codex"
-    ;;
-  claude)
-    SKILL_SOURCE="$REPO/skills/agy"
-    SKILL="$HOME/.claude/skills/agy"
-    ;;
-  *) echo "Unsupported target agent: $TARGET_AGENT" >&2; exit 2 ;;
-esac
+SKILL="$HOME/.claude/skills/agy"
 if [ -e "$SKILL" ]; then
-  diff -r "$SKILL_SOURCE" "$SKILL" && echo "skill already identical"
+  diff -r "$REPO/skills/agy" "$SKILL" && echo "skill already identical"
 else
-  mkdir -p "$(dirname "$SKILL")" && cp -r "$SKILL_SOURCE" "$SKILL" && echo "skill installed"
+  mkdir -p "$HOME/.claude/skills" && cp -r "$REPO/skills/agy" "$SKILL" && echo "skill installed"
 fi
 ```
 
