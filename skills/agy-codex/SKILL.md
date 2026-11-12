@@ -17,7 +17,7 @@ description: Delegate a well-scoped coding or read-only investigation task from 
 3. **Never trust agy's exit code or report.** `agy-task` only checks scope and runs no tests (verify step removed 2026-10-08); you read the diff and run the tests yourself. agy has reported green while tsc was broken, a resumed run can echo an old 429, and a content-filter block (agy >= 1.4.5/1.5.0) finishes with `RESULT=OK`, exit 0, and `changed files: (none)` ("This request was blocked by Gemini's filters…"). Always check that the worktree diff is non-empty.
 4. **Implement tasks only via `agy-task`** (it creates the worktree; never ask agy to `git worktree add`). Explore / bug-finding tasks target the main repo read-only via `agy-run --add-dir "$REPO"` (always pass `--add-dir`: without it agy silently writes into `~/.gemini/antigravity-cli/scratch/` and still reports success).
 5. **One small task per session**, exact files/lines in the task file (quota burns with context size; `references/logs-and-costs.md`). At most **20 runs in parallel** (user rule 2026-10-12, raised from 12; `references/parallel.md`). Check `pgrep -fc '^bash .*agy-(task run --name|run --prompt)'` before launching more. **Launch each `agy-task` or `agy-run` as its own separate background tool call** — never bundle multiple tasks into one shell loop, wrapper script (`launch.sh`), or `for pid in ...; wait` command (bundling hides per-task status from the user and blocks completion notifications until the slowest task finishes).
-6. **Task files and logs live in `<repo>/.agy-sessions/`** (gitignored), never `/tmp` or agy's scratch dir. Keep the logs, delete prompt files when done. Never read the `.jsonl` unless debugging: the summary is the report.
+6. **Task files and logs live in `<repo>/.agy-sessions/`** (gitignored), never `/tmp` or agy's scratch dir. Keep the logs, delete prompt files when done. For `agy-task`, use the compact summary. For `agy-run`, after it finishes, filter the JSONL locally and read only the final `result` event; do not load the full log into Codex context. Inspect other log events only when needed to diagnose an error or missing result. Filtering locally does not itself consume agy model quota.
 7. **Report reset times to the user in UTC+7.** Never read the contents of the oauth token file (only `stat -c %Y`).
 8. **agy never runs tests** (user rule 2026-10-08: test runs lag the machine). No prompt may ask agy to run tests, builds, type-checks or linters, not even "one test file": the HARD RULES blocks and the `agy-task` prompt tail forbid it, so the task file must not contradict that (write acceptance criteria as observable code behavior, never "make `pnpm test` pass"). `agy-task` has no verify step either: Codex runs checks after agy has answered and the diff is read, one targeted command at a time (never several suites in parallel).
 
@@ -69,10 +69,10 @@ Write the task part to `.agy-sessions/<task>.task.txt` (say which checks Codex a
 { cat "$REPO/.agy-sessions/<task>.task.txt"; echo; \
   sed "s#<ABS_PATH>#$REPO#g" "${AGY_SKILL_DIR:-$HOME/.agents/skills/agy-codex}/references/hard-rules-explore.txt"; } > "$REPO/.agy-sessions/<task>.txt"
 agy-run --prompt "$REPO/.agy-sessions/<task>.txt" --add-dir "$REPO" --log "$REPO/.agy-sessions/<task>.jsonl" --model gemini-3.8-flash-high   # background
-grep '^{' "$REPO/.agy-sessions/<task>.jsonl" | jq -c 'select(.event=="result") | .result | {status,finished_reason,error,num_turns,usage}'
+grep '^{' "$REPO/.agy-sessions/<task>.jsonl" | jq -cs '[.[] | select(.event=="result")] | last | if . == null then error("no result event") else .result | {status,response,finished_reason,error,num_turns,usage} end'
 git -C "$REPO" status --short                                        # must still be clean
 ```
-`agy-run` exit codes are the same as above (0 ok, 1, 2, 4, 5, 6). Check findings against the code before reporting them; delete the prompt files afterwards.
+Read the exit code and the filtered final result, including `response`; a missing result requires diagnosis and is not success. `agy-run` exit codes are the same as above (0 ok, 1, 2, 4, 5, 6). Check findings against the code before reporting them; delete the prompt files afterwards.
 
 ## References (read on demand)
 
