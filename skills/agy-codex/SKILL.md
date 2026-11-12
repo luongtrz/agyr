@@ -16,7 +16,7 @@ description: Delegate a well-scoped coding or read-only investigation task from 
 2. **Never a bare `agy -p`.** agy >= 1.2.14 reads its login from the OS keyring and ignores the token file that `agyr` swaps; `agy-run` neutralizes that and rotates accounts on 429. The user starts their own interactive agy with plain `agyr`, not `agy`.
 3. **Never trust agy's exit code or report.** `agy-task` only checks scope and runs no tests (verify step removed 2026-10-08); you read the diff and run the tests yourself. agy has reported green while tsc was broken, a resumed run can echo an old 429, and a content-filter block (agy >= 1.4.5/1.5.0) finishes with `RESULT=OK`, exit 0, and `changed files: (none)` ("This request was blocked by Gemini's filters…"). Always check that the worktree diff is non-empty.
 4. **Implement tasks only via `agy-task`** (it creates the worktree; never ask agy to `git worktree add`). Explore / bug-finding tasks target the main repo read-only via `agy-run --add-dir "$REPO"` (always pass `--add-dir`: without it agy silently writes into `~/.gemini/antigravity-cli/scratch/` and still reports success).
-5. **One small task per session**, exact files/lines in the task file (quota burns with context size; `references/logs-and-costs.md`). At most **20 runs in parallel** (user rule 2026-10-12, raised from 12; `references/parallel.md`). Check `pgrep -fc '^bash .*agy-(task run --name|run --prompt)'` before launching more. **Launch each `agy-task` or `agy-run` as its own separate background tool call** — never bundle multiple tasks into one shell loop, wrapper script (`launch.sh`), or `for pid in ...; wait` command (bundling hides per-task status from the user and blocks completion notifications until the slowest task finishes).
+5. **One small task per session**, exact files/lines in the task file (quota burns with context size; `references/logs-and-costs.md`). At most **20 runs in parallel** (user rule 2026-10-12, raised from 12; `references/parallel.md`). Check `pgrep -fc '^bash .*agy-(task run --name|run --prompt)'` before launching more. Launch each task as its own separate tool call; never bundle tasks into a shell loop or `wait` loop. For background work, prefer the per-task callback in `references/callback.md` when the local app-server is available; if it is unavailable, explain the limitation and wait on the terminal session instead.
 6. **Task files and logs live in `<repo>/.agy-sessions/`** (gitignored), never `/tmp` or agy's scratch dir. Keep the logs, delete prompt files when done. For `agy-task`, use the compact summary. For `agy-run`, after it finishes, filter the JSONL locally and read only the final `result` event; do not load the full log into Codex context. Inspect other log events only when needed to diagnose an error or missing result. Filtering locally does not itself consume agy model quota.
 7. **Report reset times to the user in UTC+7.** Never read the contents of the oauth token file (only `stat -c %Y`).
 8. **agy never runs tests** (user rule 2026-10-08: test runs lag the machine). No prompt may ask agy to run tests, builds, type-checks or linters, not even "one test file": the HARD RULES blocks and the `agy-task` prompt tail forbid it, so the task file must not contradict that (write acceptance criteria as observable code behavior, never "make `pnpm test` pass"). `agy-task` has no verify step either: Codex runs checks after agy has answered and the diff is read, one targeted command at a time (never several suites in parallel).
@@ -32,7 +32,7 @@ description: Delegate a well-scoped coding or read-only investigation task from 
 
 1. **Plan, don't over-specify** (user rule 2026-09-25): goal, root cause / suspected area, relevant files, the pattern to mirror, acceptance criteria. Don't pre-trace every line or paste full code — Codex traces the code during review.
 2. **Write ONLY the task part** to `<repo>/.agy-sessions/<task>.task.txt`: Repo/stack, Task, Plan, Acceptance criteria, an ENVIRONMENT NOTE ("the env is prepared; on an env failure STOP: no pnpm install, no symlinks, no copying from outside"). Do not write the working directory, scope, HARD RULES or verify list: the script adds them. Never tell agy to run or "make pass" any test/build/lint (invariant 8).
-3. **Run in the background** (`run_in_background: true` / `WaitMsBeforeAsync: 500`, **one separate tool call per task** — never a batch script or `wait` loop) and wait for each completion notification — don't poll:
+3. **Run in the background**, one separate tool call per task. Prefer the automatic callback in `references/callback.md`; if it is unavailable or the user wants to wait directly, wait on each terminal session. Do not poll JSONL for routine progress:
    ```bash
    agy-task run --name <task> --task <repo>/.agy-sessions/<task>.task.txt \
      --scope '<pathspec>' [--scope …] [--base <ref>] --model <gemini-3.8-flash-high|gemini-3.8-flash-low>
@@ -64,7 +64,7 @@ If `agy-task` is unavailable or too rigid: `references/manual-worktree.md`.
 
 ## Workflow: explore / bug-finding task (read-only, `agy-run`)
 
-Write the task part to `.agy-sessions/<task>.task.txt` (say which checks Codex already ran and point at exact files), append the read-only HARD RULES, run, then confirm the repo is untouched:
+Write the task part to `.agy-sessions/<task>.task.txt` (say which checks Codex already ran and point at exact files), append the read-only HARD RULES, run, then confirm the repo is untouched. For a callback instead of waiting on the terminal, launch the command through `references/callback.md`:
 ```bash
 { cat "$REPO/.agy-sessions/<task>.task.txt"; echo; \
   sed "s#<ABS_PATH>#$REPO#g" "${AGY_SKILL_DIR:-$HOME/.agents/skills/agy-codex}/references/hard-rules-explore.txt"; } > "$REPO/.agy-sessions/<task>.txt"
@@ -81,4 +81,5 @@ Read the exit code and the filtered final result, including `response`; a missin
 - `references/parallel.md` — running several tasks at once, integration, queueing many tasks
 - `references/logs-and-costs.md` — stream-json events, jq commands, the `--add-dir` trap, why quota burns, smoke test
 - `references/manual-worktree.md` — the manual implement workflow `agy-task` automates
+- `references/callback.md` — run one task detached and notify the originating Codex thread when it finishes
 - `references/hard-rules-explore.txt` — HARD RULES block for read-only tasks (`<ABS_PATH>` placeholder); the implement block is `~/tools/agy-acct/templates/hard-rules.txt`
