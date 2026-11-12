@@ -100,7 +100,7 @@ agyr help [command]        # Detailed command documentation
 
 ## AI Agent Orchestration
 
-`agyr` includes a first-class skill in `skills/agy/` designed for Claude Code, Antigravity, and Gemini agents to delegate implementation and investigation tasks to `agy` as a sub-agent.
+`agyr` includes separate orchestrator skills: `skills/agy/` for Claude Code, Antigravity, and Gemini, and `skills/agy-codex/` for Codex. Both delegate suitable implementation and investigation tasks to `agy` as a sub-agent.
 
 For complete setup instructions, see:
 - [docs/agent-setup.md](docs/agent-setup.md): Configure `CLAUDE.md`, `GEMINI.md`, and `AGENTS.md`.
