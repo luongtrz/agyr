@@ -32,10 +32,9 @@ description: Delegate a well-scoped coding or read-only investigation task from 
 
 1. **Plan, don't over-specify** (user rule 2026-09-25): goal, root cause / suspected area, relevant files, the pattern to mirror, acceptance criteria. Don't pre-trace every line or paste full code — Codex traces the code during review.
 2. **Write ONLY the task part** to `<repo>/.agy-sessions/<task>.task.txt`: Repo/stack, Task, Plan, Acceptance criteria, an ENVIRONMENT NOTE ("the env is prepared; on an env failure STOP: no pnpm install, no symlinks, no copying from outside"). Do not write the working directory, scope, HARD RULES or verify list: the script adds them. Never tell agy to run or "make pass" any test/build/lint (invariant 8).
-3. **Run in the background**, one separate tool call per task. Prefer the automatic callback in `references/callback.md`; if it is unavailable or the user wants to wait directly, wait on each terminal session. Do not poll JSONL for routine progress:
+3. **Launch with callback**, one separate tool call per task. Read `references/callback.md` and use the helper below; do not launch `agy-task` directly when callback is available. After the helper reports a worker PID, finish this turn once all tasks have launched. If sandbox permissions block access to the app-server socket or agy accounts, request the normal approval and retry the helper; do not treat a permission denial as a reason to bypass policy. If callback is genuinely unavailable or the user wants to wait directly, explain that and wait on the terminal session. Do not poll JSONL for routine progress:
    ```bash
-   agy-task run --name <task> --task <repo>/.agy-sessions/<task>.task.txt \
-     --scope '<pathspec>' [--scope …] [--base <ref>] --model <gemini-3.8-flash-high|gemini-3.8-flash-low>
+   python3 "${AGY_SKILL_DIR:-$HOME/.agents/skills/agy-codex}/scripts/agy_callback.py" --name <task> --repo "$REPO" --result "$REPO/.agy-sessions/<task>.summary.txt" -- agy-task run --name <task> --task "$REPO/.agy-sessions/<task>.task.txt" --scope '<pathspec>' [--scope …] [--base <ref>] --model <gemini-3.8-flash-high|gemini-3.8-flash-low>
    ```
    `--model` takes the FULL model id from invariant 1 (`gemini-3.8-flash-high`, `-medium`, `-low`). The short words `high` / `low` are not model names: agy rejects them at once with `error: invalid model selection (--model "high" …)`, `turns=0`, exit 1, the worktree stays clean, and the message is not a quota or login problem. Check the spelling of `--model` first when a run fails this way.
    `--base`: commit-ish the worktree branches from (default: `HEAD` of the current worktree). **When running from a linked worktree (e.g. an MR/feature worktree) whose branch differs from the main checkout, ALWAYS pass `--base <branch|sha>` explicitly** (e.g. `--base HEAD` or `--base $(git rev-parse --short HEAD)`). `agy-task` resolves git paths back to the repository's main checkout, so explicitly pinning `--base` ensures all parallel tasks branch from the exact target commit and prevents any risk of drifting to the main checkout's branch.
@@ -64,11 +63,14 @@ If `agy-task` is unavailable or too rigid: `references/manual-worktree.md`.
 
 ## Workflow: explore / bug-finding task (read-only, `agy-run`)
 
-Write the task part to `.agy-sessions/<task>.task.txt` (say which checks Codex already ran and point at exact files), append the read-only HARD RULES, run, then confirm the repo is untouched. For a callback instead of waiting on the terminal, launch the command through `references/callback.md`:
+Write the task part to `.agy-sessions/<task>.task.txt` (say which checks Codex already ran and point at exact files), append the read-only HARD RULES, then launch through the callback helper. Read `references/callback.md` first:
 ```bash
 { cat "$REPO/.agy-sessions/<task>.task.txt"; echo; \
   sed "s#<ABS_PATH>#$REPO#g" "${AGY_SKILL_DIR:-$HOME/.agents/skills/agy-codex}/references/hard-rules-explore.txt"; } > "$REPO/.agy-sessions/<task>.txt"
-agy-run --prompt "$REPO/.agy-sessions/<task>.txt" --add-dir "$REPO" --log "$REPO/.agy-sessions/<task>.jsonl" --model gemini-3.8-flash-high   # background
+python3 "${AGY_SKILL_DIR:-$HOME/.agents/skills/agy-codex}/scripts/agy_callback.py" --name <task> --repo "$REPO" --result "$REPO/.agy-sessions/<task>.jsonl" -- agy-run --prompt "$REPO/.agy-sessions/<task>.txt" --add-dir "$REPO" --log "$REPO/.agy-sessions/<task>.jsonl" --model gemini-3.8-flash-high
+```
+After the helper reports the worker PID, give a short launch summary and end the turn; do not wait, inspect logs, or perform speculative review. **Only after the callback arrives**, inspect the result and working tree:
+```bash
 grep '^{' "$REPO/.agy-sessions/<task>.jsonl" | jq -cs '[.[] | select(.event=="result")] | last | if . == null then error("no result event") else .result | {status,response,finished_reason,error,num_turns,usage} end'
 git -C "$REPO" status --short                                        # must still be clean
 ```

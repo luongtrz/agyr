@@ -2,7 +2,7 @@
 
 Prefer this Linux/Unix workflow for background agy jobs when the user wants Codex to finish its current turn while the job continues. It needs Python 3.9 or newer and access to the local Codex app-server Unix socket. Obtain any required approval normally; do not bypass the sandbox or approval policy.
 
-Prepare the task prompt and HARD RULES as usual. Launch **one helper call per job**. Capture the real `CODEX_THREAD_ID`; do not guess a thread or use a most-recent-session shortcut. Each name must be unique and `.agy-sessions/` must be gitignored.
+Prepare the task prompt and HARD RULES as usual. Launch **one helper call per job**, using the helper itself as the outer command. Do not run `agy-run` or `agy-task` directly when callback is available. Capture the real `CODEX_THREAD_ID`; do not guess a thread or use a most-recent-session shortcut. Each name must be unique and `.agy-sessions/` must be gitignored. If the sandbox blocks the socket or account directory, request normal approval and rerun the helper; if approval is denied, report the block without bypassing it.
 
 For a read-only `agy-run` job:
 
