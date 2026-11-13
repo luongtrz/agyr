@@ -2,6 +2,8 @@
 # Fake agy for tests. Behaviour depends on the (fake) token content in $AGY_HOME:
 #   - token listed in FAKE_QUOTA_TOKENS (space-separated) -> print a 429 error, then hang like agy retrying
 #   - FAKE_AUTH=1 -> print a login error, exit 1
+#   - FAKE_AUTH_ECHO=1 -> a step_update line whose tool output merely CONTAINS the login-error phrases (agy read a file), then a normal run
+#   - FAKE_AUTH_RESULT=1 -> the login failure as the error of the final result event, exit 1
 #   - FAKE_STALE_ERROR=1 -> init + a result event with status ERROR that merely echoes an old quota error
 #   - FAKE_KEYRING=1 -> use the "keyring" account unless DBUS_SESSION_BUS_ADDRESS is unreachable
 #   - otherwise -> init + SUCCESS result
@@ -106,6 +108,13 @@ if [ "${FAKE_AUTH:-0}" = 1 ]; then
 fi
 
 echo "{\"event\":\"init\",\"conversation_id\":\"$cid\",\"init\":{\"model\":\"fake\"}}"
+if [ "${FAKE_AUTH_ECHO:-0}" = 1 ]; then
+  echo '{"event":"step_update","step_update":{"step_type":"tool","tool_name":"view_file","tool_info":{"output":"Error: authentication required. Run agy to log in; authentication failed or timed out; You are not logged into Antigravity"}}}'
+fi
+if [ "${FAKE_AUTH_RESULT:-0}" = 1 ]; then
+  echo '{"event":"result","result":{"status":"ERROR","response":"","error":"authentication failed or timed out","num_turns":0}}'
+  exit 1
+fi
 for q in ${FAKE_QUOTA_TOKENS:-}; do
   if [ "$q" = "$tok" ]; then
     echo "error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in ${FAKE_RESET:-4h13m19s}. (response may be truncated)"

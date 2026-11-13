@@ -34,7 +34,26 @@ BACKEND="$("$AGY_ACCT" backend 2>/dev/null)" || BACKEND=file
 # "429"s in one session, with an unchanged "Resets in" value). JSON lines therefore must not count, otherwise an account
 # that still has quota is put on cooldown and the run needlessly moves to the next account.
 QUOTA_RE='^(error: Individual quota reached|AGY_ERROR: .*RESOURCE_EXHAUSTED \(code 429\))'
+# A login failure reaches the log in exactly two shapes: a plain-text line at the start of a line ("Error: authentication
+# required. Run 'agy' to log in, then retry.") or the error of the final result event ("authentication failed or timed out").
+# The phrases must be looked for ONLY there. The step_update lines carry everything agy reads, runs and writes, and so does
+# the prompt echo: a task that edits docs or code containing a phrase (or a task file that quotes one) was killed with a
+# false exit 4 after minutes of good work (seen 2026-11-13: four runs in one session, last event "interrupted"). Same
+# reasoning as QUOTA_RE above.
 AUTH_RE="authentication required|authentication failed or timed out|not logged into Antigravity"
+AUTH_LINE_RE='^(Error: )?(authentication required|authentication failed or timed out|You are not logged into Antigravity)'
+
+# is_auth_error CHUNK: does this part of the log hold a real login failure? (text collected into variables first: under
+# pipefail a grep that finds nothing, or a writer hit by SIGPIPE after "grep -q" matched, would fail a pipeline)
+is_auth_error() {
+  local chunk="$1" plain res
+  [ -n "$chunk" ] || return 1
+  grep -qE "$AUTH_RE" <<<"$chunk" || return 1 # cheap pre-filter: nothing to parse unless a phrase occurs somewhere
+  plain="$(grep -v '^{' <<<"$chunk" || true)"
+  if grep -qE "$AUTH_LINE_RE" <<<"$plain"; then return 0; fi
+  res="$(grep '^{' <<<"$chunk" | jq -r 'select(.event=="result") | .result.error // empty' 2>/dev/null || true)"
+  grep -qE "$AUTH_RE" <<<"$res"
+}
 
 usage() {
   cat <<'EOF'
@@ -111,13 +130,13 @@ run_attempt() {
   while kill -0 "$PID" 2>/dev/null; do
     chunk="$(tail -c +$((OFF + 1)) "$LOG_FILE")"
     if grep -qE "$QUOTA_RE" <<<"$chunk"; then stop_agy; return 10; fi
-    if grep -qE "$AUTH_RE" <<<"$chunk"; then stop_agy; return 11; fi
+    if is_auth_error "$chunk"; then stop_agy; return 11; fi
     sleep "$POLL"
   done
   wait "$PID" 2>/dev/null
   chunk="$(tail -c +$((OFF + 1)) "$LOG_FILE")"
   if grep -qE "$QUOTA_RE" <<<"$chunk"; then return 10; fi
-  if grep -qE "$AUTH_RE" <<<"$chunk"; then return 11; fi
+  if is_auth_error "$chunk"; then return 11; fi
   local st err resp
   st="$(grep '^{' <<<"$chunk" | jq -r 'select(.event=="result") | .result.status' 2>/dev/null | tail -1)"
   [ "$st" = "SUCCESS" ] && return 0

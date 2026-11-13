@@ -43,7 +43,7 @@ setup() {
   export AGY_HOME="$T/home"; mkdir -p "$AGY_HOME"
   export AGY_NOW=1000000
   export FAKE_ARGS_LOG="$T/args.log"; : >"$FAKE_ARGS_LOG"
-  unset FAKE_QUOTA_TOKENS FAKE_AUTH FAKE_RESET AGY_RUN_MAX_SWITCH
+  unset FAKE_QUOTA_TOKENS FAKE_AUTH FAKE_AUTH_ECHO FAKE_AUTH_RESULT FAKE_RESET AGY_RUN_MAX_SWITCH
   local a
   for a in acc1 acc2 acc3; do
     echo "tok-$a" >"$AGY_HOME/antigravity-oauth-token"

@@ -125,6 +125,22 @@ eq "auth error -> exit 4" "4" "$rc"
 eq "auth error: account is not switched" "acc1" "$("$ACCT" active)"
 eq "auth error: runs only once" "1" "$(lines)"
 
+# login-error phrases only count as plain lines or as the result event's error, never inside step_update content: a task
+# that reads or edits a file containing one was killed with a false exit 4 (2026-11-13)
+setup
+export FAKE_AUTH_ECHO=1
+runit; rc=$?
+eq "login-error phrases inside a step_update (agy read a file) -> not a login error, exit 0" "0" "$rc"
+eq "login-error phrases inside a step_update: runs only once" "1" "$(lines)"
+unset FAKE_AUTH_ECHO
+
+setup
+export FAKE_AUTH_RESULT=1
+runit; rc=$?
+eq "login failure as the result event's error -> exit 4" "4" "$rc"
+eq "login failure as the result event's error: account is not switched" "acc1" "$("$ACCT" active)"
+unset FAKE_AUTH_RESULT
+
 setup
 rm -f "$AGY_HOME/accounts/state.json" "$AGY_HOME/antigravity-oauth-token"
 runit; rc=$?
