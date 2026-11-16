@@ -241,6 +241,7 @@ parse_duration() {
 
 # epoch -> "dd/mm/yyyy hh:mm AM|PM" (in AGY_TZ)
 fmt_time() { date -d "@$1" '+%d/%m/%Y %I:%M %p'; }
+fmt_short_time() { date -d "@$1" '+%d/%m %H:%M'; }
 
 fmt_dur() { # seconds -> "4h13m"
   local s=$1
@@ -792,6 +793,24 @@ term_width() {
   fi
 }
 
+term_width_known() {
+  if [ -n "${AGYR_RESPONSIVE:-}" ] || [ "${1:-}" = "1" ] || [ -t 1 ]; then
+    local w="${AGYR_COLUMNS:-${COLUMNS:-}}"
+    if [ -z "$w" ] || [ "$w" -le 0 ] 2>/dev/null; then
+      w="$(tput cols 2>/dev/null || echo 0)"
+    fi
+    if [ -z "$w" ] || [ "$w" -le 0 ] 2>/dev/null; then
+      w="$(stty size 2>/dev/null | awk '{print $2}')"
+    fi
+    if [ -z "$w" ] || [ "$w" -le 0 ] 2>/dev/null; then
+      w="$(stty size < /dev/tty 2>/dev/null | awk '{print $2}')"
+    fi
+    echo "${w:-0}"
+  else
+    echo 0
+  fi
+}
+
 # Print the table from state. $1 = names of accounts that failed to measure, $2 = 1 if measured just now.
 print_table() {
   local failed=" $1 " live="$2" t cur n snap g5 g5r gw gwr at until st sc oldest=0
@@ -800,8 +819,10 @@ print_table() {
   # or agy-run) or "*!!" (both) and is only as wide as the markers in use (1 when nothing is locked); the name part follows the
   # longest name, never narrower than the header needs. acct_w is the whole cell, base_w the width of everything but STATUS.
   local acct_g=1 acct_nw=14 acct_w base_w an mk
+  local max_nl=0
   while read -r an; do
     [ -n "$an" ] || continue
+    if [ "${#an}" -gt "$max_nl" ]; then max_nl=${#an}; fi
     if [ "${#an}" -gt "$acct_nw" ]; then acct_nw=${#an}; fi
     if is_locked "$an"; then
       if [ "$an" = "$cur" ]; then acct_g=3; elif [ "$acct_g" -lt 2 ]; then acct_g=2; fi
@@ -836,6 +857,11 @@ print_table() {
     elif [ -z "$1" ] || [ "$2" -le "$t" ]; then printf '%4s  %-19s' '-' ''
     else printf '%s  %-19s' "$(pct "$1")" "$(fmt_time "$2")"; fi
   }
+  cell_compact() { # $1 = % left (-1 = limit disabled), $2 = reset time (epoch)
+    if [ "$1" = -1 ]; then printf '%4s  %-10s' 'off' ''
+    elif [ -z "$1" ] || [ "$2" -le "$t" ]; then printf '%4s  %-10s' '-' ''
+    else printf '%s %-11s' "$(pct "$1")" "$(fmt_short_time "$2")"; fi
+  }
   # Gemini 4 Argon columns appear only when at least one account reports that limit
   # Claude columns appear only when --claude is passed
   local show_a5 show_aw show_c5=0 show_cw=0
@@ -845,157 +871,473 @@ print_table() {
     show_c5="$(jq -r '[.quota[]? | select(.c5 != null)] | length' "$STATE")"
     show_cw="$(jq -r '[.quota[]? | select(.cw != null)] | length' "$STATE")"
   fi
+  local orig_a5="$show_a5" orig_aw="$show_aw" orig_c5="$show_c5" orig_cw="$show_cw"
 
   local is_tty=0; [ -t 1 ] && is_tty=1
-  local tw; tw="$(term_width "$is_tty")"
+  local is_wide=0; [ -n "${AGYR_WIDE:-}" ] && is_wide=1
+  local tw; tw="$(term_width_known "$is_tty")"
   local claude_hidden=0 argon_hidden=0
   local status_dash=45 status_pad=43
+  local layout_tier=1 # 1: full, 2: compact, 3: vertical
+
+  if [ "$tw" -gt 0 ] && [ "$tw" -lt 30 ]; then usecolor=0; G=""; Y=""; R=""; Z=""; ALL_RST=""; fi
 
   if [ "$tw" -gt 0 ]; then
-    local def_s=45 min_s=16
-    local num_extra=0
-    [ "$show_a5" -gt 0 ] && num_extra=$((num_extra + 1))
-    [ "$show_aw" -gt 0 ] && num_extra=$((num_extra + 1))
-    [ "$show_c5" -gt 0 ] && num_extra=$((num_extra + 1))
-    [ "$show_cw" -gt 0 ] && num_extra=$((num_extra + 1))
+    if [ "$is_wide" = 1 ]; then
+      local num_extra=0
+      [ "$show_a5" -gt 0 ] && num_extra=$((num_extra + 1))
+      [ "$show_aw" -gt 0 ] && num_extra=$((num_extra + 1))
+      [ "$show_c5" -gt 0 ] && num_extra=$((num_extra + 1))
+      [ "$show_cw" -gt 0 ] && num_extra=$((num_extra + 1))
 
-    local needed=$((base_w + num_extra * 28 + def_s))
-    local min_needed=$((base_w + num_extra * 28 + min_s))
+      local needed=$((base_w + num_extra * 28 + 45))
+      local min_needed=$((base_w + num_extra * 28 + 16))
 
-    if [ "$tw" -ge "$needed" ]; then
-      status_dash=$def_s
-    elif [ "$tw" -ge "$min_needed" ]; then
-      status_dash=$((tw - base_w - num_extra * 28))
-    else
-      # Not enough space with all extra columns. Hide Claude columns first!
-      if [ "$show_c5" -gt 0 ] || [ "$show_cw" -gt 0 ]; then
-        claude_hidden=1
-        [ "$show_c5" -gt 0 ] && num_extra=$((num_extra - 1))
-        [ "$show_cw" -gt 0 ] && num_extra=$((num_extra - 1))
-        show_c5=0; show_cw=0
-      fi
-      needed=$((base_w + num_extra * 28 + def_s))
-      min_needed=$((base_w + num_extra * 28 + min_s))
       if [ "$tw" -ge "$needed" ]; then
-        status_dash=$def_s
+        status_dash=45
+        layout_tier=1
       elif [ "$tw" -ge "$min_needed" ]; then
         status_dash=$((tw - base_w - num_extra * 28))
+        layout_tier=1
       else
-        # Still not enough space. Hide Argon columns too!
-        if [ "$show_a5" -gt 0 ] || [ "$show_aw" -gt 0 ]; then
-          argon_hidden=1
-          num_extra=0
-          show_a5=0; show_aw=0
+        layout_tier=2
+      fi
+    else
+      local def_s=45 min_s=16
+      local num_extra=0
+      [ "$show_a5" -gt 0 ] && num_extra=$((num_extra + 1))
+      [ "$show_aw" -gt 0 ] && num_extra=$((num_extra + 1))
+      [ "$show_c5" -gt 0 ] && num_extra=$((num_extra + 1))
+      [ "$show_cw" -gt 0 ] && num_extra=$((num_extra + 1))
+
+      local needed=$((base_w + num_extra * 28 + def_s))
+      local min_needed=$((base_w + num_extra * 28 + min_s))
+
+      if [ "$tw" -ge "$needed" ]; then
+        status_dash=$def_s
+        layout_tier=1
+      elif [ "$tw" -ge "$min_needed" ]; then
+        status_dash=$((tw - base_w - num_extra * 28))
+        layout_tier=1
+      else
+        # Not enough space with all extra columns. Hide Claude columns first!
+        if [ "$show_c5" -gt 0 ] || [ "$show_cw" -gt 0 ]; then
+          claude_hidden=1
+          [ "$show_c5" -gt 0 ] && num_extra=$((num_extra - 1))
+          [ "$show_cw" -gt 0 ] && num_extra=$((num_extra - 1))
+          show_c5=0; show_cw=0
         fi
-        needed=$((base_w + def_s))
-        min_needed=$((base_w + min_s))
+        needed=$((base_w + num_extra * 28 + def_s))
+        min_needed=$((base_w + num_extra * 28 + min_s))
         if [ "$tw" -ge "$needed" ]; then
           status_dash=$def_s
+          layout_tier=1
         elif [ "$tw" -ge "$min_needed" ]; then
-          status_dash=$((tw - base_w))
+          status_dash=$((tw - base_w - num_extra * 28))
+          layout_tier=1
         else
-          status_dash=$min_s
+          # Still not enough space. Hide Argon columns too!
+          if [ "$show_a5" -gt 0 ] || [ "$show_aw" -gt 0 ]; then
+            argon_hidden=1
+            num_extra=0
+            show_a5=0; show_aw=0
+          fi
+          needed=$((base_w + def_s))
+          min_needed=$((base_w + min_s))
+          if [ "$tw" -ge "$needed" ]; then
+            status_dash=$def_s
+            layout_tier=1
+          elif [ "$tw" -ge "$min_needed" ]; then
+            status_dash=$((tw - base_w))
+            layout_tier=1
+          else
+            layout_tier=2
+          fi
         fi
       fi
     fi
+
+    # If Tier 1 did not fit, check Tier 2 (compact tier)
+    if [ "$layout_tier" -eq 2 ]; then
+      if [ "$is_wide" = 1 ]; then
+        claude_hidden=0; argon_hidden=0
+        show_a5="$orig_a5"; show_aw="$orig_aw"
+        show_c5="$orig_c5"; show_cw="$orig_cw"
+        local comp_extra=0
+        [ "$show_a5" -gt 0 ] && comp_extra=$((comp_extra + 1))
+        [ "$show_aw" -gt 0 ] && comp_extra=$((comp_extra + 1))
+        [ "$show_c5" -gt 0 ] && comp_extra=$((comp_extra + 1))
+        [ "$show_cw" -gt 0 ] && comp_extra=$((comp_extra + 1))
+      else
+        local comp_extra=0
+      fi
+      local comp_num_quota=$((2 + comp_extra))
+      local fixed_extra=$((comp_num_quota * 19 + 5))
+      local avail=$((tw - fixed_extra))
+      local avail_content=$((avail - acct_g - 1))
+
+      if [ "$avail_content" -ge 16 ]; then
+        local full_acct_nw="$acct_nw"
+        if [ $((full_acct_nw + 45)) -le "$avail_content" ]; then
+          acct_nw="$full_acct_nw"
+          status_dash=45
+        elif [ $((full_acct_nw + 8)) -le "$avail_content" ]; then
+          acct_nw="$full_acct_nw"
+          status_dash=$((avail_content - full_acct_nw))
+        else
+          status_dash=8
+          acct_nw=$((avail_content - 8))
+        fi
+        acct_w=$((acct_g + 1 + acct_nw))
+        layout_tier=2
+      else
+        layout_tier=3
+      fi
+    fi
+
     status_pad=$((status_dash - 2))
   fi
 
-  local top mid bot hdr
-  top="┌$(table_dash $((acct_w + 2)))┬$(table_dash 27)┬$(table_dash 27)"
-  mid="├$(table_dash $((acct_w + 2)))┼$(table_dash 27)┼$(table_dash 27)"
-  bot="└$(table_dash $((acct_w + 2)))┴$(table_dash 27)┴$(table_dash 27)"
-  hdr="$(printf '│ %-*s │ %-25s │ %-25s' "$acct_w" "ACCOUNT" "GEMINI 5H" "GEMINI WEEK")"
+  if [ "$layout_tier" -eq 1 ]; then
+    local top mid bot hdr
+    top="┌$(table_dash $((acct_w + 2)))┬$(table_dash 27)┬$(table_dash 27)"
+    mid="├$(table_dash $((acct_w + 2)))┼$(table_dash 27)┼$(table_dash 27)"
+    bot="└$(table_dash $((acct_w + 2)))┴$(table_dash 27)┴$(table_dash 27)"
+    hdr="$(printf '│ %-*s │ %-25s │ %-25s' "$acct_w" "ACCOUNT" "GEMINI 5H" "GEMINI WEEK")"
 
-  if [ "$show_a5" -gt 0 ]; then
-    top+="┬$(table_dash 27)"
-    mid+="┼$(table_dash 27)"
-    bot+="┴$(table_dash 27)"
-    hdr+="$(printf ' │ %-25s' "ARGON 5H")"
-  fi
-  if [ "$show_aw" -gt 0 ]; then
-    top+="┬$(table_dash 27)"
-    mid+="┼$(table_dash 27)"
-    bot+="┴$(table_dash 27)"
-    hdr+="$(printf ' │ %-25s' "ARGON WEEK")"
-  fi
-  if [ "$show_c5" -gt 0 ]; then
-    top+="┬$(table_dash 27)"
-    mid+="┼$(table_dash 27)"
-    bot+="┴$(table_dash 27)"
-    hdr+="$(printf ' │ %-25s' "CLAUDE 5H")"
-  fi
-  if [ "$show_cw" -gt 0 ]; then
-    top+="┬$(table_dash 27)"
-    mid+="┼$(table_dash 27)"
-    bot+="┴$(table_dash 27)"
-    hdr+="$(printf ' │ %-25s' "CLAUDE WEEK")"
-  fi
-
-  top+="┬$(table_dash "$status_dash")┐"
-  mid+="┼$(table_dash "$status_dash")┤"
-  bot+="┴$(table_dash "$status_dash")┘"
-  hdr+="$(printf ' │ %-*s │' "$status_pad" "STATUS")"
-
-  echo "$top"
-  echo "$hdr"
-  echo "$mid"
-  local row_idx=0 any_locked=0 ncell
-  while read -r n; do
-    local row_bg=""
-    if [ $((row_idx % 2)) -eq 1 ]; then row_bg="$BG_ALT"; fi
-    row_idx=$((row_idx + 1))
-    g5=""; g5r=0; gw=""; gwr=0; at=0
-    snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [.g5,.g5r,.gw,.gwr,.at] | @tsv' "$STATE")"
-    if [ -n "$snap" ]; then IFS=$'\t' read -r g5 g5r gw gwr at <<<"$snap"; fi
-    if [[ "$failed" == *" $n "* ]]; then g5=""; fi
-    if [ -n "$g5" ] && { [ "$oldest" -eq 0 ] || [ "$at" -lt "$oldest" ]; }; then oldest=$at; fi
-    until="$(cooldown_until "$n")"
-    if [[ "$failed" == *" $n "* ]]; then st="measure failed (token expired or agy error)"; sc="$R"
-    elif [ -n "$g5" ] && [ "$gw" -eq 0 ] && [ "$gwr" -gt "$t" ]; then st="weekly limit reached, $(fmt_dur $((gwr - t))) left"; sc="$R"
-    elif [ "$until" -gt "$t" ]; then st="cooldown, $(fmt_dur $((until - t))) left"; sc="$R"
-    elif [ -z "$g5" ]; then st="not measured"; sc="$Y"
-    elif { [ "$g5" != -1 ] && [ "$g5r" -le "$t" ]; } || [ "$gwr" -le "$t" ]; then st="stale, past reset time"; sc="$Y"
-    elif { [ "$g5" != -1 ] && [ "$g5" -le 10 ]; } || [ "$gw" -le 10 ]; then st="low"; sc="$R"
-    else st="ready"; sc="$G"; fi
-    # marker gutter, then the name; a lock never changes the status, which stays what it really is
-    mk=""; if [ "$n" = "$cur" ]; then mk="*"; fi
-    if is_locked "$n"; then mk+="!!"; any_locked=1; fi
-    printf -v ncell '%-*s %s' "$acct_g" "$mk" "$n"
-    local extra="" a5 a5r aw awr c5 c5r cw cwr
-    IFS=$'\t' read -r c5 c5r cw cwr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.c5 // "-"),(.c5r // 0),(.cw // "-"),(.cwr // 0)] | @tsv' "$STATE")"
-    [ "${c5:-}" = "-" ] && c5=""; [ "${cw:-}" = "-" ] && cw=""
-    IFS=$'\t' read -r a5 a5r aw awr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.a5 // "-"),(.a5r // 0),(.aw // "-"),(.awr // 0)] | @tsv' "$STATE")"
-    [ "${a5:-}" = "-" ] && a5=""; [ "${aw:-}" = "-" ] && aw=""
-    if [ "$show_a5" -gt 0 ]; then extra+=" │ $(cell "$a5" "${a5r:-0}")"; fi
-    if [ "$show_aw" -gt 0 ]; then extra+=" │ $(cell "$aw" "${awr:-0}")"; fi
-    if [ "$show_c5" -gt 0 ]; then extra+=" │ $(cell "$c5" "${c5r:-0}")"; fi
-    if [ "$show_cw" -gt 0 ]; then extra+=" │ $(cell "$cw" "${cwr:-0}")"; fi
-    local st_disp="$st"
-    if [ "${#st}" -gt "$status_pad" ]; then
-      st_disp="${st:0:$((status_pad - 1))}…"
+    if [ "$show_a5" -gt 0 ]; then
+      top+="┬$(table_dash 27)"
+      mid+="┼$(table_dash 27)"
+      bot+="┴$(table_dash 27)"
+      hdr+="$(printf ' │ %-25s' "ARGON 5H")"
     fi
-    printf '%s│ %-*s │ %s │ %s%s │ %s%-*s%s │%s\n' "$row_bg" "$acct_w" "$ncell" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$extra" "$sc" "$status_pad" "$st_disp" "$Z" "$ALL_RST"
-  done < <(rows_for_list "$failed")
-  echo "$bot"
-  if [ "$claude_hidden" -eq 1 ] && [ "$argon_hidden" -eq 1 ]; then
-    echo "(Note: Argon and Claude columns hidden to fit terminal width ${tw}. Use 'agyr list -w' to show all)"
-  elif [ "$claude_hidden" -eq 1 ]; then
-    echo "(Note: Claude columns hidden to fit terminal width ${tw}. Use 'agyr list -w' to show all)"
-  elif [ "$argon_hidden" -eq 1 ]; then
-    echo "(Note: Argon columns hidden to fit terminal width ${tw}. Use 'agyr list -w' to show all)"
+    if [ "$show_aw" -gt 0 ]; then
+      top+="┬$(table_dash 27)"
+      mid+="┼$(table_dash 27)"
+      bot+="┴$(table_dash 27)"
+      hdr+="$(printf ' │ %-25s' "ARGON WEEK")"
+    fi
+    if [ "$show_c5" -gt 0 ]; then
+      top+="┬$(table_dash 27)"
+      mid+="┼$(table_dash 27)"
+      bot+="┴$(table_dash 27)"
+      hdr+="$(printf ' │ %-25s' "CLAUDE 5H")"
+    fi
+    if [ "$show_cw" -gt 0 ]; then
+      top+="┬$(table_dash 27)"
+      mid+="┼$(table_dash 27)"
+      bot+="┴$(table_dash 27)"
+      hdr+="$(printf ' │ %-25s' "CLAUDE WEEK")"
+    fi
+
+    top+="┬$(table_dash "$status_dash")┐"
+    mid+="┼$(table_dash "$status_dash")┤"
+    bot+="┴$(table_dash "$status_dash")┘"
+    hdr+="$(printf ' │ %-*s │' "$status_pad" "STATUS")"
+
+    echo "$top"
+    echo "$hdr"
+    echo "$mid"
+    local row_idx=0 any_locked=0 ncell
+    while read -r n; do
+      local row_bg=""
+      if [ $((row_idx % 2)) -eq 1 ]; then row_bg="$BG_ALT"; fi
+      row_idx=$((row_idx + 1))
+      g5=""; g5r=0; gw=""; gwr=0; at=0
+      snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [.g5,.g5r,.gw,.gwr,.at] | @tsv' "$STATE")"
+      if [ -n "$snap" ]; then IFS=$'\t' read -r g5 g5r gw gwr at <<<"$snap"; fi
+      if [[ "$failed" == *" $n "* ]]; then g5=""; fi
+      if [ -n "$g5" ] && { [ "$oldest" -eq 0 ] || [ "$at" -lt "$oldest" ]; }; then oldest=$at; fi
+      until="$(cooldown_until "$n")"
+      if [[ "$failed" == *" $n "* ]]; then st="measure failed (token expired or agy error)"; sc="$R"
+      elif [ -n "$g5" ] && [ "$gw" -eq 0 ] && [ "$gwr" -gt "$t" ]; then st="weekly limit reached, $(fmt_dur $((gwr - t))) left"; sc="$R"
+      elif [ "$until" -gt "$t" ]; then st="cooldown, $(fmt_dur $((until - t))) left"; sc="$R"
+      elif [ -z "$g5" ]; then st="not measured"; sc="$Y"
+      elif { [ "$g5" != -1 ] && [ "$g5r" -le "$t" ]; } || [ "$gwr" -le "$t" ]; then st="stale, past reset time"; sc="$Y"
+      elif { [ "$g5" != -1 ] && [ "$g5" -le 10 ]; } || [ "$gw" -le 10 ]; then st="low"; sc="$R"
+      else st="ready"; sc="$G"; fi
+      # marker gutter, then the name; a lock never changes the status, which stays what it really is
+      mk=""; if [ "$n" = "$cur" ]; then mk="*"; fi
+      if is_locked "$n"; then mk+="!!"; any_locked=1; fi
+      printf -v ncell '%-*s %s' "$acct_g" "$mk" "$n"
+      local extra="" a5 a5r aw awr c5 c5r cw cwr
+      IFS=$'\t' read -r c5 c5r cw cwr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.c5 // "-"),(.c5r // 0),(.cw // "-"),(.cwr // 0)] | @tsv' "$STATE")"
+      [ "${c5:-}" = "-" ] && c5=""; [ "${cw:-}" = "-" ] && cw=""
+      IFS=$'\t' read -r a5 a5r aw awr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.a5 // "-"),(.a5r // 0),(.aw // "-"),(.awr // 0)] | @tsv' "$STATE")"
+      [ "${a5:-}" = "-" ] && a5=""; [ "${aw:-}" = "-" ] && aw=""
+      if [ "$show_a5" -gt 0 ]; then extra+=" │ $(cell "$a5" "${a5r:-0}")"; fi
+      if [ "$show_aw" -gt 0 ]; then extra+=" │ $(cell "$aw" "${awr:-0}")"; fi
+      if [ "$show_c5" -gt 0 ]; then extra+=" │ $(cell "$c5" "${c5r:-0}")"; fi
+      if [ "$show_cw" -gt 0 ]; then extra+=" │ $(cell "$cw" "${cwr:-0}")"; fi
+      local st_disp="$st"
+      if [ "${#st}" -gt "$status_pad" ]; then
+        st_disp="${st:0:$((status_pad - 1))}…"
+      fi
+      printf '%s│ %-*s │ %s │ %s%s │ %s%-*s%s │%s\n' "$row_bg" "$acct_w" "$ncell" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$extra" "$sc" "$status_pad" "$st_disp" "$Z" "$ALL_RST"
+    done < <(rows_for_list "$failed")
+    echo "$bot"
+  elif [ "$layout_tier" -eq 2 ]; then
+    local top mid bot hdr
+    top="┌$(table_dash $((acct_w + 2)))┬$(table_dash 18)┬$(table_dash 18)"
+    mid="├$(table_dash $((acct_w + 2)))┼$(table_dash 18)┼$(table_dash 18)"
+    bot="└$(table_dash $((acct_w + 2)))┴$(table_dash 18)┴$(table_dash 18)"
+    hdr="$(printf '│ %-*s │ %-16s │ %-16s' "$acct_w" "ACCOUNT" "GEMINI 5H" "GEMINI WEEK")"
+
+    if [ "$show_a5" -gt 0 ]; then
+      top+="┬$(table_dash 18)"
+      mid+="┼$(table_dash 18)"
+      bot+="┴$(table_dash 18)"
+      hdr+="$(printf ' │ %-16s' "ARGON 5H")"
+    fi
+    if [ "$show_aw" -gt 0 ]; then
+      top+="┬$(table_dash 18)"
+      mid+="┼$(table_dash 18)"
+      bot+="┴$(table_dash 18)"
+      hdr+="$(printf ' │ %-16s' "ARGON WEEK")"
+    fi
+    if [ "$show_c5" -gt 0 ]; then
+      top+="┬$(table_dash 18)"
+      mid+="┼$(table_dash 18)"
+      bot+="┴$(table_dash 18)"
+      hdr+="$(printf ' │ %-16s' "CLAUDE 5H")"
+    fi
+    if [ "$show_cw" -gt 0 ]; then
+      top+="┬$(table_dash 18)"
+      mid+="┼$(table_dash 18)"
+      bot+="┴$(table_dash 18)"
+      hdr+="$(printf ' │ %-16s' "CLAUDE WEEK")"
+    fi
+
+    top+="┬$(table_dash "$status_dash")┐"
+    mid+="┼$(table_dash "$status_dash")┤"
+    bot+="┴$(table_dash "$status_dash")┘"
+    hdr+="$(printf ' │ %-*s │' "$status_pad" "STATUS")"
+
+    echo "$top"
+    echo "$hdr"
+    echo "$mid"
+    local row_idx=0 any_locked=0 ncell
+    while read -r n; do
+      local row_bg=""
+      if [ $((row_idx % 2)) -eq 1 ]; then row_bg="$BG_ALT"; fi
+      row_idx=$((row_idx + 1))
+      g5=""; g5r=0; gw=""; gwr=0; at=0
+      snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [.g5,.g5r,.gw,.gwr,.at] | @tsv' "$STATE")"
+      if [ -n "$snap" ]; then IFS=$'\t' read -r g5 g5r gw gwr at <<<"$snap"; fi
+      if [[ "$failed" == *" $n "* ]]; then g5=""; fi
+      if [ -n "$g5" ] && { [ "$oldest" -eq 0 ] || [ "$at" -lt "$oldest" ]; }; then oldest=$at; fi
+      until="$(cooldown_until "$n")"
+      if [[ "$failed" == *" $n "* ]]; then st="measure failed (token expired or agy error)"; sc="$R"
+      elif [ -n "$g5" ] && [ "$gw" -eq 0 ] && [ "$gwr" -gt "$t" ]; then st="weekly limit reached, $(fmt_dur $((gwr - t))) left"; sc="$R"
+      elif [ "$until" -gt "$t" ]; then st="cooldown, $(fmt_dur $((until - t))) left"; sc="$R"
+      elif [ -z "$g5" ]; then st="not measured"; sc="$Y"
+      elif { [ "$g5" != -1 ] && [ "$g5r" -le "$t" ]; } || [ "$gwr" -le "$t" ]; then st="stale, past reset time"; sc="$Y"
+      elif { [ "$g5" != -1 ] && [ "$g5" -le 10 ]; } || [ "$gw" -le 10 ]; then st="low"; sc="$R"
+      else st="ready"; sc="$G"; fi
+      mk=""; if [ "$n" = "$cur" ]; then mk="*"; fi
+      if is_locked "$n"; then mk+="!!"; any_locked=1; fi
+      local an_disp="$n"
+      if [ "${#an_disp}" -gt "$acct_nw" ]; then
+        an_disp="${an_disp:0:$((acct_nw - 1))}…"
+      fi
+      printf -v ncell '%-*s %s' "$acct_g" "$mk" "$an_disp"
+      local extra="" a5 a5r aw awr c5 c5r cw cwr
+      IFS=$'\t' read -r c5 c5r cw cwr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.c5 // "-"),(.c5r // 0),(.cw // "-"),(.cwr // 0)] | @tsv' "$STATE")"
+      [ "${c5:-}" = "-" ] && c5=""; [ "${cw:-}" = "-" ] && cw=""
+      IFS=$'\t' read -r a5 a5r aw awr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.a5 // "-"),(.a5r // 0),(.aw // "-"),(.awr // 0)] | @tsv' "$STATE")"
+      [ "${a5:-}" = "-" ] && a5=""; [ "${aw:-}" = "-" ] && aw=""
+      if [ "$show_a5" -gt 0 ]; then extra+=" │ $(cell_compact "$a5" "${a5r:-0}")"; fi
+      if [ "$show_aw" -gt 0 ]; then extra+=" │ $(cell_compact "$aw" "${awr:-0}")"; fi
+      if [ "$show_c5" -gt 0 ]; then extra+=" │ $(cell_compact "$c5" "${c5r:-0}")"; fi
+      if [ "$show_cw" -gt 0 ]; then extra+=" │ $(cell_compact "$cw" "${cwr:-0}")"; fi
+      local st_disp="$st"
+      if [ "${#st}" -gt "$status_pad" ]; then
+        st_disp="${st:0:$((status_pad - 1))}…"
+      fi
+      printf '%s│ %-*s │ %s │ %s%s │ %s%-*s%s │%s\n' "$row_bg" "$acct_w" "$ncell" "$(cell_compact "$g5" "$g5r")" "$(cell_compact "$gw" "$gwr")" "$extra" "$sc" "$status_pad" "$st_disp" "$Z" "$ALL_RST"
+    done < <(rows_for_list "$failed")
+    echo "$bot"
+  else # layout_tier == 3: vertical blocks
+    local col_w=11
+    if [ "$tw" -ge 45 ] && [ "$max_nl" -gt 11 ]; then
+      col_w="$max_nl"
+    fi
+    local any_locked=0 block_idx=0
+    while read -r n; do
+      if [ "$block_idx" -gt 0 ]; then echo ""; fi
+      block_idx=$((block_idx + 1))
+      g5=""; g5r=0; gw=""; gwr=0; at=0
+      snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [.g5,.g5r,.gw,.gwr,.at] | @tsv' "$STATE")"
+      if [ -n "$snap" ]; then IFS=$'\t' read -r g5 g5r gw gwr at <<<"$snap"; fi
+      if [[ "$failed" == *" $n "* ]]; then g5=""; fi
+      if [ -n "$g5" ] && { [ "$oldest" -eq 0 ] || [ "$at" -lt "$oldest" ]; }; then oldest=$at; fi
+      until="$(cooldown_until "$n")"
+      if [[ "$failed" == *" $n "* ]]; then st="measure failed (token expired or agy error)"; sc="$R"
+      elif [ -n "$g5" ] && [ "$gw" -eq 0 ] && [ "$gwr" -gt "$t" ]; then st="weekly limit reached, $(fmt_dur $((gwr - t))) left"; sc="$R"
+      elif [ "$until" -gt "$t" ]; then st="cooldown, $(fmt_dur $((until - t))) left"; sc="$R"
+      elif [ -z "$g5" ]; then st="not measured"; sc="$Y"
+      elif { [ "$g5" != -1 ] && [ "$g5r" -le "$t" ]; } || [ "$gwr" -le "$t" ]; then st="stale, past reset time"; sc="$Y"
+      elif { [ "$g5" != -1 ] && [ "$g5" -le 10 ]; } || [ "$gw" -le 10 ]; then st="low"; sc="$R"
+      else st="ready"; sc="$G"; fi
+      mk=""; if [ "$n" = "$cur" ]; then mk="*"; fi
+      if is_locked "$n"; then mk+="!!"; any_locked=1; fi
+
+      local pfx_str st_disp="$st"
+      if [ "$tw" -gt 0 ] && [ "$tw" -lt 35 ]; then
+        printf -v pfx_str '%-*s %s ' "$acct_g" "$mk" "$n"
+      else
+        printf -v pfx_str '%-*s %-*s  ' "$acct_g" "$mk" "$col_w" "$n"
+      fi
+      if [ "$tw" -gt 0 ] && [ "${#pfx_str}" -ge "$tw" ]; then
+        if [ "$tw" -lt 30 ]; then
+          pfx_str="${pfx_str:0:$tw}"
+        else
+          pfx_str="${pfx_str:0:$((tw - 1))}…"
+        fi
+        st_disp=""
+      elif [ "$tw" -gt 0 ]; then
+        local avail_st=$((tw - ${#pfx_str}))
+        if [ "${#st_disp}" -gt "$avail_st" ]; then
+          if [ "$tw" -lt 30 ]; then
+            st_disp="${st_disp:0:$avail_st}"
+          elif [ "$avail_st" -gt 1 ]; then
+            st_disp="${st_disp:0:$((avail_st - 1))}…"
+          else
+            st_disp=""
+          fi
+        fi
+      fi
+      if [ -n "$st_disp" ]; then
+        printf '%s%s%s%s\n' "$pfx_str" "$sc" "$st_disp" "$ALL_RST"
+      else
+        printf '%s\n' "$pfx_str"
+      fi
+
+      print_vert_quota() { # $1 = label, $2 = val, $3 = reset epoch
+        local qlbl="$1" qval="$2" qepoch="${3:-0}"
+        local qpfx
+        if [ "$tw" -gt 0 ] && [ "$tw" -lt 35 ]; then
+          printf -v qpfx '%*s %s ' "$acct_g" "" "$qlbl"
+        else
+          printf -v qpfx '%*s %-*s  ' "$acct_g" "" "$col_w" "$qlbl"
+        fi
+        local qpfx_len=${#qpfx}
+        if [ "$tw" -gt 0 ] && [ "$qpfx_len" -ge "$tw" ]; then
+          if [ "$tw" -lt 30 ]; then
+            printf '%s\n' "${qpfx:0:$tw}"
+          else
+            printf '%s\n' "${qpfx:0:$((tw - 1))}…"
+          fi
+          return
+        fi
+
+        local cell_out=""
+        if [ "$qval" = -1 ]; then
+          cell_out=" off"
+        elif [ -z "$qval" ] || [ "$qepoch" -le "$t" ]; then
+          cell_out="   -"
+        elif [ "$tw" -le 0 ] || [ $((qpfx_len + 25)) -le "$tw" ]; then
+          cell_out="$(printf '%s  %s' "$(pct "$qval")" "$(fmt_time "$qepoch")")"
+        else
+          local s_time; s_time="$(fmt_short_time "$qepoch")"
+          if [ $((qpfx_len + 16)) -le "$tw" ]; then
+            cell_out="$(printf '%s %s' "$(pct "$qval")" "$s_time")"
+          else
+            local avail_time=$((tw - qpfx_len - 5))
+            if [ "$avail_time" -gt 1 ]; then
+              s_time="${s_time:0:$((avail_time - 1))}…"
+              cell_out="$(printf '%s %s' "$(pct "$qval")" "$s_time")"
+            else
+              cell_out="$(pct "$qval")"
+            fi
+          fi
+        fi
+        local full_line="${qpfx}${cell_out}"
+        if [ "$tw" -gt 0 ] && [ "$tw" -lt 30 ] && [ "${#full_line}" -gt "$tw" ]; then
+          printf '%s\n' "${full_line:0:$tw}"
+        else
+          printf '%s\n' "$full_line"
+        fi
+      }
+
+      print_vert_quota "GEMINI 5H" "$g5" "$g5r"
+      print_vert_quota "GEMINI WEEK" "$gw" "$gwr"
+
+      local a5 a5r aw awr c5 c5r cw cwr
+      IFS=$'\t' read -r c5 c5r cw cwr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.c5 // "-"),(.c5r // 0),(.cw // "-"),(.cwr // 0)] | @tsv' "$STATE")"
+      [ "${c5:-}" = "-" ] && c5=""; [ "${cw:-}" = "-" ] && cw=""
+      IFS=$'\t' read -r a5 a5r aw awr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.a5 // "-"),(.a5r // 0),(.aw // "-"),(.awr // 0)] | @tsv' "$STATE")"
+      [ "${a5:-}" = "-" ] && a5=""; [ "${aw:-}" = "-" ] && aw=""
+
+      if [ "$argon_hidden" -eq 0 ]; then
+        if [ -n "$a5" ]; then print_vert_quota "ARGON 5H" "$a5" "${a5r:-0}"; fi
+        if [ -n "$aw" ]; then print_vert_quota "ARGON WEEK" "$aw" "${awr:-0}"; fi
+      fi
+      if [ -n "${AGYR_CLAUDE:-}" ] && [ "$claude_hidden" -eq 0 ]; then
+        if [ -n "$c5" ]; then print_vert_quota "CLAUDE 5H" "$c5" "${c5r:-0}"; fi
+        if [ -n "$cw" ]; then print_vert_quota "CLAUDE WEEK" "$cw" "${cwr:-0}"; fi
+      fi
+    done < <(rows_for_list "$failed")
   fi
+
+  wrap_text() {
+    local line="$1"
+    if [ "$tw" -le 0 ] || [ "${#line}" -le "$tw" ]; then
+      echo "$line"
+      return
+    fi
+    if [ "$tw" -lt 30 ]; then
+      echo "${line:0:$tw}"
+      return
+    fi
+    fold -s -w "$tw" <<<"$line" | sed 's/[ \t]*$//'
+  }
+
+  if [ "$is_wide" = 0 ]; then
+    if [ "$claude_hidden" -eq 1 ] && [ "$argon_hidden" -eq 1 ]; then
+      wrap_text "(Note: Argon and Claude columns hidden to fit terminal width ${tw}. Use 'agyr list -w' to show all)"
+    elif [ "$claude_hidden" -eq 1 ]; then
+      wrap_text "(Note: Claude columns hidden to fit terminal width ${tw}. Use 'agyr list -w' to show all)"
+    elif [ "$argon_hidden" -eq 1 ]; then
+      wrap_text "(Note: Argon columns hidden to fit terminal width ${tw}. Use 'agyr list -w' to show all)"
+    fi
+  fi
+
+  if [ "$layout_tier" -eq 2 ]; then
+    if [ "$is_wide" = 1 ]; then
+      wrap_text "(Note: compact layout to fit terminal width ${tw})"
+    else
+      wrap_text "(Note: compact layout to fit terminal width ${tw}. Use 'agyr list -w' to show all)"
+    fi
+  elif [ "$layout_tier" -eq 3 ]; then
+    if [ "$is_wide" = 1 ]; then
+      wrap_text "(Note: one block per account to fit terminal width ${tw})"
+    else
+      wrap_text "(Note: one block per account to fit terminal width ${tw}. Use 'agyr list -w' to show all)"
+    fi
+  fi
+
   if [ -n "$LIVE" ] && [ -z "$cur" ]; then
-    echo "${Y}! The login in use matches no slot (just logged in to another account?). Run 'agyr save <name>' to store it; 'agyr use' will not overwrite any slot.${ALL_RST:-$Z}"
+    wrap_text "${Y}! The login in use matches no slot (just logged in to another account?). Run 'agyr save <name>' to store it; 'agyr use' will not overwrite any slot.${ALL_RST:-$Z}"
   fi
   local legend="* = selected account"
   if [ "$any_locked" = 1 ]; then legend+=", !! = locked account, do not use this"; fi
+  local msg
   if [ "$live" = 1 ]; then
-    echo "Measured at $(fmt_time "$t")   ($legend)"
+    msg="Measured at $(fmt_time "$t")"
   elif [ "$oldest" -gt 0 ]; then
-    echo "Oldest data measured at $(fmt_time "$oldest"). Run 'agyr list' (without -c) to refresh.   ($legend)"
+    msg="Oldest data measured at $(fmt_time "$oldest"). Run 'agyr list' (without -c) to refresh."
   else
-    echo "No quota data yet; run 'agyr list' (without -c) to measure.   ($legend)"
+    msg="No quota data yet; run 'agyr list' (without -c) to measure."
+  fi
+  # one line when it fits (or the width is unknown: exactly as before); otherwise the legend goes on its own line instead of
+  # being cut in the middle, and each part is word-wrapped only if it is still too wide
+  local legend_txt="($legend)"
+  if [ "$tw" -le 0 ] || [ $((${#msg} + 3 + ${#legend_txt})) -le "$tw" ]; then
+    wrap_text "$msg   $legend_txt"
+  else
+    wrap_text "$msg"
+    wrap_text "$legend_txt"
   fi
 }
 
@@ -1575,7 +1917,7 @@ Colours: green above 40%, yellow 11-40%, red 10% or less. Only on a terminal (se
 
 Options:
   -c, --cached   do not call agy; print the data saved by the last measurement
-  -w, --wide     disable responsive table; always print all columns at full width
+  -w, --wide     never hide columns (Argon always, Claude with --claude); adapts to terminal width
   --claude       show Claude and GPT quota columns (hidden by default)
 
 Exit code: 0 ok, 1 some account could not be measured.

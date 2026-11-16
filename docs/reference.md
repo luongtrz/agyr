@@ -99,6 +99,7 @@ agyr list                       # verify all slots are alive and report quota
 ```bash
 agyr list                     # measure real quota of all accounts and print table (* = selected account)
 agyr list -c                  # print cached numbers without calling agy (fast)
+agyr list -w                  # wide mode: never hide quota columns; adapts to terminal width
 agyr list --claude            # include Claude and GPT quota columns (hidden by default)
 agyr use <name>               # switch account
 agyr rotate                   # interactive agy ran out of quota: cool down current account + switch to ready account with soonest weekly reset
@@ -151,6 +152,12 @@ Measured at 01/10/2026 02:58 PM   (* = selected account)
 - **Colors** (terminal only): remaining percentage is **green** above 40%, **yellow** from 11% to 40%, **red** at 10% or below. Status column: `ready` green; `not measured` and `stale` yellow; `low`, `cooldown`, and `measure failed` red. Disable with `NO_COLOR=1` or `AGYR_COLOR=never`; force with `AGYR_COLOR=always`.
 - **Automatic cooldown sync:** measuring `0%` sets a cooldown until the reported reset time; measuring `>0%` clears any stale cooldown.
 - **Status values:** `ready`; `low` (≤10%); `weekly limit reached, 1h36m left` (when the weekly limit is exhausted, `agy` reports the 5-hour limit as `disabled` with no reset time, shown as `off` in the `GEMINI 5H` column, and sets a cooldown until the weekly reset); `cooldown, 15m left`; `not measured`; `stale, past reset time` (with `-c` only); `measure failed` (expired/revoked token or `agy` error; exits with code `1`).
+- **Responsive tiers:** When rendered on a terminal (or under `AGYR_RESPONSIVE=1`), the layout adapts progressively to fit the terminal width without wrapping:
+  - **Full table:** The `STATUS` column shrinks (min 16 characters). Optional Claude and Argon columns are hidden if width is constrained.
+  - **Compact table:** When narrower than the full table minimum, quota cells render compactly (`% dd/mm HH:MM`, 24-hour time without year) and `STATUS` shrinks further (down to 8–10 characters); long account names truncate with an ellipsis (`…`).
+  - **Vertical blocks:** When even the compact table cannot fit, switches to one aligned block per account with quota reset lines, keeping marker gutter and status intact.
+  - Printed lines never exceed the terminal width for any width ≥ 30 (hard-truncated below 30).
+- **Wide mode (`-w`, `--wide`):** Never hides columns (Argon always, Claude with `--claude`). When terminal width is known, it adapts across the same progressive tiers (full table → compact cells → vertical blocks) without hiding columns; when terminal width is unknown (non-tty / script), it renders unconstrained at full width.
 
 ## `agyr test`: sending "Hi" to each account
 

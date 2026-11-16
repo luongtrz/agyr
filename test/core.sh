@@ -1796,6 +1796,97 @@ hasnt "responsive 150: CLAUDE hidden" "CLAUDE" "$out"
 has "responsive 150: ARGON shown" "ARGON" "$out"
 has "responsive 150: notes Claude hidden" "Note: Claude columns hidden to fit terminal width 150" "$out"
 
+# Progressive responsive tiers: line widths never exceed terminal columns (for widths 200 down to 30)
+for w in 200 150 120 100 95 90 80 70 60 50 40 30; do
+  out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=$w "$ACCT" list -c)"
+  over=0
+  while IFS= read -r line; do
+    if [ "${#line}" -gt "$w" ]; then over=1; fi
+  done <<<"$out"
+  eq "responsive $w: list -c no line wider than $w" "0" "$over"
+
+  out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=$w "$ACCT" list -c --claude)"
+  over=0
+  while IFS= read -r line; do
+    if [ "${#line}" -gt "$w" ]; then over=1; fi
+  done <<<"$out"
+  eq "responsive $w: list -c --claude no line wider than $w" "0" "$over"
+done
+
+# Widths where full layout fits (>= today's minimum) match unconstrained output
+out_resp="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=200 "$ACCT" list -c)"
+out_norm="$("$ACCT" list -c)"
+eq "responsive 200: full layout identical to unconstrained" "$out_norm" "$out_resp"
+out_wide_resp="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=200 "$ACCT" list -c -w)"
+out_wide_norm="$("$ACCT" list -c -w)"
+eq "responsive 200: wide layout identical to unconstrained wide" "$out_wide_norm" "$out_wide_resp"
+
+# At 80: compact cell format (no 4-digit year in rows) and all account names visible
+out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=80 "$ACCT" list -c)"
+has "responsive 80: acc1 visible" "acc1" "$out"
+has "responsive 80: acc2 visible" "acc2" "$out"
+has "responsive 80: acc3 visible" "acc3" "$out"
+row_lines="$(grep '│' <<<"$out" | grep -v 'ACCOUNT')"
+hasnt "responsive 80: no 4-digit year in rows" "1970" "$row_lines"
+has "responsive 80: compact note present" "compact layout to fit terminal width 80" "$out"
+
+# At 50: vertical tier, all names and labels appear, no line wider than 50
+out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=50 "$ACCT" list -c)"
+has "responsive 50: acc1 appears" "acc1" "$out"
+has "responsive 50: acc2 appears" "acc2" "$out"
+has "responsive 50: acc3 appears" "acc3" "$out"
+has "responsive 50: GEMINI 5H appears" "GEMINI 5H" "$out"
+has "responsive 50: GEMINI WEEK appears" "GEMINI WEEK" "$out"
+has "responsive 50: vertical note present" "one block per account to fit terminal width 50" "$(tr '\n' ' ' <<<"$out" | tr -s ' ')"
+# the legend under the table is never cut in the middle of "(* = ...": at 100 columns it moves to its own line, whole
+out100="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=100 "$ACCT" list -c)"
+hasnt "responsive 100: legend not split after '(* ='" "(* =" "$(grep -v '(\* = selected' <<<"$out100")"
+over=0
+while IFS= read -r line; do
+  if [ "${#line}" -gt 50 ]; then over=1; fi
+done <<<"$out"
+eq "responsive 50: no line wider than 50" "0" "$over"
+
+# Markers in every tier: locked account and selected account
+"$ACCT" lock acc2 >/dev/null
+# Tier 1 (150)
+out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=150 "$ACCT" list -c)"
+has "locked tier 1: * marker" "*  acc1" "$out"
+has "locked tier 1: !! marker" "!! acc2" "$out"
+has "locked tier 1: legend note" "!! = locked account, do not use this" "$out"
+# Tier 2 (80)
+out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=80 "$ACCT" list -c)"
+has "locked tier 2: * marker" "*  acc1" "$out"
+has "locked tier 2: !! marker" "!! acc2" "$out"
+has "locked tier 2: legend note" "!! = locked account, do not use this" "$out"
+# Tier 3 (50)
+out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=50 "$ACCT" list -c)"
+has "locked tier 3: * marker" "*  acc1" "$out"
+has "locked tier 3: !! marker" "!! acc2" "$out"
+has "locked tier 3: legend note" "!! = locked account, do not use this" "$(tr '\n' ' ' <<<"$out" | tr -s ' ')"
+"$ACCT" unlock acc2 >/dev/null
+
+# Wide mode: with FAKE_ARGON_TOKENS="tok-acc2" and list -c -w --claude under AGYR_RESPONSIVE=1
+for w in 250 200 150 120 100 80 60 50 40 30; do
+  out="$(FAKE_ARGON_TOKENS="tok-acc2" AGYR_RESPONSIVE=1 AGYR_COLUMNS=$w "$ACCT" list -c -w --claude)"
+  over=0
+  while IFS= read -r line; do
+    if [ "${#line}" -gt "$w" ]; then over=1; fi
+  done <<<"$out"
+  eq "wide responsive $w: no line wider than $w" "0" "$over"
+
+  if [ "$w" -ge 120 ]; then
+    has "wide responsive $w: ARGON header present" "ARGON" "$out"
+    has "wide responsive $w: CLAUDE header present" "CLAUDE" "$out"
+    hasnt "wide responsive $w: no columns hidden note" "columns hidden" "$out"
+  fi
+
+  if [ "$w" -le 60 ]; then
+    has "wide responsive $w: ARGON line present" "ARGON" "$out"
+    has "wide responsive $w: CLAUDE line present" "CLAUDE" "$out"
+  fi
+done
+
 # agyr test responsive
 setup
 out="$(FAKE_ARGON_TOKENS="tok-acc2" AGYR_COLOR=never AGYR_RESPONSIVE=1 AGYR_COLUMNS=120 "$ACCT" test 2>/dev/null)"
