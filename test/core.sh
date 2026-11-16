@@ -2007,22 +2007,38 @@ eq "next skips renamed locked account" "acc3" "$("$ACCT" next)"
 "$ACCT" del renamed >/dev/null
 eq "del removes .locked flag" "null" "$(jq -r '.locked.renamed // "null"' "$AGY_HOME/accounts/state.json")"
 
-# test skips locked without names
+# agyr test and agyr test -w also run on a locked account: the lock only keeps automatic rotation away, the user asked for this
 setup
 "$ACCT" lock acc2 >/dev/null
 out="$("$ACCT" test 2>&1)"
-has "test without names skips locked account" "skipped (locked)" "$out"
+hasnt "test without names does not skip a locked account" "skipped (locked)" "$out"
+has "test without names tries the locked account" "ok in " "$(grep ' acc2 ' <<<"$out")"
+eq "test without names: Hi went to all three accounts, locked one included" "3" "$(grep -c 'ok in ' <<<"$out" | tr -d ' ')"
+out="$("$ACCT" test -w 2>&1)"
+hasnt "test -w does not skip a locked account" "skipped (locked)" "$out"
+has "test -w tries the locked account" "ok in " "$(grep ' acc2 ' <<<"$out")"
+eq "test -w: Hi went to all three accounts, locked one included" "3" "$(grep -c 'ok in ' <<<"$out" | tr -d ' ')"
+eq "the lock is still there after agyr test" "acc2" "$("$ACCT" locked)"
 
-# test with names still tries locked account
+# test with names still tries a locked account
 out="$("$ACCT" test acc2 2>&1)"
 hasnt "named locked account not skipped" "skipped" "$out"
 has "named locked account is tried" "ok in " "$out"
 
-# test when all accounts are locked reports nothing to do
+# test when all accounts are locked: still tests them all (cooldown is the only reason to skip)
 setup
 for a in acc1 acc2 acc3; do "$ACCT" lock "$a" >/dev/null; done
 out="$("$ACCT" test 2>&1)"
-has "test with all accounts locked reports nothing to do" "nothing to do: every account is locked" "$out"
+hasnt "test with all accounts locked is not 'nothing to do'" "nothing to do" "$out"
+eq "test with all accounts locked: Hi went to all three" "3" "$(grep -c 'ok in ' <<<"$out" | tr -d ' ')"
+# a locked account that is also on cooldown is still skipped for the cooldown, and stays marked
+setup
+"$ACCT" lock acc2 >/dev/null
+"$ACCT" cooldown acc2 1h >/dev/null
+out="$("$ACCT" test 2>&1)"
+row_acc2="$(grep ' acc2 ' <<<"$out")"
+has "locked + cooldown: skipped for the cooldown" "skipped (cooldown, 1h00m left)" "$row_acc2"
+has "locked + cooldown: still marked !!" "!! acc2" "$row_acc2"
 
 # agyr test table: the same marker column as 'agyr list' ("!!" = locked), the note explains it, nothing shifts
 setup
@@ -2033,7 +2049,7 @@ hasnt "test table: nothing locked -> no lock note" "locked account" "$out"
 out="$("$ACCT" test 2>/dev/null)"
 row_acc1="$(grep ' acc1 ' <<<"$out")"; row_acc2="$(grep ' acc2 ' <<<"$out")"; row_acc3="$(grep ' acc3 ' <<<"$out")"
 has "test table: locked acc2 is marked !!" "!! acc2" "$row_acc2"
-has "test table: locked acc2 says it was skipped" "skipped (locked)" "$row_acc2"
+has "test table: locked acc2 was tested too" "ok in" "$row_acc2"
 hasnt "test table: unlocked acc1 has no marker" "!!" "$row_acc1"
 has "test table: unlocked acc1 was tested" "ok in" "$row_acc1"
 has "test table: the note explains !!" "!! = locked account, do not use this)" "$out"
@@ -2041,11 +2057,11 @@ pfx1="${row_acc1%%acc1*}"; pfx2="${row_acc2%%acc2*}"; pfx3="${row_acc3%%acc3*}"
 eq "test table: names start in the same column (marked vs unmarked row)" "${#pfx1}" "${#pfx2}"
 eq "test table: acc3 too" "${#pfx1}" "${#pfx3}"
 eq "test table: every data row is as wide as the header" "1" "$(grep '^│ ' <<<"$out" | while IFS= read -r l; do echo "${#l}"; done | sort -u | wc -l | tr -d ' ')"
-# a named locked account is still tried (the user asked for it) and stays marked
-out="$("$ACCT" test acc2 2>/dev/null)"
+# test -w: the same marker on a locked account
+out="$("$ACCT" test -w 2>/dev/null)"
 row_acc2="$(grep ' acc2 ' <<<"$out")"
-has "test table: named locked account is marked !!" "!! acc2" "$row_acc2"
-has "test table: named locked account was tried" "ok in" "$row_acc2"
+has "test -w table: locked account is marked !!" "!! acc2" "$row_acc2"
+has "test -w table: locked account was tested" "ok in" "$row_acc2"
 # a long name widens the ACCOUNT column, with and without a lock, and every row keeps the same width
 setup
 echo "tok-long" >"$AGY_HOME/antigravity-oauth-token"

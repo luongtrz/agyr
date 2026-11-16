@@ -1400,27 +1400,15 @@ cmd_test() {
       if [ -z "${TEST_TRY[$n]:-}" ]; then TEST_TRY[$n]=1; names+=("$n"); fi
     done
   else
+    # a locked account is tested too: 'agyr test' is something the user runs on purpose, the lock only keeps automatic
+    # rotation (next / rotate / agy-run) away from an account; the table marks it with "!!"
     for n in "${all[@]}"; do
-      if is_locked "$n"; then
-        TEST_SKIP[$n]="locked"
-      else
-        until="$(cooldown_until "$n")"
-        if [ "$until" -gt "$t" ]; then TEST_SKIP[$n]="cooldown, $(fmt_dur $((until - t))) left"; else TEST_TRY[$n]=1; names+=("$n"); fi
-      fi
+      until="$(cooldown_until "$n")"
+      if [ "$until" -gt "$t" ]; then TEST_SKIP[$n]="cooldown, $(fmt_dur $((until - t))) left"; else TEST_TRY[$n]=1; names+=("$n"); fi
     done
   fi
   if [ "${#names[@]}" -eq 0 ]; then
-    local skip_reason="on cooldown"
-    local has_locked=0 has_cd=0
-    for n in "${all[@]}"; do
-      if is_locked "$n"; then has_locked=1; else has_cd=1; fi
-    done
-    if [ "$has_locked" -eq 1 ] && [ "$has_cd" -eq 1 ]; then
-      skip_reason="on cooldown or locked"
-    elif [ "$has_locked" -eq 1 ]; then
-      skip_reason="locked"
-    fi
-    echo "nothing to do: every account is $skip_reason (name an account to send it \"Hi\" anyway: agyr test <name>)"
+    echo "nothing to do: every account is on cooldown (name an account to send it \"Hi\" anyway: agyr test <name>)"
     return 0
   fi
   echo "Sending \"Hi\" to ${#names[@]} account(s): one real request each, so it uses a little quota..." >&2
@@ -1710,8 +1698,9 @@ also receive "Hi" on gemini-4-argon-low and claude-sonnet-5-5-low. The table sho
 5-hour % before>after and the reset time. The accounts are handled like in 'agyr list' (in parallel on Linux, one after the
 other on Windows), the login in use is never touched, and the saved quota data is updated.
 
-Without names, accounts that are on cooldown (out of quota) or locked are skipped. A named account is always tried.
-A locked account is marked '!!' before its name, as in 'agyr list'.
+Without names, accounts that are on cooldown (out of quota) are skipped. A named account is always tried.
+A locked account ('agyr lock') is tested like any other, with or without names: only automatic rotation avoids it, and
+the table marks it with '!!' before its name, as in 'agyr list'.
 
 Options:
   -w, --wide     disable responsive table; always print all columns at full width
