@@ -115,7 +115,7 @@ agyr rename <old> <new>       # rename a slot (login, cooldown, and quota snapsh
 agyr del <name>               # permanently delete slot <name> (alias: rm; removes token, state, and active login if matching)
 agyr swapui <n1> <n2>         # swap UI display order of two accounts in agyr list without affecting agyr next rotation
 agyr swapui --reset           # restore default weekly reset display order in agyr list
-agyr test [name...]           # send "Hi" to every account to start its 5-hour window (spends real quota; see below)
+agyr test [-w] [name...]      # send "Hi" to every account to start its 5-hour window (spends real quota; see below)
 agyr forget                   # drop current local login to sign in to another account; refuses if unsaved (-f to force)
 agyr                          # start agy with the selected account (replaces bare `agy`); agyr -c, agyr -p "..." also work
 agyr run [agy args]           # identical to `agyr [agy args]`; use when the first arg is a word, e.g. `agyr run models`
@@ -175,7 +175,13 @@ Each account has its quota measured (0 tokens), receives one `agy -p Hi` request
 
 - **Spends real quota:** one request per account (~20k baseline context tokens, <1% of the 5-hour limit).
 - **Purpose:** trigger the 5-hour countdown window across accounts simultaneously. Note that the hypothesis "the 5-hour window starts on the first request" is unverified in official documentation; check whether `RESETS` prints `(was ...)` on a 100% account to see if the window moved.
-- A locked account (`agyr lock`) is marked `!!` in the first column, like in `agyr list` (the note under the table then adds `!! = locked account, do not use this`). The ACCOUNT column is only as wide as the markers and the longest name need, and the Argon/Claude columns and the HI/RESETS widths still adapt to the terminal.
+- A locked account (`agyr lock`) is marked `!!` in the first column, like in `agyr list` (the note under the table then adds `!! = locked account, do not use this`). The ACCOUNT column is only as wide as the markers and the longest name need.
+- **Responsive tiers:** When rendered on a terminal (or under `AGYR_RESPONSIVE=1`), the layout adapts progressively to fit the terminal width without wrapping:
+  - **Full table:** The `HI` and `RESETS` columns shrink (min 18 characters each). Optional Claude and Argon columns are hidden if width is constrained.
+  - **Compact table:** When narrower than the full table minimum, `RESETS` cells render compactly (`dd/mm HH:MM`, 24-hour time without year, with an optional `*` or `(was HH:MM)` if the window moved), `HI` text truncates with an ellipsis (preserving `ok in <N>s`), and long account names truncate with an ellipsis (`…`).
+  - **Vertical blocks:** When even the compact table cannot fit, switches to one aligned block per account with `HI`, `GEMINI 5H`, and optional Argon/Claude lines.
+  - Printed lines never exceed the terminal width for any width ≥ 30 (hard-truncated below 30).
+- **Wide mode (`-w`, `--wide`):** Never hides columns (Argon and Claude always). When terminal width is known, it adapts across the same progressive tiers (full table → compact cells → vertical blocks) without hiding columns; when terminal width is unknown (non-tty / script), it renders unconstrained at full width.
 - Without arguments, accounts on cooldown are skipped. Named accounts (`agyr test acct1 work`) are always tested. A locked account (`agyr lock`) is tested like any other, with or without names and with `-w`: the lock only keeps automatic rotation (`next`, `rotate`, `agy-run`) away from it.
 - Never touches the active login. Timed out after `AGYR_TEST_TIMEOUT` seconds (default 120).
 - Exit code: `0` if every tested account answered, `1` otherwise.
