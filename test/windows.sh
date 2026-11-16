@@ -1,5 +1,7 @@
+#!/usr/bin/env bash
 # Windows platform tests (wincred backend, MSYS path-conversion guards, platforms/windows/install.sh).
-# Sourced by test/run.sh.
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$TEST_DIR/lib.sh"
 
 echo "== wincred backend (Windows Credential Manager; here a fake one: nothing in this section touches a real login)"
 export AGYR_BACKEND=wincred
@@ -199,3 +201,4 @@ has "windows wrapper answers help" "agyr" "$("$INST_WIN/win/agyr" help 2>&1 | he
 mkdir -p "$INST_WIN/guard-wincmd" && echo mine >"$INST_WIN/guard-wincmd/agyr.cmd"
 if bash "$HERE/../platforms/windows/install.sh" "$INST_WIN/guard-wincmd" >/dev/null 2>&1; then fail "platforms/windows/install.sh refuses to replace an unrelated agyr.cmd"; else pass "platforms/windows/install.sh refuses to replace an unrelated agyr.cmd"; fi
 eq "the unrelated agyr.cmd file is left as it was" "mine" "$(cat "$INST_WIN/guard-wincmd/agyr.cmd")"
+exit 0

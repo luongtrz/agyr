@@ -1,5 +1,7 @@
+#!/usr/bin/env bash
 # Linux platform tests (file backend, GNOME keyring D-Bus bypass, platforms/linux/install.sh).
-# Sourced by test/run.sh.
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$TEST_DIR/lib.sh"
 
 echo "== run / keyring (agy >= 1.2.14)"
 setup
@@ -92,3 +94,4 @@ else
   fail "install.sh (piped) updates existing clone"
 fi
 has "install.sh (piped update) linked agyr answers help" "agyr" "$("$INST_LIN/piped-update/agyr" help 2>&1 | head -1)"
+exit 0
