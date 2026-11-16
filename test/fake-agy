@@ -50,8 +50,8 @@ for a in "$@"; do
     [[ "${FAKE_P5:-}" =~ ^[0-9]+$ ]] && p5_base="$FAKE_P5"
     for z in ${FAKE_LOW_TOKENS:-}; do [ "$z" = "$tok" ] && p5_base=5; done
     p5="$p5_base"
-    # every earlier 'agy -p Hi' call of this token with gemini-3.8-flash-high used 1% of the 5h quota (agyr test)
-    used="$(grep -F -- "$tok|-p Hi " "$FAKE_ARGS_LOG" 2>/dev/null | grep -cF -- "--model gemini-3.8-flash-high" || true)"
+    # every earlier 'agy -p Hi' call of this token with a gemini-3.8-flash model used 1% of the 5h quota (agyr test)
+    used="$(grep -F -- "$tok|-p Hi " "$FAKE_ARGS_LOG" 2>/dev/null | grep -cF -- "--model gemini-3.8-flash-" || true)"
     p5=$((p5 - ${used:-0})); [ "$p5" -ge 0 ] || p5=0
     used_argon="$(grep -F -- "$tok|-p Hi " "$FAKE_ARGS_LOG" 2>/dev/null | grep -cF -- "--model gemini-4-argon-low" || true)"
     used_claude="$(grep -F -- "$tok|-p Hi " "$FAKE_ARGS_LOG" 2>/dev/null | grep -cF -- "--model claude-sonnet-5-5-low" || true)"

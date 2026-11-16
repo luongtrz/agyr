@@ -1065,7 +1065,7 @@ cmd_run() {
 # terminal. Prints one line  STATUS<US>reply<US>error  (US = unit separator; reply/error on one line, cut at 200 chars)
 # or nothing when agy produced no result at all (then returns 1).
 hi_call() {
-  local home="$1" agyhome="$2" model="${3:-gemini-3.8-flash-high}" tmp res
+  local home="$1" agyhome="$2" model="${3:-gemini-3.8-flash-low}" tmp res
   tmp="$(mktemp -d)"
   local -a cap=()
   # timeout runs INSIDE setsid (PLATFORM_DETACH_WAIT): it then leads its own process group and kills agy and whatever agy started
@@ -1081,12 +1081,14 @@ hi_call() {
   printf '%s\n' "$res"
 }
 
+# Every "Hi" goes to the LOWEST-effort variant of its model (gemini-3.8-flash-low, gemini-4-argon-low, claude-sonnet-5-5-low): the only
+# point is to make the request, so the cheapest one keeps the quota and token cost down.
 # the probe measure_all runs for 'agyr test': quota before, "Hi", quota after (prints the raw quota output of the last one)
 test_probe() {
   local home="$1" agyhome="$2" name="$3" t0 res
   quota_fetch "$home" "$agyhome" >"$TEST_DIR/$name.before" 2>/dev/null || : >"$TEST_DIR/$name.before"
   t0="$(date +%s)"
-  res="$(hi_call "$home" "$agyhome" gemini-3.8-flash-high)" || res="NO_RESULT"$'\x1f'$'\x1f'
+  res="$(hi_call "$home" "$agyhome" gemini-3.8-flash-low)" || res="NO_RESULT"$'\x1f'$'\x1f'
   printf '%s\x1f%s\n' "$res" "$(($(date +%s) - t0))" >"$TEST_DIR/$name.hi"
   if grep -q '^Gemini 4 Argon	' "$TEST_DIR/$name.before" 2>/dev/null; then
     t0="$(date +%s)"
@@ -1692,7 +1694,7 @@ starts every window at the same moment. THAT IS AN ASSUMPTION, not something agy
 shows the reset time after the call and, when the call moved it, "(was hh:mm)" with the time before; if nothing moved for an
 account that had not been used, the Hi did not start a new window.
 
-For each account it measures the quota (0 tokens), sends "Hi" with 'agy -p Hi' (model gemini-3.8-flash-high, no tools,
+For each account it measures the quota (0 tokens), sends "Hi" with 'agy -p Hi' (model gemini-3.8-flash-low, the lowest effort, no tools,
 empty temporary directory, nothing of yours is read), then measures again. Accounts that have Gemini 4 Argon in their quota
 also receive "Hi" on gemini-4-argon-low and claude-sonnet-5-5-low. The table shows the reply (or the error), the
 5-hour % before>after and the reset time. The accounts are handled like in 'agyr list' (in parallel on Linux, one after the
