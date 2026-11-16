@@ -106,6 +106,7 @@ agyr cooldown <name> 4h13m    # mark an account on cooldown manually (also accep
 agyr clear <name>             # clear an account's cooldown
 agyr lock <name>              # exclude account from automatic rotation (agyr next / agy-run)
 agyr unlock <name>            # re-enable automatic rotation for account
+agyr locked [<name>]          # query locked accounts (list all, or exit 0 if <name> is locked)
 agyr next [-v]                # ready account whose weekly limit resets soonest (exit 3 if whole pool is on cooldown or locked); -v explains why on stderr
 agyr active                   # print active account name
 agyr save <name>              # save current token as a slot
@@ -146,9 +147,10 @@ Measured at 01/10/2026 02:58 PM   (* = selected account)
 
 - **Row order:** sorted by weekly reset time, soonest first (so quota about to renew is used first). Unmeasured or failed accounts appear last; ties break by name.
 - **`*` marker:** marks the slot whose `refresh_token` matches the live token file, rather than relying on stored state. If you sign in manually to an unsaved account, the table warns that the active login matches no slot and omits `*`.
+- **`!!` marker:** a locked account (`agyr lock`) shows `!!` after its name, and the note under the table then reads `(* = selected account, !! = locked account, do not use this)`. Its status column is unchanged.
 - **Colors** (terminal only): remaining percentage is **green** above 40%, **yellow** from 11% to 40%, **red** at 10% or below. Status column: `ready` green; `not measured` and `stale` yellow; `low`, `cooldown`, and `measure failed` red. Disable with `NO_COLOR=1` or `AGYR_COLOR=never`; force with `AGYR_COLOR=always`.
 - **Automatic cooldown sync:** measuring `0%` sets a cooldown until the reported reset time; measuring `>0%` clears any stale cooldown.
-- **Status values:** `ready`; `low` (≤10%); `weekly limit reached, 1h36m left` (when the weekly limit is exhausted, `agy` reports the 5-hour limit as `disabled` with no reset time, shown as `off` in the `GEMINI 5H` column, and sets a cooldown until the weekly reset); `cooldown, 15m left`; `locked` (or `locked, cooldown ...`); `not measured`; `stale, past reset time` (with `-c` only); `measure failed` (expired/revoked token or `agy` error; exits with code `1`).
+- **Status values:** `ready`; `low` (≤10%); `weekly limit reached, 1h36m left` (when the weekly limit is exhausted, `agy` reports the 5-hour limit as `disabled` with no reset time, shown as `off` in the `GEMINI 5H` column, and sets a cooldown until the weekly reset); `cooldown, 15m left`; `not measured`; `stale, past reset time` (with `-c` only); `measure failed` (expired/revoked token or `agy` error; exits with code `1`).
 
 ## `agyr test`: sending "Hi" to each account
 
@@ -183,14 +185,15 @@ Permanently removes:
 
 Refuses (exit 1) if `<name>` is invalid or the slot does not exist.
 
-## Locking an account slot (`agyr lock`, `agyr unlock`)
+## Locking an account slot (`agyr lock`, `agyr unlock`, `agyr locked`)
 
 ```bash
 agyr lock <name>          # exclude slot from automatic rotation
 agyr unlock <name>        # re-enable automatic rotation for slot
+agyr locked [<name>]      # query locked slots without taking locks or writing state
 ```
 
-When an account's quota is shared with another tool or product, locking it ensures it will never be chosen by automatic rotation (`agyr next`, `agyr rotate`, and `agy-run`). A locked account remains usable by hand (`agyr use <name>`), and `agyr list` continues to measure and display its quota.
+When an account's quota is shared with another tool or product, locking it ensures it will never be chosen by automatic rotation (`agyr next`, `agyr rotate`, and `agy-run`). If `agy-run` starts while the active account is locked, it automatically rotates to a ready account first before running agy. A locked account remains usable by hand (`agyr use <name>`), and `agyr list` continues to measure and display its quota.
 
 ## Customizing display order (`agyr swapui`)
 

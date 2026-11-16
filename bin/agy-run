@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # agy-run — run one agy task; when the account runs out of quota (429), kill agy, switch to
 # another account with agyr and resume the very same conversation.
+# Never runs on a locked account; rotates first if the active account is locked.
 #
 # Usage:
 #   agy-run --prompt FILE --add-dir DIR --log FILE.jsonl [--model M] [--conversation ID]
@@ -67,7 +68,8 @@ Usage: agy-run --prompt FILE --add-dir DIR --log FILE.jsonl [--model M] [--conve
   --model M           model to use (default gemini-3.8-flash-high)
   --conversation ID   resume an earlier conversation instead of starting fresh
 
-agy runs with --dangerously-skip-permissions --output-format stream-json. As soon as the log shows "Individual quota
+agy runs with --dangerously-skip-permissions --output-format stream-json. It never runs on a locked
+account: if the active account is locked, it rotates with 'agyr next' first. As soon as the log shows "Individual quota
 reached", agy is killed, the account gets a cooldown (from "Resets in ..."), agyr switches to the next ready account and
 the same conversation is resumed with --conversation <id>.
 
@@ -103,6 +105,15 @@ done
 
 CUR="$("$AGY_ACCT" active)" || die "agyr failed" 1
 [ -n "$CUR" ] || die "no active account; log in, then run: agyr save <name>" 4
+
+if "$AGY_ACCT" locked "$CUR"; then
+  log "account '$CUR' is locked; rotating before the run"
+  if ! NEXT="$("$AGY_ACCT" next -v)"; then
+    die "every unlocked account is out of quota (conversation ${CONV:-none}); wait for a reset or log in to another account" 5
+  fi
+  "$AGY_ACCT" use "$NEXT" >&2 || die "could not switch to '$NEXT'" 1
+  CUR="$NEXT"
+fi
 
 ORIG_PROMPT="$(cat "$PROMPT_FILE")"
 RESUME_NOTE="Continue the task from where you stopped. The previous account ran out of quota mid-run, so partial uncommitted edits may already exist in the working directory: check git status/diff first, finish them (do not run tests, builds or linters: the harness verifies afterwards), do not revert them."

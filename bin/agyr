@@ -396,6 +396,26 @@ cmd_unlock() {
   echo "unlocked account '$name'"
 }
 
+cmd_locked() {
+  need_jq; init_state
+  if [ $# -gt 1 ]; then die "usage: agyr locked [<name>]" 2; fi
+  if [ $# -eq 1 ]; then
+    local name="$1"
+    valid_name "$name"
+    [ -f "$ACCTS/$name.token" ] || die "no slot '$name'" 2
+    if is_locked "$name"; then
+      return 0
+    else
+      return 1
+    fi
+  fi
+  local n
+  while read -r n; do
+    [ -n "$n" ] || continue
+    if is_locked "$n"; then echo "$n"; fi
+  done < <(slots)
+}
+
 cmd_swapui() {
   need_jq; init_state
   if [ $# -eq 1 ] && { [ "$1" = "--reset" ] || [ "$1" = "reset" ]; }; then
@@ -907,7 +927,7 @@ print_table() {
   echo "$top"
   echo "$hdr"
   echo "$mid"
-  local row_idx=0
+  local row_idx=0 any_locked=0 ncell
   while read -r n; do
     local row_bg=""
     if [ $((row_idx % 2)) -eq 1 ]; then row_bg="$BG_ALT"; fi
@@ -918,21 +938,16 @@ print_table() {
     if [[ "$failed" == *" $n "* ]]; then g5=""; fi
     if [ -n "$g5" ] && { [ "$oldest" -eq 0 ] || [ "$at" -lt "$oldest" ]; }; then oldest=$at; fi
     until="$(cooldown_until "$n")"
-    local locked=0
-    if is_locked "$n"; then locked=1; fi
     if [[ "$failed" == *" $n "* ]]; then st="measure failed (token expired or agy error)"; sc="$R"
-    elif [ -n "$g5" ] && [ "$gw" -eq 0 ] && [ "$gwr" -gt "$t" ]; then
-      if [ "$locked" -eq 1 ]; then st="locked, weekly limit reached, $(fmt_dur $((gwr - t))) left"; else st="weekly limit reached, $(fmt_dur $((gwr - t))) left"; fi
-      sc="$R"
-    elif [ "$until" -gt "$t" ]; then
-      if [ "$locked" -eq 1 ]; then st="locked, cooldown $(fmt_dur $((until - t))) left"; else st="cooldown, $(fmt_dur $((until - t))) left"; fi
-      sc="$R"
-    elif [ "$locked" -eq 1 ]; then st="locked"; sc="$Y"
+    elif [ -n "$g5" ] && [ "$gw" -eq 0 ] && [ "$gwr" -gt "$t" ]; then st="weekly limit reached, $(fmt_dur $((gwr - t))) left"; sc="$R"
+    elif [ "$until" -gt "$t" ]; then st="cooldown, $(fmt_dur $((until - t))) left"; sc="$R"
     elif [ -z "$g5" ]; then st="not measured"; sc="$Y"
     elif { [ "$g5" != -1 ] && [ "$g5r" -le "$t" ]; } || [ "$gwr" -le "$t" ]; then st="stale, past reset time"; sc="$Y"
     elif { [ "$g5" != -1 ] && [ "$g5" -le 10 ]; } || [ "$gw" -le 10 ]; then st="low"; sc="$R"
     else st="ready"; sc="$G"; fi
     mark=" "; if [ "$n" = "$cur" ]; then mark="*"; fi
+    # a locked account (never picked by 'next'/'rotate'/agy-run) gets "!!" after its name; its status stays what it really is
+    ncell="$n"; if is_locked "$n"; then ncell="$n !!"; any_locked=1; fi
     local extra="" a5 a5r aw awr c5 c5r cw cwr
     IFS=$'\t' read -r c5 c5r cw cwr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.c5 // "-"),(.c5r // 0),(.cw // "-"),(.cwr // 0)] | @tsv' "$STATE")"
     [ "${c5:-}" = "-" ] && c5=""; [ "${cw:-}" = "-" ] && cw=""
@@ -946,7 +961,7 @@ print_table() {
     if [ "${#st}" -gt "$status_pad" ]; then
       st_disp="${st:0:$((status_pad - 1))}…"
     fi
-    printf '%s│ %s %-14s │ %s │ %s%s │ %s%-*s%s │%s\n' "$row_bg" "$mark" "$n" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$extra" "$sc" "$status_pad" "$st_disp" "$Z" "$ALL_RST"
+    printf '%s│ %s %-14s │ %s │ %s%s │ %s%-*s%s │%s\n' "$row_bg" "$mark" "$ncell" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$extra" "$sc" "$status_pad" "$st_disp" "$Z" "$ALL_RST"
   done < <(rows_for_list "$failed")
   echo "$bot"
   if [ "$claude_hidden" -eq 1 ] && [ "$argon_hidden" -eq 1 ]; then
@@ -959,12 +974,14 @@ print_table() {
   if [ -n "$LIVE" ] && [ -z "$cur" ]; then
     echo "${Y}! The login in use matches no slot (just logged in to another account?). Run 'agyr save <name>' to store it; 'agyr use' will not overwrite any slot.${ALL_RST:-$Z}"
   fi
+  local legend="* = selected account"
+  if [ "$any_locked" = 1 ]; then legend+=", !! = locked account, do not use this"; fi
   if [ "$live" = 1 ]; then
-    echo "Measured at $(fmt_time "$t")   (* = selected account)"
+    echo "Measured at $(fmt_time "$t")   ($legend)"
   elif [ "$oldest" -gt 0 ]; then
-    echo "Oldest data measured at $(fmt_time "$oldest"). Run 'agyr list' (without -c) to refresh.   (* = selected account)"
+    echo "Oldest data measured at $(fmt_time "$oldest"). Run 'agyr list' (without -c) to refresh.   ($legend)"
   else
-    echo "No quota data yet; run 'agyr list' (without -c) to measure.   (* = selected account)"
+    echo "No quota data yet; run 'agyr list' (without -c) to measure.   ($legend)"
   fi
 }
 
@@ -1441,6 +1458,7 @@ Commands:
   clear <name>             Remove an account's cooldown
   lock <name>              Exclude an account from automatic rotation ('next'/'rotate')
   unlock <name>            Re-enable automatic rotation for an account
+  locked [<name>]          Query locked slots (list all, or exit 0 if <name> is locked)
   test [name...]           Send "Hi" to every account (uses a little real quota) to start each 5-hour window
   forget [-f|--force]      Drop the login in use locally, so 'agyr' asks for a new login (replaces 'rm <token file>')
   backend                  Print where the login lives: file (Linux) or wincred (Windows Credential Manager)
@@ -1521,13 +1539,14 @@ Rows are ordered by when the weekly limit resets, soonest first (accounts withou
 last); this is the order in which the weekly limits free up.
 
   *            marks the account the real token file belongs to
+  !!           after a name: the account is locked ('agyr lock'): never picked by rotation, do not use it. Its status is
+               shown as usual
   GEMINI 5H    % left of the 5-hour limit and when it resets
   GEMINI WEEK  % left of the weekly limit and when it resets
   ARGON 5H / ARGON WEEK  the same for the Gemini 4 Argon model; shown only when an account reports that limit
   CLAUDE 5H / CLAUDE WEEK  the Claude and GPT models limits; kept only for accounts that also have Gemini 4 Argon
   STATUS       ready | low (10% or less left) | weekly limit reached, <time> left (the 5-hour limit then shows 'off':
-               it does not apply) | cooldown, <time> left | locked (or locked, cooldown/weekly limit) | not measured |
-               stale, past reset time | measure failed
+               it does not apply) | cooldown, <time> left | not measured | stale, past reset time | measure failed
 
 An account at 0% automatically gets a cooldown until its reset time; an account with quota left has its cooldown cleared.
 Colours: green above 40%, yellow 11-40%, red 10% or less. Only on a terminal (see NO_COLOR and AGYR_COLOR).
@@ -1595,6 +1614,15 @@ EOF
 Usage: agyr unlock <name>
 
 Re-enable automatic account rotation for slot <name>.
+EOF
+      ;;
+    locked) cat <<'EOF'
+Usage: agyr locked [<name>]
+
+Query locked slots without changing state or taking locks.
+
+Without arguments: print locked slot names, one per line, sorted (exit 0).
+With <name>: print nothing. Exit 0 if <name> is locked, 1 if not locked, 2 if the slot does not exist.
 EOF
       ;;
     next) cat <<'EOF'
@@ -1711,6 +1739,7 @@ main() {
     clear) cmd_clear "$@" ;;
     lock) cmd_lock "$@" ;;
     unlock) cmd_unlock "$@" ;;
+    locked) cmd_locked "$@" ;;
     next) cmd_next "$@" ;;
     rotate) cmd_rotate "$@" ;;
     run) cmd_run "$@" ;;

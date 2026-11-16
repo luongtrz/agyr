@@ -1936,18 +1936,42 @@ out="$("$ACCT" next 2>&1)"; rc=$?
 eq "next exit 3 when all accounts locked" "3" "$rc"
 has "next exit 3 mentions all accounts are locked" "all 3 accounts are locked" "$out"
 
-# list shows locked
+# list: a locked account gets "!!" after its name; its status stays what it really is; the note under the table explains it
+setup
+"$ACCT" list >/dev/null 2>&1
+out="$("$ACCT" list -c)"
+hasnt "no locked account: no !! marker" "!!" "$out"
+has "no locked account: the note stays the short one" "(* = selected account)" "$out"
+"$ACCT" lock acc2 >/dev/null
+out="$("$ACCT" list -c)"
+row_acc2="$(grep '  acc2 ' <<<"$out")"
+row_acc3="$(grep '  acc3 ' <<<"$out")"
+has "locked acc2: !! after the name" "acc2 !!" "$row_acc2"
+has "locked acc2: the status is unchanged" "ready" "$row_acc2"
+hasnt "locked acc2: no 'locked' text in the row" "locked" "$row_acc2"
+hasnt "unlocked acc3 has no marker" "!!" "$row_acc3"
+has "the note under the table explains !!" "(* = selected account, !! = locked account, do not use this)" "$out"
+eq "the !! marker keeps the table aligned (same row width)" "${#row_acc3}" "${#row_acc2}"
+out="$(AGYR_COLOR=always "$ACCT" list -c)"
+has "locked acc2 keeps the green ready status" "${GREEN}ready" "$(grep '  acc2 ' <<<"$out")"
+eq "with colour codes stripped the locked table equals the plain one" "$("$ACCT" list -c)" "$(strip <<<"$out")"
+# the active account can be locked too: both markers show
+"$ACCT" lock acc1 >/dev/null
+out="$("$ACCT" list -c)"
+has "active + locked: * and !! both show" "* acc1 !!" "$out"
+# a locked account on cooldown keeps the cooldown status
+"$ACCT" cooldown acc2 1h >/dev/null
+out="$("$ACCT" list -c)"
+row_acc2="$(grep '  acc2 ' <<<"$out")"
+has "locked + cooldown: status is the cooldown" "cooldown, 1h00m left" "$row_acc2"
+has "locked + cooldown: still marked !!" "acc2 !!" "$row_acc2"
+# never measured: the note is the long one too
 setup
 "$ACCT" lock acc2 >/dev/null
 out="$("$ACCT" list -c)"
-has "list -c shows locked status" "locked" "$out"
-row_acc2="$(grep '  acc2 ' <<<"$out")"
-has "row for acc2 shows locked" "locked" "$row_acc2"
-
-# list shows locked with cooldown
-"$ACCT" cooldown acc2 1h >/dev/null
-out="$("$ACCT" list -c)"
-has "list -c shows locked with cooldown" "locked, cooldown 1h00m left" "$out"
+has "never measured + locked: status says not measured" "not measured" "$(grep '  acc2 ' <<<"$out")"
+has "never measured + locked: !! after the name" "acc2 !!" "$out"
+has "never measured + locked: the note explains !!" "!! = locked account, do not use this)" "$out"
 
 # rename carries .locked flag, del clears it
 setup
@@ -1996,3 +2020,72 @@ has "help lock: usage" "Usage: agyr lock <name>" "$("$ACCT" help lock)"
 has "help unlock: usage" "Usage: agyr unlock <name>" "$("$ACCT" help unlock)"
 has "lock --help works" "Usage: agyr lock <name>" "$("$ACCT" lock --help)"
 has "unlock --help works" "Usage: agyr unlock <name>" "$("$ACCT" unlock --help)"
+
+# agyr locked with and without a name
+setup
+out="$("$ACCT" locked)"
+eq "locked with no accounts locked: empty output" "" "$out"
+
+# exit 1 when slot is not locked
+"$ACCT" locked acc2 >/dev/null 2>&1; rc=$?
+eq "locked on unlocked slot -> exit 1" "1" "$rc"
+out="$("$ACCT" locked acc2)"
+eq "locked on unlocked slot prints nothing" "" "$out"
+
+# exit 2 when slot does not exist
+"$ACCT" locked nope >/dev/null 2>&1; rc=$?
+eq "locked on nonexistent slot -> exit 2" "2" "$rc"
+out="$("$ACCT" locked nope 2>&1)"
+has "locked on nonexistent slot error message" "no slot 'nope'" "$out"
+
+# exit 0 when slot is locked
+"$ACCT" lock acc3 >/dev/null
+"$ACCT" lock acc1 >/dev/null
+"$ACCT" locked acc1 >/dev/null 2>&1; rc=$?
+eq "locked on locked slot -> exit 0" "0" "$rc"
+out="$("$ACCT" locked acc1)"
+eq "locked on locked slot prints nothing" "" "$out"
+
+# without a name: print locked slot names, one per line, sorted; exit 0
+out="$("$ACCT" locked)"
+eq "locked without args lists sorted locked slots" "acc1 acc3" "$(echo $out)"
+has "help locked: usage" "Usage: agyr locked" "$("$ACCT" help locked)"
+has "locked --help works" "Usage: agyr locked" "$("$ACCT" locked --help)"
+
+# agy-run started while active account is locked
+setup
+"$ACCT" lock acc1 >/dev/null
+runit; rc=$?
+eq "agy-run on locked active account: exit 0" "0" "$rc"
+has "agy-run logs rotation before run" "account 'acc1' is locked; rotating before the run" "$(cat "$T/run.err")"
+first="$(sed -n 1p "$FAKE_ARGS_LOG")"
+has "agy-run ran on rotated account (acc2)" "tok-acc2|" "$first"
+eq "locked account acc1 has no cooldown" "0" "$(cd_of acc1)"
+eq "active account switched to acc2" "acc2" "$("$ACCT" active)"
+eq "fake agy ran only once" "1" "$(lines)"
+
+# pre-flight switch does not count towards max-switch
+setup
+"$ACCT" lock acc1 >/dev/null
+AGY_RUN_MAX_SWITCH=0 runit; rc=$?
+eq "agy-run pre-flight does not count towards max-switch" "0" "$rc"
+first="$(sed -n 1p "$FAKE_ARGS_LOG")"
+has "ran on acc2 despite MAX_SWITCH=0" "tok-acc2|" "$first"
+
+# agy-run when active is locked and all other accounts are on cooldown -> exit 5
+setup
+"$ACCT" lock acc1 >/dev/null
+"$ACCT" cooldown acc2 2h >/dev/null
+"$ACCT" cooldown acc3 1h >/dev/null
+runit; rc=$?
+eq "agy-run with locked active and rest on cooldown -> exit 5" "5" "$rc"
+has "agy-run reports every unlocked account is out of quota" "every unlocked account is out of quota" "$(cat "$T/run.err")"
+eq "fake agy was not run when exit 5" "0" "$(lines)"
+
+# agy-run with non-locked active account behaves as before
+setup
+runit; rc=$?
+eq "agy-run with unlocked active account: exit 0" "0" "$rc"
+first="$(sed -n 1p "$FAKE_ARGS_LOG")"
+has "ran on active acc1" "tok-acc1|" "$first"
+hasnt "no pre-flight rotation logged" "is locked; rotating" "$(cat "$T/run.err")"
