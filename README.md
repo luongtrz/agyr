@@ -86,6 +86,8 @@ agyr save <name>           # Save current interactive sign-in as an account slot
 agyr swapui <n1> <n2>      # Swap UI display order of two accounts in 'agyr list' (--reset to restore)
 agyr del <name>            # Permanently delete an account slot (alias: rm)
 agyr rotate [cooldown]     # Manually rotate to the next ready account with cooldown
+agyr lock <name>           # Exclude account from automatic rotation (next/rotate/agy-run)
+agyr unlock <name>         # Re-enable automatic rotation for account
 agyr test [name...]        # Send "Hi" to every account to start its 5-hour quota window
 agyr forget                # Clear local active login before signing in to a new account
 agyr help [command]        # Detailed command documentation

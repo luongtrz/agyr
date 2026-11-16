@@ -54,7 +54,7 @@ if [ "$BACKEND" = wincred ]; then TOKEN_WHERE="Credential Manager entry ${AGY_CR
 init_state() {
   mkdir -p "$ACCTS"
   chmod 700 "$ACCTS"
-  [ -f "$STATE" ] || echo '{"active":"","cooldown":{}}' >"$STATE"
+  [ -f "$STATE" ] || echo '{"active":"","cooldown":{},"locked":{}}' >"$STATE"
 }
 
 # atomic state write: $1 = jq expression, remaining args are passed to jq
@@ -259,6 +259,8 @@ slots() { # sorted slot names
 
 cooldown_until() { jq -r --arg n "$1" '.cooldown[$n] // 0' "$STATE"; }
 
+is_locked() { [ "$(jq -r --arg n "$1" '((.locked // {})[$n] == true)' "$STATE" 2>/dev/null)" = "true" ]; }
+
 cmd_save() {
   [ $# -eq 1 ] || die "usage: agyr save <name>"
   valid_name "$1"; need_jq
@@ -325,6 +327,7 @@ cmd_rename() {
   mv "$ACCTS/$old.token" "$ACCTS/$new.token"
   state_update '(if .active == $o then .active = $n else . end)
     | (if ((.cooldown // {}) | has($o)) then .cooldown[$n] = .cooldown[$o] | del(.cooldown[$o]) else . end)
+    | (if ((.locked // {}) | has($o)) then .locked[$n] = .locked[$o] | del(.locked[$o]) else . end)
     | (if ((.quota // {}) | has($o)) then .quota[$n] = .quota[$o] | del(.quota[$o]) else . end)
     | (if .ui_order then .ui_order |= map(if . == $o then $n else . end) else . end)' --arg o "$old" --arg n "$new"
   echo "renamed slot '$old' to '$new'"
@@ -348,7 +351,7 @@ cmd_del() {
   if [ "$is_live" = 1 ]; then
     live_clear
   fi
-  state_update '(if .active == $n then .active = "" else . end) | del(.cooldown[$n]) | del(.quota[$n]) | (if .ui_order then .ui_order |= map(select(. != $n)) else . end)' --arg n "$name"
+  state_update '(if .active == $n then .active = "" else . end) | del(.cooldown[$n]) | del(.locked[$n]) | del(.quota[$n]) | (if .ui_order then .ui_order |= map(select(. != $n)) else . end)' --arg n "$name"
   lock_release
   if [ "$is_live" = 1 ]; then
     echo "deleted account '$name' (and cleared active login)"
@@ -362,6 +365,35 @@ cmd_clear() {
   valid_name "$1"; need_jq; init_state
   state_update 'del(.cooldown[$n])' --arg n "$1"
   echo "cleared cooldown of '$1'"
+}
+
+cmd_lock() {
+  [ $# -eq 1 ] || die "usage: agyr lock <name>"
+  local name="$1"
+  valid_name "$name"; need_jq; init_state
+  [ -f "$ACCTS/$name.token" ] || die "no slot '$name'"
+  if is_locked "$name"; then
+    echo "account '$name' is already locked"
+    return 0
+  fi
+  state_update '.locked = ((.locked // {}) | .[$n] = true)' --arg n "$name"
+  echo "locked account '$name'"
+  if [ "$name" = "$(active_name)" ]; then
+    echo "note: '$name' is currently in use; it stays in use until the next quota hit or 'agyr use <other>'"
+  fi
+}
+
+cmd_unlock() {
+  [ $# -eq 1 ] || die "usage: agyr unlock <name>"
+  local name="$1"
+  valid_name "$name"; need_jq; init_state
+  [ -f "$ACCTS/$name.token" ] || die "no slot '$name'"
+  if ! is_locked "$name"; then
+    echo "account '$name' is not locked"
+    return 0
+  fi
+  state_update 'if .locked then del(.locked[$n]) else . end' --arg n "$name"
+  echo "unlocked account '$name'"
 }
 
 cmd_swapui() {
@@ -401,18 +433,23 @@ cmd_swapui() {
   echo "swapped UI positions of '$a' and '$b' in 'agyr list'"
 }
 
-# Print the account to switch to: among the READY accounts (no cooldown) the one whose weekly limit resets soonest, from the last
+# Print the account to switch to: among the READY accounts (no cooldown, not locked) the one whose weekly limit resets soonest, from the last
 # measurement (the same order 'agyr list' shows); accounts never measured come last, ties by name. The account in use is only
-# returned when nothing else is ready. If none is ready: exit 3 and report the earliest end of a cooldown.
+# returned when nothing else is ready. Locked accounts are skipped entirely. If none is ready: exit 3 and report the earliest end of a cooldown
+# (or that accounts are on cooldown or locked).
 # -v / --why also prints, on stderr, which account was chosen and why.
 cmd_next() {
   local why=0
   case "${1:-}" in -v|--why) why=1 ;; esac
   need_jq; init_state
-  local cur t n until gwr earliest=0 earliest_n="" fallback="" total=0 nother=0 pick=""
+  local cur t n until gwr earliest=0 earliest_n="" fallback="" total=0 nother=0 pick="" nlocked=0
   cur="$(active_name)"; t="$(now)"
   while read -r n; do
     total=$((total + 1))
+    if is_locked "$n"; then
+      nlocked=$((nlocked + 1))
+      continue
+    fi
     until="$(cooldown_until "$n")"
     if [ "$until" -gt "$t" ]; then
       if [ "$earliest" -eq 0 ] || [ "$until" -lt "$earliest" ]; then earliest=$until; earliest_n=$n; fi
@@ -433,7 +470,17 @@ cmd_next() {
     echo "$pick"
     return 0
   fi
-  echo "agyr: all $total accounts are on cooldown; earliest: '$earliest_n' resets at $(fmt_time "$earliest") ($(fmt_dur $((earliest - t))) left)" >&2
+  local reason="on cooldown"
+  if [ "$nlocked" -eq "$total" ]; then
+    reason="locked"
+  elif [ "$nlocked" -gt 0 ]; then
+    reason="on cooldown or locked"
+  fi
+  if [ "$earliest" -gt 0 ]; then
+    echo "agyr: all $total accounts are $reason; earliest: '$earliest_n' resets at $(fmt_time "$earliest") ($(fmt_dur $((earliest - t))) left)" >&2
+  else
+    echo "agyr: all $total accounts are $reason" >&2
+  fi
   return 3
 }
 
@@ -871,9 +918,16 @@ print_table() {
     if [[ "$failed" == *" $n "* ]]; then g5=""; fi
     if [ -n "$g5" ] && { [ "$oldest" -eq 0 ] || [ "$at" -lt "$oldest" ]; }; then oldest=$at; fi
     until="$(cooldown_until "$n")"
+    local locked=0
+    if is_locked "$n"; then locked=1; fi
     if [[ "$failed" == *" $n "* ]]; then st="measure failed (token expired or agy error)"; sc="$R"
-    elif [ -n "$g5" ] && [ "$gw" -eq 0 ] && [ "$gwr" -gt "$t" ]; then st="weekly limit reached, $(fmt_dur $((gwr - t))) left"; sc="$R"
-    elif [ "$until" -gt "$t" ]; then st="cooldown, $(fmt_dur $((until - t))) left"; sc="$R"
+    elif [ -n "$g5" ] && [ "$gw" -eq 0 ] && [ "$gwr" -gt "$t" ]; then
+      if [ "$locked" -eq 1 ]; then st="locked, weekly limit reached, $(fmt_dur $((gwr - t))) left"; else st="weekly limit reached, $(fmt_dur $((gwr - t))) left"; fi
+      sc="$R"
+    elif [ "$until" -gt "$t" ]; then
+      if [ "$locked" -eq 1 ]; then st="locked, cooldown $(fmt_dur $((until - t))) left"; else st="cooldown, $(fmt_dur $((until - t))) left"; fi
+      sc="$R"
+    elif [ "$locked" -eq 1 ]; then st="locked"; sc="$Y"
     elif [ -z "$g5" ]; then st="not measured"; sc="$Y"
     elif { [ "$g5" != -1 ] && [ "$g5r" -le "$t" ]; } || [ "$gwr" -le "$t" ]; then st="stale, past reset time"; sc="$Y"
     elif { [ "$g5" != -1 ] && [ "$g5" -le 10 ]; } || [ "$gw" -le 10 ]; then st="low"; sc="$R"
@@ -1299,12 +1353,26 @@ cmd_test() {
     done
   else
     for n in "${all[@]}"; do
-      until="$(cooldown_until "$n")"
-      if [ "$until" -gt "$t" ]; then TEST_SKIP[$n]="cooldown, $(fmt_dur $((until - t))) left"; else TEST_TRY[$n]=1; names+=("$n"); fi
+      if is_locked "$n"; then
+        TEST_SKIP[$n]="locked"
+      else
+        until="$(cooldown_until "$n")"
+        if [ "$until" -gt "$t" ]; then TEST_SKIP[$n]="cooldown, $(fmt_dur $((until - t))) left"; else TEST_TRY[$n]=1; names+=("$n"); fi
+      fi
     done
   fi
   if [ "${#names[@]}" -eq 0 ]; then
-    echo "nothing to do: every account is on cooldown (name an account to send it \"Hi\" anyway: agyr test <name>)"
+    local skip_reason="on cooldown"
+    local has_locked=0 has_cd=0
+    for n in "${all[@]}"; do
+      if is_locked "$n"; then has_locked=1; else has_cd=1; fi
+    done
+    if [ "$has_locked" -eq 1 ] && [ "$has_cd" -eq 1 ]; then
+      skip_reason="on cooldown or locked"
+    elif [ "$has_locked" -eq 1 ]; then
+      skip_reason="locked"
+    fi
+    echo "nothing to do: every account is $skip_reason (name an account to send it \"Hi\" anyway: agyr test <name>)"
     return 0
   fi
   echo "Sending \"Hi\" to ${#names[@]} account(s): one real request each, so it uses a little quota..." >&2
@@ -1371,6 +1439,8 @@ Commands:
   next [-v]                Print the ready account whose weekly limit resets soonest (what agy-run switches to)
   cooldown <name> <time>   Mark an account as out of quota for a while
   clear <name>             Remove an account's cooldown
+  lock <name>              Exclude an account from automatic rotation ('next'/'rotate')
+  unlock <name>            Re-enable automatic rotation for an account
   test [name...]           Send "Hi" to every account (uses a little real quota) to start each 5-hour window
   forget [-f|--force]      Drop the login in use locally, so 'agyr' asks for a new login (replaces 'rm <token file>')
   backend                  Print where the login lives: file (Linux) or wincred (Windows Credential Manager)
@@ -1456,7 +1526,8 @@ last); this is the order in which the weekly limits free up.
   ARGON 5H / ARGON WEEK  the same for the Gemini 4 Argon model; shown only when an account reports that limit
   CLAUDE 5H / CLAUDE WEEK  the Claude and GPT models limits; kept only for accounts that also have Gemini 4 Argon
   STATUS       ready | low (10% or less left) | weekly limit reached, <time> left (the 5-hour limit then shows 'off':
-               it does not apply) | cooldown, <time> left | not measured | stale, past reset time | measure failed
+               it does not apply) | cooldown, <time> left | locked (or locked, cooldown/weekly limit) | not measured |
+               stale, past reset time | measure failed
 
 An account at 0% automatically gets a cooldown until its reset time; an account with quota left has its cooldown cleared.
 Colours: green above 40%, yellow 11-40%, red 10% or less. Only on a terminal (see NO_COLOR and AGYR_COLOR).
@@ -1513,14 +1584,27 @@ Usage: agyr clear <name>
 Remove the cooldown of <name>.
 EOF
       ;;
+    lock) cat <<'EOF'
+Usage: agyr lock <name>
+
+Exclude slot <name> from automatic account rotation ('agyr next', 'agyr rotate', and agy-run).
+A locked account is never chosen automatically, but remains usable manually with 'agyr use <name>'.
+EOF
+      ;;
+    unlock) cat <<'EOF'
+Usage: agyr unlock <name>
+
+Re-enable automatic account rotation for slot <name>.
+EOF
+      ;;
     next) cat <<'EOF'
 Usage: agyr next [-v|--why]
 
-Print the account to switch to: among the ready accounts (those not on cooldown) the one whose weekly limit resets soonest, from
+Print the account to switch to: among the ready accounts (those not on cooldown and not locked) the one whose weekly limit resets soonest, from
 the last measurement; this is the order 'agyr list' shows. Accounts never measured come last, ties are broken by name. The
-account in use is returned only when nothing else is ready. 'agy-run' and 'agyr rotate' use this to pick the next account,
+account in use is returned only when nothing else is ready. Locked accounts are skipped entirely. 'agy-run' and 'agyr rotate' use this to pick the next account,
 so keep the numbers fresh with 'agyr list'.
-If every account is on cooldown: print nothing, report on stderr which one resets first, and exit 3.
+If every account is on cooldown or locked: print nothing, report on stderr which one resets first (if any), and exit 3.
   -v, --why   also say on stderr which account was chosen and why
 EOF
       ;;
@@ -1566,7 +1650,7 @@ also receive "Hi" on gemini-4-argon-low and claude-sonnet-5-5-low. The table sho
 5-hour % before>after and the reset time. The accounts are handled like in 'agyr list' (in parallel on Linux, one after the
 other on Windows), the login in use is never touched, and the saved quota data is updated.
 
-Without names, accounts that are on cooldown (out of quota) are skipped. A named account is always tried.
+Without names, accounts that are on cooldown (out of quota) or locked are skipped. A named account is always tried.
 
 Options:
   -w, --wide     disable responsive table; always print all columns at full width
@@ -1611,7 +1695,7 @@ main() {
     -h|--help) if [ -n "$c" ]; then help_for "$c"; exit $?; fi ;;
   esac
   # commands that look at the login in use (cmd_use loads it itself, under the lock)
-  case "$c" in save|list|ls|active|next|rotate) live_load ;; esac
+  case "$c" in save|list|ls|active|next|rotate|lock) live_load ;; esac
   case "$c" in
     backend) cmd_backend ;;
     save) cmd_save "$@" ;;
@@ -1625,6 +1709,8 @@ main() {
     active) cmd_active "$@" ;;
     cooldown) cmd_cooldown "$@" ;;
     clear) cmd_clear "$@" ;;
+    lock) cmd_lock "$@" ;;
+    unlock) cmd_unlock "$@" ;;
     next) cmd_next "$@" ;;
     rotate) cmd_rotate "$@" ;;
     run) cmd_run "$@" ;;

@@ -1859,3 +1859,140 @@ eq "list -c reflects deleted slot removed from ui_order" "acc9 acc1" "$("$ACCT" 
 
 has "help swapui: mentions agyr swapui" "Usage: agyr swapui" "$("$ACCT" help swapui)"
 has "swapui --help works" "Usage: agyr swapui" "$("$ACCT" swapui --help)"
+
+echo "== lock / unlock"
+
+# lock of an unknown slot fails, wrong args
+setup
+out="$("$ACCT" lock nope 2>&1)"; rc=$?
+eq "lock unknown slot -> exit 1" "1" "$rc"
+has "lock unknown slot error message" "no slot 'nope'" "$out"
+out="$("$ACCT" unlock nope 2>&1)"; rc=$?
+eq "unlock unknown slot -> exit 1" "1" "$rc"
+has "unlock unknown slot error message" "no slot 'nope'" "$out"
+out="$("$ACCT" lock 2>&1)"; rc=$?
+eq "lock no args -> exit 1" "1" "$rc"
+has "lock no args error message" "usage: agyr lock <name>" "$out"
+out="$("$ACCT" unlock 2>&1)"; rc=$?
+eq "unlock no args -> exit 1" "1" "$rc"
+has "unlock no args error message" "usage: agyr unlock <name>" "$out"
+"$ACCT" lock '../x' >/dev/null 2>&1; eq "lock invalid name -> exit 1" "1" "$?"
+
+# lock / unlock round trip
+setup
+out="$("$ACCT" lock acc2 2>&1)"; rc=$?
+eq "lock acc2: exit 0" "0" "$rc"
+has "lock confirms" "locked account 'acc2'" "$out"
+eq "state .locked.acc2 is true" "true" "$(jq -r '(.locked.acc2 // false)' "$AGY_HOME/accounts/state.json")"
+
+# already locked: harmless no-op
+out="$("$ACCT" lock acc2 2>&1)"; rc=$?
+eq "lock already-locked -> exit 0" "0" "$rc"
+has "already locked message" "already locked" "$out"
+
+# locking active account prints note
+out="$("$ACCT" lock acc1 2>&1)"; rc=$?
+eq "lock active account: exit 0" "0" "$rc"
+has "locking active account confirms" "locked account 'acc1'" "$out"
+has "locking active account prints note" "currently in use" "$out"
+has "locking active account mentions stays in use" "stays in use" "$out"
+
+# unlock
+out="$("$ACCT" unlock acc2 2>&1)"; rc=$?
+eq "unlock acc2: exit 0" "0" "$rc"
+has "unlock confirms" "unlocked account 'acc2'" "$out"
+eq "state .locked.acc2 is removed" "null" "$(jq -r '.locked.acc2 // "null"' "$AGY_HOME/accounts/state.json")"
+
+# unlock already-unlocked: harmless no-op
+out="$("$ACCT" unlock acc2 2>&1)"; rc=$?
+eq "unlock already-unlocked -> exit 0" "0" "$rc"
+has "not locked message" "not locked" "$out"
+
+# next skips locked account (including when it has soonest weekly reset)
+setup
+FAKE_WEEK_ORDER=1 "$ACCT" list >/dev/null 2>&1
+eq "next normally picks acc3 (soonest weekly reset)" "acc3" "$("$ACCT" next)"
+"$ACCT" lock acc3 >/dev/null
+eq "next skips locked acc3 with soonest weekly reset" "acc2" "$("$ACCT" next)"
+"$ACCT" lock acc2 >/dev/null
+eq "next falls back to active acc1 when others are locked" "acc1" "$("$ACCT" next)"
+
+# next exit 3 when everything else is on cooldown and the rest locked
+setup
+"$ACCT" lock acc3 >/dev/null
+"$ACCT" cooldown acc1 1h >/dev/null
+"$ACCT" cooldown acc2 2h >/dev/null
+out="$("$ACCT" next 2>&1)"; rc=$?
+eq "next exit 3 when cooldown + locked" "3" "$rc"
+has "next exit 3 mentions cooldown or locked" "on cooldown or locked" "$out"
+has "next exit 3 mentions earliest reset" "'acc1'" "$out"
+
+# next exit 3 when all accounts are locked
+setup
+"$ACCT" lock acc1 >/dev/null
+"$ACCT" lock acc2 >/dev/null
+"$ACCT" lock acc3 >/dev/null
+out="$("$ACCT" next 2>&1)"; rc=$?
+eq "next exit 3 when all accounts locked" "3" "$rc"
+has "next exit 3 mentions all accounts are locked" "all 3 accounts are locked" "$out"
+
+# list shows locked
+setup
+"$ACCT" lock acc2 >/dev/null
+out="$("$ACCT" list -c)"
+has "list -c shows locked status" "locked" "$out"
+row_acc2="$(grep '  acc2 ' <<<"$out")"
+has "row for acc2 shows locked" "locked" "$row_acc2"
+
+# list shows locked with cooldown
+"$ACCT" cooldown acc2 1h >/dev/null
+out="$("$ACCT" list -c)"
+has "list -c shows locked with cooldown" "locked, cooldown 1h00m left" "$out"
+
+# rename carries .locked flag, del clears it
+setup
+"$ACCT" lock acc2 >/dev/null
+"$ACCT" rename acc2 renamed >/dev/null
+eq "rename moves .locked flag" "true" "$(jq -r '(.locked.renamed // false)' "$AGY_HOME/accounts/state.json")"
+eq "rename clears .locked for old name" "null" "$(jq -r '.locked.acc2 // "null"' "$AGY_HOME/accounts/state.json")"
+eq "next skips renamed locked account" "acc3" "$("$ACCT" next)"
+"$ACCT" del renamed >/dev/null
+eq "del removes .locked flag" "null" "$(jq -r '.locked.renamed // "null"' "$AGY_HOME/accounts/state.json")"
+
+# test skips locked without names
+setup
+"$ACCT" lock acc2 >/dev/null
+out="$("$ACCT" test 2>&1)"
+has "test without names skips locked account" "skipped (locked)" "$out"
+
+# test with names still tries locked account
+out="$("$ACCT" test acc2 2>&1)"
+hasnt "named locked account not skipped" "skipped" "$out"
+has "named locked account is tried" "ok in " "$out"
+
+# test when all accounts are locked reports nothing to do
+setup
+for a in acc1 acc2 acc3; do "$ACCT" lock "$a" >/dev/null; done
+out="$("$ACCT" test 2>&1)"
+has "test with all accounts locked reports nothing to do" "nothing to do: every account is locked" "$out"
+
+# manual use of a locked account works
+setup
+"$ACCT" lock acc2 >/dev/null
+out="$("$ACCT" use acc2)"
+has "use locked account works" "switched to account 'acc2'" "$out"
+eq "active is acc2 after use" "acc2" "$("$ACCT" active)"
+
+# old state.json without .locked key keeps working
+setup
+state="$(jq 'del(.locked)' "$AGY_HOME/accounts/state.json")"
+echo "$state" >"$AGY_HOME/accounts/state.json"
+eq "next works with old state file (no .locked)" "acc2" "$("$ACCT" next)"
+out="$("$ACCT" list -c)"
+has "list works with old state file" "not measured" "$out"
+
+# help lock and help unlock
+has "help lock: usage" "Usage: agyr lock <name>" "$("$ACCT" help lock)"
+has "help unlock: usage" "Usage: agyr unlock <name>" "$("$ACCT" help unlock)"
+has "lock --help works" "Usage: agyr lock <name>" "$("$ACCT" lock --help)"
+has "unlock --help works" "Usage: agyr unlock <name>" "$("$ACCT" unlock --help)"
