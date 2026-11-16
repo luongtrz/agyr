@@ -794,8 +794,21 @@ term_width() {
 
 # Print the table from state. $1 = names of accounts that failed to measure, $2 = 1 if measured just now.
 print_table() {
-  local failed=" $1 " live="$2" t cur n snap g5 g5r gw gwr at until st sc oldest=0 mark
+  local failed=" $1 " live="$2" t cur n snap g5 g5r gw gwr at until st sc oldest=0
   t="$(now)"; cur="$(real_owner)"
+  # ACCOUNT column = a marker gutter + the name. The gutter holds "*" (selected), "!!" (locked: never picked by 'next', 'rotate'
+  # or agy-run) or "*!!" (both) and is only as wide as the markers in use (1 when nothing is locked); the name part follows the
+  # longest name, never narrower than the header needs. acct_w is the whole cell, base_w the width of everything but STATUS.
+  local acct_g=1 acct_nw=14 acct_w base_w an mk
+  while read -r an; do
+    [ -n "$an" ] || continue
+    if [ "${#an}" -gt "$acct_nw" ]; then acct_nw=${#an}; fi
+    if is_locked "$an"; then
+      if [ "$an" = "$cur" ]; then acct_g=3; elif [ "$acct_g" -lt 2 ]; then acct_g=2; fi
+    fi
+  done < <(slots)
+  acct_w=$((acct_g + 1 + acct_nw))
+  base_w=$((77 + acct_w - 16))
   # Colours: green = fine, yellow = needs attention, red = nearly out / unusable. Only used on a terminal (or with
   # AGYR_COLOR=always); NO_COLOR or AGYR_COLOR=never turns them off. Colour codes sit outside the padded fields so the table stays aligned.
   local G="" Y="" R="" Z="" usecolor=0
@@ -846,13 +859,13 @@ print_table() {
     [ "$show_c5" -gt 0 ] && num_extra=$((num_extra + 1))
     [ "$show_cw" -gt 0 ] && num_extra=$((num_extra + 1))
 
-    local needed=$((77 + num_extra * 28 + def_s))
-    local min_needed=$((77 + num_extra * 28 + min_s))
+    local needed=$((base_w + num_extra * 28 + def_s))
+    local min_needed=$((base_w + num_extra * 28 + min_s))
 
     if [ "$tw" -ge "$needed" ]; then
       status_dash=$def_s
     elif [ "$tw" -ge "$min_needed" ]; then
-      status_dash=$((tw - 77 - num_extra * 28))
+      status_dash=$((tw - base_w - num_extra * 28))
     else
       # Not enough space with all extra columns. Hide Claude columns first!
       if [ "$show_c5" -gt 0 ] || [ "$show_cw" -gt 0 ]; then
@@ -861,12 +874,12 @@ print_table() {
         [ "$show_cw" -gt 0 ] && num_extra=$((num_extra - 1))
         show_c5=0; show_cw=0
       fi
-      needed=$((77 + num_extra * 28 + def_s))
-      min_needed=$((77 + num_extra * 28 + min_s))
+      needed=$((base_w + num_extra * 28 + def_s))
+      min_needed=$((base_w + num_extra * 28 + min_s))
       if [ "$tw" -ge "$needed" ]; then
         status_dash=$def_s
       elif [ "$tw" -ge "$min_needed" ]; then
-        status_dash=$((tw - 77 - num_extra * 28))
+        status_dash=$((tw - base_w - num_extra * 28))
       else
         # Still not enough space. Hide Argon columns too!
         if [ "$show_a5" -gt 0 ] || [ "$show_aw" -gt 0 ]; then
@@ -874,12 +887,12 @@ print_table() {
           num_extra=0
           show_a5=0; show_aw=0
         fi
-        needed=$((77 + def_s))
-        min_needed=$((77 + min_s))
+        needed=$((base_w + def_s))
+        min_needed=$((base_w + min_s))
         if [ "$tw" -ge "$needed" ]; then
           status_dash=$def_s
         elif [ "$tw" -ge "$min_needed" ]; then
-          status_dash=$((tw - 77))
+          status_dash=$((tw - base_w))
         else
           status_dash=$min_s
         fi
@@ -889,10 +902,10 @@ print_table() {
   fi
 
   local top mid bot hdr
-  top="┌$(table_dash 18)┬$(table_dash 27)┬$(table_dash 27)"
-  mid="├$(table_dash 18)┼$(table_dash 27)┼$(table_dash 27)"
-  bot="└$(table_dash 18)┴$(table_dash 27)┴$(table_dash 27)"
-  hdr="$(printf '│ %-16s │ %-25s │ %-25s' "ACCOUNT" "GEMINI 5H" "GEMINI WEEK")"
+  top="┌$(table_dash $((acct_w + 2)))┬$(table_dash 27)┬$(table_dash 27)"
+  mid="├$(table_dash $((acct_w + 2)))┼$(table_dash 27)┼$(table_dash 27)"
+  bot="└$(table_dash $((acct_w + 2)))┴$(table_dash 27)┴$(table_dash 27)"
+  hdr="$(printf '│ %-*s │ %-25s │ %-25s' "$acct_w" "ACCOUNT" "GEMINI 5H" "GEMINI WEEK")"
 
   if [ "$show_a5" -gt 0 ]; then
     top+="┬$(table_dash 27)"
@@ -945,9 +958,10 @@ print_table() {
     elif { [ "$g5" != -1 ] && [ "$g5r" -le "$t" ]; } || [ "$gwr" -le "$t" ]; then st="stale, past reset time"; sc="$Y"
     elif { [ "$g5" != -1 ] && [ "$g5" -le 10 ]; } || [ "$gw" -le 10 ]; then st="low"; sc="$R"
     else st="ready"; sc="$G"; fi
-    mark=" "; if [ "$n" = "$cur" ]; then mark="*"; fi
-    # a locked account (never picked by 'next'/'rotate'/agy-run) gets "!!" after its name; its status stays what it really is
-    ncell="$n"; if is_locked "$n"; then ncell="$n !!"; any_locked=1; fi
+    # marker gutter, then the name; a lock never changes the status, which stays what it really is
+    mk=""; if [ "$n" = "$cur" ]; then mk="*"; fi
+    if is_locked "$n"; then mk+="!!"; any_locked=1; fi
+    printf -v ncell '%-*s %s' "$acct_g" "$mk" "$n"
     local extra="" a5 a5r aw awr c5 c5r cw cwr
     IFS=$'\t' read -r c5 c5r cw cwr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.c5 // "-"),(.c5r // 0),(.cw // "-"),(.cwr // 0)] | @tsv' "$STATE")"
     [ "${c5:-}" = "-" ] && c5=""; [ "${cw:-}" = "-" ] && cw=""
@@ -961,7 +975,7 @@ print_table() {
     if [ "${#st}" -gt "$status_pad" ]; then
       st_disp="${st:0:$((status_pad - 1))}…"
     fi
-    printf '%s│ %s %-14s │ %s │ %s%s │ %s%-*s%s │%s\n' "$row_bg" "$mark" "$ncell" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$extra" "$sc" "$status_pad" "$st_disp" "$Z" "$ALL_RST"
+    printf '%s│ %-*s │ %s │ %s%s │ %s%-*s%s │%s\n' "$row_bg" "$acct_w" "$ncell" "$(cell "$g5" "$g5r")" "$(cell "$gw" "$gwr")" "$extra" "$sc" "$status_pad" "$st_disp" "$Z" "$ALL_RST"
   done < <(rows_for_list "$failed")
   echo "$bot"
   if [ "$claude_hidden" -eq 1 ] && [ "$argon_hidden" -eq 1 ]; then
@@ -1539,8 +1553,9 @@ Rows are ordered by when the weekly limit resets, soonest first (accounts withou
 last); this is the order in which the weekly limits free up.
 
   *            marks the account the real token file belongs to
-  !!           after a name: the account is locked ('agyr lock'): never picked by rotation, do not use it. Its status is
-               shown as usual
+  !!           in the same marker column as '*': the account is locked ('agyr lock'): never picked by rotation, do not
+               use it ('*!!' = the selected account is locked). Its status is shown as usual. The column widens
+               for long names
   GEMINI 5H    % left of the 5-hour limit and when it resets
   GEMINI WEEK  % left of the weekly limit and when it resets
   ARGON 5H / ARGON WEEK  the same for the Gemini 4 Argon model; shown only when an account reports that limit

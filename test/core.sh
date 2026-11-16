@@ -1936,7 +1936,7 @@ out="$("$ACCT" next 2>&1)"; rc=$?
 eq "next exit 3 when all accounts locked" "3" "$rc"
 has "next exit 3 mentions all accounts are locked" "all 3 accounts are locked" "$out"
 
-# list: a locked account gets "!!" after its name; its status stays what it really is; the note under the table explains it
+# list: a locked account gets "!!" in the same marker column as "*"; its status stays what it really is; the note under the table explains it
 setup
 "$ACCT" list >/dev/null 2>&1
 out="$("$ACCT" list -c)"
@@ -1944,34 +1944,58 @@ hasnt "no locked account: no !! marker" "!!" "$out"
 has "no locked account: the note stays the short one" "(* = selected account)" "$out"
 "$ACCT" lock acc2 >/dev/null
 out="$("$ACCT" list -c)"
-row_acc2="$(grep '  acc2 ' <<<"$out")"
+row_acc2="$(grep ' acc2 ' <<<"$out")"
 row_acc3="$(grep '  acc3 ' <<<"$out")"
-has "locked acc2: !! after the name" "acc2 !!" "$row_acc2"
+has "locked acc2: !! before the name" "!! acc2" "$row_acc2"
 has "locked acc2: the status is unchanged" "ready" "$row_acc2"
 hasnt "locked acc2: no 'locked' text in the row" "locked" "$row_acc2"
 hasnt "unlocked acc3 has no marker" "!!" "$row_acc3"
 has "the note under the table explains !!" "(* = selected account, !! = locked account, do not use this)" "$out"
 eq "the !! marker keeps the table aligned (same row width)" "${#row_acc3}" "${#row_acc2}"
+row_acc1="$(grep ' acc1 ' <<<"$out")"
+eq "!! sits in the same column as the * marker" "${row_acc1%%\**}" "${row_acc2%%!!*}"
+pfx1="${row_acc1%%acc1*}"; pfx2="${row_acc2%%acc2*}"; pfx3="${row_acc3%%acc3*}"
+eq "the names start in the same column (selected row vs locked row)" "${#pfx1}" "${#pfx2}"
+eq "an unmarked row keeps the name in that column too" "${#pfx1}" "${#pfx3}"
 out="$(AGYR_COLOR=always "$ACCT" list -c)"
-has "locked acc2 keeps the green ready status" "${GREEN}ready" "$(grep '  acc2 ' <<<"$out")"
+has "locked acc2 keeps the green ready status" "${GREEN}ready" "$(grep ' acc2 ' <<<"$out")"
 eq "with colour codes stripped the locked table equals the plain one" "$("$ACCT" list -c)" "$(strip <<<"$out")"
 # the active account can be locked too: both markers show
 "$ACCT" lock acc1 >/dev/null
 out="$("$ACCT" list -c)"
-has "active + locked: * and !! both show" "* acc1 !!" "$out"
+has "active + locked: * and !! both show" "*!! acc1" "$out"
 # a locked account on cooldown keeps the cooldown status
 "$ACCT" cooldown acc2 1h >/dev/null
 out="$("$ACCT" list -c)"
-row_acc2="$(grep '  acc2 ' <<<"$out")"
+row_acc2="$(grep ' acc2 ' <<<"$out")"
 has "locked + cooldown: status is the cooldown" "cooldown, 1h00m left" "$row_acc2"
-has "locked + cooldown: still marked !!" "acc2 !!" "$row_acc2"
+has "locked + cooldown: still marked !!" "!!" "$row_acc2"
+has "locked + cooldown: the name is still there" "acc2" "$row_acc2"
 # never measured: the note is the long one too
 setup
 "$ACCT" lock acc2 >/dev/null
 out="$("$ACCT" list -c)"
-has "never measured + locked: status says not measured" "not measured" "$(grep '  acc2 ' <<<"$out")"
-has "never measured + locked: !! after the name" "acc2 !!" "$out"
+has "never measured + locked: status says not measured" "not measured" "$(grep ' acc2 ' <<<"$out")"
+has "never measured + locked: !! before the name" "!! acc2" "$out"
 has "never measured + locked: the note explains !!" "!! = locked account, do not use this)" "$out"
+
+# the ACCOUNT column follows the longest name (a long name never pushes the other columns), with or without a locked account
+setup
+echo "tok-long" >"$AGY_HOME/antigravity-oauth-token"
+"$ACCT" save averylongaccountname01 >/dev/null
+"$ACCT" use acc1 >/dev/null
+out="$("$ACCT" list -c)"
+has "long name: shown in full" "averylongaccountname01" "$out"
+eq "long name: every data row is as wide as the header" "1" "$(grep '^│ ' <<<"$out" | while IFS= read -r l; do echo "${#l}"; done | sort -u | wc -l | tr -d ' ')"
+"$ACCT" lock averylongaccountname01 >/dev/null
+out="$("$ACCT" list -c)"
+has "long locked name: !! before the full name" "!! averylongaccountname01" "$out"
+eq "long locked name: every data row is as wide as the header" "1" "$(grep '^│ ' <<<"$out" | while IFS= read -r l; do echo "${#l}"; done | sort -u | wc -l | tr -d ' ')"
+# the selected account locked too: all three markers' widths still line up
+"$ACCT" lock acc1 >/dev/null
+out="$("$ACCT" list -c)"
+has "selected + locked next to a long locked name: *!! before the name" "*!! acc1" "$out"
+eq "selected + locked: every data row is as wide as the header" "1" "$(grep '^│ ' <<<"$out" | while IFS= read -r l; do echo "${#l}"; done | sort -u | wc -l | tr -d ' ')"
 
 # rename carries .locked flag, del clears it
 setup
