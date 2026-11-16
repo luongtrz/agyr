@@ -1148,6 +1148,17 @@ print_test_table() {
     fi
   done
 
+  # ACCOUNT column: the same marker gutter as 'agyr list' ("!!" = locked, do not use it; 1 wide, i.e. the old 2-space indent, when
+  # nothing is locked) followed by the name, as wide as the longest name needs. aw_extra = how much wider than the old fixed 16.
+  local acct_g=1 acct_nw=14 acct_w an mk ncell any_locked=0
+  while read -r an; do
+    [ -n "$an" ] || continue
+    if [ "${#an}" -gt "$acct_nw" ]; then acct_nw=${#an}; fi
+    if is_locked "$an"; then acct_g=2; fi
+  done < <(slots)
+  acct_w=$((acct_g + 1 + acct_nw))
+  local aw_extra=$((acct_w - 16))
+
   local is_tty=0; [ -t 1 ] && is_tty=1
   local tw; tw="$(term_width "$is_tty")"
   local show_test_claude=1 show_test_argon=1
@@ -1156,10 +1167,10 @@ print_test_table() {
 
   if [ "$has_argon" -eq 1 ]; then
     if [ "$tw" -gt 0 ]; then
-      if [ "$tw" -lt 228 ]; then show_test_claude=0; fi
-      if [ "$tw" -lt 175 ]; then show_test_argon=0; fi
-      if [ "$tw" -lt 122 ]; then
-        local avail=$((tw - 1 - 18 - 1 - 14 - 1 - 2))
+      if [ "$tw" -lt $((228 + aw_extra)) ]; then show_test_claude=0; fi
+      if [ "$tw" -lt $((175 + aw_extra)) ]; then show_test_argon=0; fi
+      if [ "$tw" -lt $((122 + aw_extra)) ]; then
+        local avail=$((tw - 1 - (acct_w + 2) - 1 - 14 - 1 - 2))
         [ "$avail" -lt 36 ] && avail=36
         hi_dash=$((avail * 55 / 100))
         rst_dash=$((avail - hi_dash))
@@ -1170,8 +1181,8 @@ print_test_table() {
       fi
     fi
   else
-    if [ "$tw" -gt 0 ] && [ "$tw" -lt 122 ]; then
-      local avail=$((tw - 1 - 18 - 1 - 14 - 1 - 2))
+    if [ "$tw" -gt 0 ] && [ "$tw" -lt $((122 + aw_extra)) ]; then
+      local avail=$((tw - 1 - (acct_w + 2) - 1 - 14 - 1 - 2))
       [ "$avail" -lt 36 ] && avail=36
       hi_dash=$((avail * 55 / 100))
       rst_dash=$((avail - hi_dash))
@@ -1185,10 +1196,10 @@ print_test_table() {
   local argon_hdr="ARGON WEEK"
   if [ "$has_argon_5h" -eq 1 ]; then argon_hdr="ARGON 5H"; fi
   local top mid bot test_hdr
-  top="┌$(table_dash 18)┬$(table_dash "$hi_dash")┬$(table_dash 14)┬$(table_dash "$rst_dash")"
-  mid="├$(table_dash 18)┼$(table_dash "$hi_dash")┼$(table_dash 14)┼$(table_dash "$rst_dash")"
-  bot="└$(table_dash 18)┴$(table_dash "$hi_dash")┴$(table_dash 14)┴$(table_dash "$rst_dash")"
-  test_hdr="$(printf '│ %-16s │ %-*s │ %-12s │ %-*s' "ACCOUNT" "$hi_pad" "HI" "GEMINI 5H" "$rst_pad" "RESETS")"
+  top="┌$(table_dash $((acct_w + 2)))┬$(table_dash "$hi_dash")┬$(table_dash 14)┬$(table_dash "$rst_dash")"
+  mid="├$(table_dash $((acct_w + 2)))┼$(table_dash "$hi_dash")┼$(table_dash 14)┼$(table_dash "$rst_dash")"
+  bot="└$(table_dash $((acct_w + 2)))┴$(table_dash "$hi_dash")┴$(table_dash 14)┴$(table_dash "$rst_dash")"
+  test_hdr="$(printf '│ %-*s │ %-*s │ %-12s │ %-*s' "$acct_w" "ACCOUNT" "$hi_pad" "HI" "GEMINI 5H" "$rst_pad" "RESETS")"
 
   if [ "$has_argon" -eq 1 ] && [ "$show_test_argon" -eq 1 ]; then
     top+="┬$(table_dash 14)┬$(table_dash 37)"
@@ -1215,6 +1226,10 @@ print_test_table() {
     local row_bg=""
     if [ $((row_idx % 2)) -eq 1 ]; then row_bg="$BG_ALT"; fi
     row_idx=$((row_idx + 1))
+    # marker gutter then the name (same as 'agyr list'); a lock is only a marker, the row says what happened as usual
+    mk=""; if is_locked "$n"; then mk="!!"; fi
+    printf -v ncell '%-*s %s' "$acct_g" "$mk" "$n"
+    if [ -n "$mk" ] && { [ -n "${TEST_SKIP[$n]:-}" ] || [ -n "${TEST_TRY[$n]:-}" ]; }; then any_locked=1; fi
     if [ -n "${TEST_SKIP[$n]:-}" ]; then
       local skip_txt="skipped (${TEST_SKIP[$n]})"
       [ "${#skip_txt}" -gt "$hi_pad" ] && skip_txt="${skip_txt:0:$((hi_pad - 1))}…"
@@ -1225,7 +1240,7 @@ print_test_table() {
       if [ "$has_argon" -eq 1 ] && [ "$show_test_claude" -eq 1 ]; then
         extra+="$(printf ' │ %-12s │ %-35s' "-" "-")"
       fi
-      printf '%s│ %-16s │ %s%-*s%s │ %-12s │ %-*s%s │%s\n' "$row_bg" "  $n" "$Y" "$hi_pad" "$skip_txt" "$Z" "-" "$rst_pad" "-" "$extra" "$ALL_RST"
+      printf '%s│ %-*s │ %s%-*s%s │ %-12s │ %-*s%s │%s\n' "$row_bg" "$acct_w" "$ncell" "$Y" "$hi_pad" "$skip_txt" "$Z" "-" "$rst_pad" "-" "$extra" "$ALL_RST"
       continue
     fi
     [ -n "${TEST_TRY[$n]:-}" ] || continue
@@ -1344,7 +1359,7 @@ print_test_table() {
     if [ "$has_argon" -eq 1 ] && [ "$show_test_claude" -eq 1 ]; then
       extra+="$(printf ' │ %-12s │ %-35s' "${claude_val:-?}" "${claude_rst:--}")"
     fi
-    printf '%s│ %-16s │ %s%-*s%s │ %-12s │ %-*s%s │%s\n' "$row_bg" "  $n" "$hcol" "$hi_pad" "$txt" "$Z" "${before:-?}>${after:-?}" "$rst_pad" "$reset_disp" "$extra" "$ALL_RST"
+    printf '%s│ %-*s │ %s%-*s%s │ %-12s │ %-*s%s │%s\n' "$row_bg" "$acct_w" "$ncell" "$hcol" "$hi_pad" "$txt" "$Z" "${before:-?}>${after:-?}" "$rst_pad" "$reset_disp" "$extra" "$ALL_RST"
   done < <(slots)
   echo "$bot"
   if [ "$has_argon" -eq 1 ]; then
@@ -1354,7 +1369,9 @@ print_test_table() {
       echo "(Note: Claude columns hidden to fit terminal width ${tw}. Use 'agyr test -w' to show all)"
     fi
   fi
-  echo "Measured at $(fmt_time "$(now)")   (GEMINI 5H = before>after; RESETS = end of the account's current 5-hour window; \"(was ...)\" = it moved because of the Hi)"
+  local lock_note=""
+  if [ "$any_locked" = 1 ]; then lock_note="; !! = locked account, do not use this"; fi
+  echo "Measured at $(fmt_time "$(now)")   (GEMINI 5H = before>after; RESETS = end of the account's current 5-hour window; \"(was ...)\" = it moved because of the Hi${lock_note})"
 }
 
 # test [name...]: send "Hi" to every account (or only the named ones) and show what it cost
@@ -1694,6 +1711,7 @@ also receive "Hi" on gemini-4-argon-low and claude-sonnet-5-5-low. The table sho
 other on Windows), the login in use is never touched, and the saved quota data is updated.
 
 Without names, accounts that are on cooldown (out of quota) or locked are skipped. A named account is always tried.
+A locked account is marked '!!' before its name, as in 'agyr list'.
 
 Options:
   -w, --wide     disable responsive table; always print all columns at full width

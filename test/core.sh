@@ -2024,6 +2024,44 @@ for a in acc1 acc2 acc3; do "$ACCT" lock "$a" >/dev/null; done
 out="$("$ACCT" test 2>&1)"
 has "test with all accounts locked reports nothing to do" "nothing to do: every account is locked" "$out"
 
+# agyr test table: the same marker column as 'agyr list' ("!!" = locked), the note explains it, nothing shifts
+setup
+out="$("$ACCT" test 2>/dev/null)"
+hasnt "test table: nothing locked -> no !! marker" "!!" "$out"
+hasnt "test table: nothing locked -> no lock note" "locked account" "$out"
+"$ACCT" lock acc2 >/dev/null
+out="$("$ACCT" test 2>/dev/null)"
+row_acc1="$(grep ' acc1 ' <<<"$out")"; row_acc2="$(grep ' acc2 ' <<<"$out")"; row_acc3="$(grep ' acc3 ' <<<"$out")"
+has "test table: locked acc2 is marked !!" "!! acc2" "$row_acc2"
+has "test table: locked acc2 says it was skipped" "skipped (locked)" "$row_acc2"
+hasnt "test table: unlocked acc1 has no marker" "!!" "$row_acc1"
+has "test table: unlocked acc1 was tested" "ok in" "$row_acc1"
+has "test table: the note explains !!" "!! = locked account, do not use this)" "$out"
+pfx1="${row_acc1%%acc1*}"; pfx2="${row_acc2%%acc2*}"; pfx3="${row_acc3%%acc3*}"
+eq "test table: names start in the same column (marked vs unmarked row)" "${#pfx1}" "${#pfx2}"
+eq "test table: acc3 too" "${#pfx1}" "${#pfx3}"
+eq "test table: every data row is as wide as the header" "1" "$(grep '^│ ' <<<"$out" | while IFS= read -r l; do echo "${#l}"; done | sort -u | wc -l | tr -d ' ')"
+# a named locked account is still tried (the user asked for it) and stays marked
+out="$("$ACCT" test acc2 2>/dev/null)"
+row_acc2="$(grep ' acc2 ' <<<"$out")"
+has "test table: named locked account is marked !!" "!! acc2" "$row_acc2"
+has "test table: named locked account was tried" "ok in" "$row_acc2"
+# a long name widens the ACCOUNT column, with and without a lock, and every row keeps the same width
+setup
+echo "tok-long" >"$AGY_HOME/antigravity-oauth-token"
+"$ACCT" save averylongaccountname01 >/dev/null
+"$ACCT" use acc1 >/dev/null
+out="$("$ACCT" test 2>/dev/null)"
+has "test table: long name shown in full" "averylongaccountname01" "$out"
+eq "test table: long name, every data row has the same width" "1" "$(grep '^│ ' <<<"$out" | while IFS= read -r l; do echo "${#l}"; done | sort -u | wc -l | tr -d ' ')"
+"$ACCT" lock averylongaccountname01 >/dev/null
+out="$("$ACCT" test 2>/dev/null)"
+has "test table: long locked name: !! before the full name" "!! averylongaccountname01" "$out"
+eq "test table: long locked name, every data row has the same width" "1" "$(grep '^│ ' <<<"$out" | while IFS= read -r l; do echo "${#l}"; done | sort -u | wc -l | tr -d ' ')"
+# narrow terminal: the shrunk table still fits when a lock widens the ACCOUNT column
+out="$(AGYR_RESPONSIVE=1 AGYR_COLUMNS=120 "$ACCT" test 2>/dev/null)"
+eq "test table at 120 columns with a locked account: no line wider than the terminal" "0" "$(grep '^[│┌├└]' <<<"$out" | while IFS= read -r l; do echo "${#l}"; done | awk '$1 > 120' | wc -l | tr -d ' ')"
+
 # manual use of a locked account works
 setup
 "$ACCT" lock acc2 >/dev/null

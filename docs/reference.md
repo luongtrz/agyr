@@ -168,6 +168,7 @@ Each account has its quota measured (0 tokens), receives one `agy -p Hi` request
 
 - **Spends real quota:** one request per account (~20k baseline context tokens, <1% of the 5-hour limit).
 - **Purpose:** trigger the 5-hour countdown window across accounts simultaneously. Note that the hypothesis "the 5-hour window starts on the first request" is unverified in official documentation; check whether `RESETS` prints `(was ...)` on a 100% account to see if the window moved.
+- A locked account (`agyr lock`) is marked `!!` in the first column, like in `agyr list` (the note under the table then adds `!! = locked account, do not use this`). The ACCOUNT column is only as wide as the markers and the longest name need, and the Argon/Claude columns and the HI/RESETS widths still adapt to the terminal.
 - Without arguments, accounts on cooldown or locked are skipped. Named accounts (`agyr test acct1 work`) are always tested.
 - Never touches the active login. Timed out after `AGYR_TEST_TIMEOUT` seconds (default 120).
 - Exit code: `0` if every tested account answered, `1` otherwise.
