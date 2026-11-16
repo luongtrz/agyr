@@ -35,7 +35,8 @@ The install scripts only create symlinks or wrappers; they never sign in or read
 
 ### Repository layout
 
-- `bin/`: the three entry-point commands (`agyr`, `agy-run`, `agy-task`), free of platform-specific code.
+- `bin/`: the three entry-point commands (`agyr`, `agy-run`, `agy-task`), free of platform-specific code. `bin/agyr` resolves its real location with `readlink -f` before sourcing `../lib/agyr/`, so installed symlinks and Windows wrappers work from any current directory.
+- `lib/agyr/`: sourced Bash modules: `common.sh` (state/time helpers), `login.sh` (live login and locks), `accounts.sh` (account commands), `rotation.sh` (`next`/`rotate` and ordering), `quota.sh` (measurement), `table.sh` (terminal formatting), `list.sh` (list/run), `test.sh` (test workflow/table), and `help.sh` (usage/help text).
 - `install.sh`: unified root installer (auto-detects OS via `uname -s`).
 - `platforms/linux/`: `platform.sh` (Linux invocation layer: keyring bypass, `setsid`) and `install.sh` (symlink installer).
 - `platforms/windows/`: `platform.sh` (Git Bash: path conversion, `taskkill`, argument conversion guard), `cred.sh` and `cred.ps1` (read/write Credential Manager entries), `inspect-cred.ps1` (metadata diagnostics), and `install.sh` (writes bash and `.cmd` wrappers).
