@@ -4,6 +4,8 @@ cmd_next() {
   need_jq; init_state
   local cur t n until gwr earliest=0 earliest_n="" fallback="" total=0 nother=0 pick="" nlocked=0
   cur="$(active_name)"; t="$(now)"
+  local STATE_LOADED=1; local -A s_locked=() s_cooldown=() # lock / cooldown of every account from ONE jq call, not 2 per account
+  state_cache_fill
   while read -r n; do
     total=$((total + 1))
     if is_locked "$n"; then

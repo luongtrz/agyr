@@ -87,3 +87,18 @@ is_locked() {
     [ "$(jq -r --arg n "$1" '((.locked // {})[$n] == true)' "$STATE" 2>/dev/null)" = "true" ]
   fi
 }
+
+# Fill the lock / cooldown cache with ONE jq call. The caller declares `local STATE_LOADED=1` and `local -A s_locked=() s_cooldown=()`
+# first (bash scoping: cooldown_until and is_locked above then read these arrays instead of spawning jq per account).
+state_cache_fill() {
+  local n l c
+  while IFS=$'\t' read -r n l c; do
+    if [ "$l" = 1 ]; then s_locked["$n"]=1; fi
+    if [ "$c" != 0 ]; then s_cooldown["$n"]="$c"; fi
+  done < <(jq -r '
+    ((.locked // {}) | if type == "object" then . else {} end) as $l |
+    ((.cooldown // {}) | if type == "object" then . else {} end) as $c |
+    (($l | keys) + ($c | keys) | unique)[] as $n |
+    [$n, (if $l[$n] == true then 1 else 0 end), ($c[$n] // 0)] | @tsv' "$STATE" 2>/dev/null)
+  return 0
+}
