@@ -101,8 +101,13 @@ cmd_rotate() {
 # AGY_HOME is also pointed there so the fake agy in tests reads the right token; real agy ignores it.
 rows_by_week_reset() {
   local failed="$1" n gwr
+  # every weekly reset time in ONE jq call (not one per account)
+  local -A week_reset=()
+  while IFS=$'\t' read -r n gwr; do
+    week_reset["$n"]="$gwr"
+  done < <(jq -r '(.quota // {}) | to_entries[] | .value.gwr as $g | select($g != null and $g != false) | [.key, $g] | @tsv' "$STATE")
   while read -r n; do
-    gwr="$(jq -r --arg n "$n" '.quota[$n].gwr // empty' "$STATE")"
+    gwr="${week_reset["$n"]:-}"
     if [[ "$failed" == *" $n "* ]] || [ -z "$gwr" ]; then gwr=99999999999; fi
     printf '%s %s\n' "$gwr" "$n"
   done < <(slots) | sort -k1,1n -k2,2 | cut -d' ' -f2

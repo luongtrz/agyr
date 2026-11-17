@@ -91,6 +91,85 @@ acct_status() {
 print_table() {
   local failed=" $1 " live="$2" t cur n g5 g5r gw gwr at until st sc oldest=0
   t="$(now)"; cur="$(real_owner)"
+
+  local STATE_LOADED=1
+  local -A s_locked=() s_cooldown=() q_has=()
+  local -A q_g5=() q_g5r=() q_gw=() q_gwr=() q_at=()
+  local -A q_a5=() q_a5r=() q_aw=() q_awr=()
+  local -A q_c5=() q_c5r=() q_cw=() q_cwr=()
+  local show_a5=0 show_aw=0 show_c5=0 show_cw=0
+
+  if [ -f "$STATE" ]; then
+    local first_line=1 c_n c_is_l c_cd c_has_q c_g5 c_g5r c_gw c_gwr c_at c_a5 c_a5r c_aw c_awr c_c5 c_c5r c_cw c_cwr
+    while IFS=$'\t' read -r c_n c_is_l c_cd c_has_q c_g5 c_g5r c_gw c_gwr c_at c_a5 c_a5r c_aw c_awr c_c5 c_c5r c_cw c_cwr; do
+      if [ "$first_line" = 1 ]; then
+        first_line=0
+        show_a5="$c_n"
+        show_aw="$c_is_l"
+        if [ -n "${AGYR_CLAUDE:-}" ]; then
+          show_c5="$c_cd"
+          show_cw="$c_has_q"
+        fi
+        continue
+      fi
+      [ -n "$c_n" ] || continue
+      [ "$c_is_l" = 1 ] && s_locked["$c_n"]=1 || :
+      [ "$c_cd" != 0 ] && s_cooldown["$c_n"]="$c_cd" || :
+      if [ "$c_has_q" = 1 ]; then
+        q_has["$c_n"]=1
+        [ "$c_g5" != "-" ] && q_g5["$c_n"]="$c_g5" || :
+        q_g5r["$c_n"]="$c_g5r"
+        [ "$c_gw" != "-" ] && q_gw["$c_n"]="$c_gw" || :
+        q_gwr["$c_n"]="$c_gwr"
+        q_at["$c_n"]="$c_at"
+        [ "$c_a5" != "-" ] && q_a5["$c_n"]="$c_a5" || :
+        q_a5r["$c_n"]="$c_a5r"
+        [ "$c_aw" != "-" ] && q_aw["$c_n"]="$c_aw" || :
+        q_awr["$c_n"]="$c_awr"
+        [ "$c_c5" != "-" ] && q_c5["$c_n"]="$c_c5" || :
+        q_c5r["$c_n"]="$c_c5r"
+        [ "$c_cw" != "-" ] && q_cw["$c_n"]="$c_cw" || :
+        q_cwr["$c_n"]="$c_cwr"
+      fi
+    done < <(jq -r '
+      (
+        [
+          ([.quota[]? | select(.a5 != null)] | length),
+          ([.quota[]? | select(.aw != null)] | length),
+          ([.quota[]? | select(.c5 != null)] | length),
+          ([.quota[]? | select(.cw != null)] | length)
+        ] | @tsv
+      ),
+      (
+        ((.quota // {}) | if type == "object" then . else {} end) as $q |
+        ((.locked // {}) | if type == "object" then . else {} end) as $l |
+        ((.cooldown // {}) | if type == "object" then . else {} end) as $c |
+        (
+          ($q | keys) + ($l | keys) + ($c | keys) | unique
+        )[] as $n |
+        [
+          $n,
+          (if $l[$n] == true then 1 else 0 end),
+          ($c[$n] // 0),
+          (if $q[$n] != null then 1 else 0 end),
+          ($q[$n].g5 // "-"),
+          ($q[$n].g5r // 0),
+          ($q[$n].gw // "-"),
+          ($q[$n].gwr // 0),
+          ($q[$n].at // 0),
+          ($q[$n].a5 // "-"),
+          ($q[$n].a5r // 0),
+          ($q[$n].aw // "-"),
+          ($q[$n].awr // 0),
+          ($q[$n].c5 // "-"),
+          ($q[$n].c5r // 0),
+          ($q[$n].cw // "-"),
+          ($q[$n].cwr // 0)
+        ] | @tsv
+      )
+    ' "$STATE" 2>/dev/null || true)
+  fi
+
   local acct_g=1 acct_nw=14 acct_w base_w an mk max_nl=0
   while read -r an; do
     [ -n "$an" ] || continue
@@ -118,14 +197,6 @@ print_table() {
     elif [ -z "$1" ] || [ "$2" -le "$t" ]; then printf '%4s  %-10s' '-' ''
     else printf '%s %-11s' "$(pct "$1")" "$(fmt_short_time "$2")"; fi
   }
-
-  local show_a5 show_aw show_c5=0 show_cw=0
-  show_a5="$(jq -r '[.quota[]? | select(.a5 != null)] | length' "$STATE")"
-  show_aw="$(jq -r '[.quota[]? | select(.aw != null)] | length' "$STATE")"
-  if [ -n "${AGYR_CLAUDE:-}" ]; then
-    show_c5="$(jq -r '[.quota[]? | select(.c5 != null)] | length' "$STATE")"
-    show_cw="$(jq -r '[.quota[]? | select(.cw != null)] | length' "$STATE")"
-  fi
 
   local is_tty=0; [ -t 1 ] && is_tty=1
   local is_wide=0; [ -n "${AGYR_WIDE:-}" ] && is_wide=1
@@ -203,8 +274,13 @@ print_table() {
       [ $((row_idx % 2)) -eq 1 ] && row_bg="$BG_ALT"
       row_idx=$((row_idx + 1))
       g5=""; g5r=0; gw=""; gwr=0; at=0
-      snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [.g5,.g5r,.gw,.gwr,.at] | @tsv' "$STATE")"
-      if [ -n "$snap" ]; then IFS=$'\t' read -r g5 g5r gw gwr at <<<"$snap"; fi
+      if [ -n "${q_has["$n"]:-}" ]; then
+        g5="${q_g5["$n"]:-}"
+        g5r="${q_g5r["$n"]:-0}"
+        gw="${q_gw["$n"]:-}"
+        gwr="${q_gwr["$n"]:-0}"
+        at="${q_at["$n"]:-0}"
+      fi
       if [[ "$failed" == *" $n "* ]]; then g5=""; fi
       if [ -n "$g5" ] && { [ "$oldest" -eq 0 ] || [ "$at" -lt "$oldest" ]; }; then oldest=$at; fi
       acct_status "$n" "$g5" "$g5r" "$gw" "$gwr" "$failed" "$t"
@@ -216,11 +292,13 @@ print_table() {
       [ "${#an_disp}" -gt "$acct_nw" ] && an_disp="${an_disp:0:$((acct_nw - 1))}…"
       printf -v ncell '%-*s %s' "$acct_g" "$mk" "$an_disp"
 
-      local extra="" a5 a5r aw awr c5 c5r cw cwr
-      IFS=$'\t' read -r c5 c5r cw cwr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.c5 // "-"),(.c5r // 0),(.cw // "-"),(.cwr // 0)] | @tsv' "$STATE")"
-      [ "${c5:-}" = "-" ] && c5=""; [ "${cw:-}" = "-" ] && cw=""
-      IFS=$'\t' read -r a5 a5r aw awr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.a5 // "-"),(.a5r // 0),(.aw // "-"),(.awr // 0)] | @tsv' "$STATE")"
-      [ "${a5:-}" = "-" ] && a5=""; [ "${aw:-}" = "-" ] && aw=""
+      local extra="" a5="" a5r=0 aw="" awr=0 c5="" c5r=0 cw="" cwr=0
+      if [ -n "${q_has["$n"]:-}" ]; then
+        c5="${q_c5["$n"]:-}"; c5r="${q_c5r["$n"]:-0}"
+        cw="${q_cw["$n"]:-}"; cwr="${q_cwr["$n"]:-0}"
+        a5="${q_a5["$n"]:-}"; a5r="${q_a5r["$n"]:-0}"
+        aw="${q_aw["$n"]:-}"; awr="${q_awr["$n"]:-0}"
+      fi
       [ "$show_a5" -gt 0 ] && extra+=" │ $($cell_fn "$a5" "${a5r:-0}")" || :
       [ "$show_aw" -gt 0 ] && extra+=" │ $($cell_fn "$aw" "${awr:-0}")" || :
       [ "$show_c5" -gt 0 ] && extra+=" │ $($cell_fn "$c5" "${c5r:-0}")" || :
@@ -266,8 +344,13 @@ print_table() {
       [ "$block_idx" -gt 0 ] && echo ""
       block_idx=$((block_idx + 1))
       g5=""; g5r=0; gw=""; gwr=0; at=0
-      snap="$(jq -r --arg n "$n" '.quota[$n] // empty | [.g5,.g5r,.gw,.gwr,.at] | @tsv' "$STATE")"
-      if [ -n "$snap" ]; then IFS=$'\t' read -r g5 g5r gw gwr at <<<"$snap"; fi
+      if [ -n "${q_has["$n"]:-}" ]; then
+        g5="${q_g5["$n"]:-}"
+        g5r="${q_g5r["$n"]:-0}"
+        gw="${q_gw["$n"]:-}"
+        gwr="${q_gwr["$n"]:-0}"
+        at="${q_at["$n"]:-0}"
+      fi
       if [[ "$failed" == *" $n "* ]]; then g5=""; fi
       if [ -n "$g5" ] && { [ "$oldest" -eq 0 ] || [ "$at" -lt "$oldest" ]; }; then oldest=$at; fi
       acct_status "$n" "$g5" "$g5r" "$gw" "$gwr" "$failed" "$t"
@@ -296,11 +379,13 @@ print_table() {
       print_vert_quota "GEMINI 5H" "$g5" "$g5r"
       print_vert_quota "GEMINI WEEK" "$gw" "$gwr"
 
-      local a5 a5r aw awr c5 c5r cw cwr
-      IFS=$'\t' read -r c5 c5r cw cwr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.c5 // "-"),(.c5r // 0),(.cw // "-"),(.cwr // 0)] | @tsv' "$STATE")"
-      [ "${c5:-}" = "-" ] && c5=""; [ "${cw:-}" = "-" ] && cw=""
-      IFS=$'\t' read -r a5 a5r aw awr <<<"$(jq -r --arg n "$n" '.quota[$n] // empty | [(.a5 // "-"),(.a5r // 0),(.aw // "-"),(.awr // 0)] | @tsv' "$STATE")"
-      [ "${a5:-}" = "-" ] && a5=""; [ "${aw:-}" = "-" ] && aw=""
+      local a5="" a5r=0 aw="" awr=0 c5="" c5r=0 cw="" cwr=0
+      if [ -n "${q_has["$n"]:-}" ]; then
+        c5="${q_c5["$n"]:-}"; c5r="${q_c5r["$n"]:-0}"
+        cw="${q_cw["$n"]:-}"; cwr="${q_cwr["$n"]:-0}"
+        a5="${q_a5["$n"]:-}"; a5r="${q_a5r["$n"]:-0}"
+        aw="${q_aw["$n"]:-}"; awr="${q_awr["$n"]:-0}"
+      fi
 
       if [ "$argon_hidden" -eq 0 ]; then
         [ -n "$a5" ] && print_vert_quota "ARGON 5H" "$a5" "${a5r:-0}"
@@ -341,7 +426,12 @@ fmt_compact_reset() {
     local diff=$((epoch - b_epoch))
     [ "$diff" -lt 0 ] && diff=$((-diff))
     if [ "$diff" -gt 120 ]; then
-      local was_time; was_time="$(date -d "@$b_epoch" '+%H:%M' 2>/dev/null || echo "")"
+      local was_time
+      if [[ "$b_epoch" =~ ^-?[0-9]+$ ]]; then
+        was_time="$(LC_ALL=C printf '%(%H:%M)T' "$b_epoch" 2>/dev/null || date -d "@$b_epoch" '+%H:%M' 2>/dev/null || echo "")"
+      else
+        was_time="$(date -d "@$b_epoch" '+%H:%M' 2>/dev/null || echo "")"
+      fi
       if [ -n "$was_time" ]; then
         local with_was="$short_time (was $was_time)"
         if [ "${#with_was}" -le "$pad" ]; then
@@ -373,7 +463,13 @@ fmt_full_reset() {
     local diff=$((epoch - b_epoch))
     if [ "$diff" -lt 0 ]; then diff=$((-diff)); fi
     if [ "$diff" -gt 120 ]; then
-      rst="$rst (was $(date -d "@$b_epoch" '+%I:%M %p'))"
+      local was_str
+      if [[ "$b_epoch" =~ ^-?[0-9]+$ ]]; then
+        was_str="$(LC_ALL=C printf '%(%I:%M %p)T' "$b_epoch" 2>/dev/null || date -d "@$b_epoch" '+%I:%M %p')"
+      else
+        was_str="$(date -d "@$b_epoch" '+%I:%M %p')"
+      fi
+      rst="$rst (was $was_str)"
     fi
   fi
   if [ "${#rst}" -gt "$pad" ]; then

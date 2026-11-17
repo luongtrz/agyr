@@ -1,5 +1,11 @@
 die() { echo "agyr: $*" >&2; exit "${2:-1}"; }
-now() { echo "${AGY_NOW:-$(date +%s)}"; }
+now() {
+  if [ -n "${AGY_NOW:-}" ]; then
+    echo "$AGY_NOW"
+  else
+    LC_ALL=C printf '%(%s)T\n' -1 2>/dev/null || date +%s
+  fi
+}
 
 need_jq() { command -v jq >/dev/null || die "jq is required"; }
 
@@ -35,8 +41,20 @@ parse_duration() {
 }
 
 # epoch -> "dd/mm/yyyy hh:mm AM|PM" (in AGY_TZ)
-fmt_time() { date -d "@$1" '+%d/%m/%Y %I:%M %p'; }
-fmt_short_time() { date -d "@$1" '+%d/%m %H:%M'; }
+fmt_time() {
+  if [[ "$1" =~ ^-?[0-9]+$ ]]; then
+    LC_ALL=C printf '%(%d/%m/%Y %I:%M %p)T' "$1" 2>/dev/null || date -d "@$1" '+%d/%m/%Y %I:%M %p'
+  else
+    date -d "@$1" '+%d/%m/%Y %I:%M %p'
+  fi
+}
+fmt_short_time() {
+  if [[ "$1" =~ ^-?[0-9]+$ ]]; then
+    LC_ALL=C printf '%(%d/%m %H:%M)T' "$1" 2>/dev/null || date -d "@$1" '+%d/%m %H:%M'
+  else
+    date -d "@$1" '+%d/%m %H:%M'
+  fi
+}
 
 fmt_dur() { # seconds -> "4h13m"
   local s=$1
@@ -49,10 +67,23 @@ slots() { # sorted slot names
   local f
   for f in "$ACCTS"/*.token; do
     [ -e "$f" ] || continue
-    basename "$f" .token
+    f="${f##*/}"
+    printf '%s\n' "${f%.token}" # not echo: a slot may be called -n or -e
   done | sort
 }
 
-cooldown_until() { jq -r --arg n "$1" '.cooldown[$n] // 0' "$STATE"; }
+cooldown_until() {
+  if [ -n "${STATE_LOADED:-}" ]; then
+    echo "${s_cooldown["$1"]:-0}"
+  else
+    jq -r --arg n "$1" '.cooldown[$n] // 0' "$STATE"
+  fi
+}
 
-is_locked() { [ "$(jq -r --arg n "$1" '((.locked // {})[$n] == true)' "$STATE" 2>/dev/null)" = "true" ]; }
+is_locked() {
+  if [ -n "${STATE_LOADED:-}" ]; then
+    [ "${s_locked["$1"]:-0}" = 1 ]
+  else
+    [ "$(jq -r --arg n "$1" '((.locked // {})[$n] == true)' "$STATE" 2>/dev/null)" = "true" ]
+  fi
+}
